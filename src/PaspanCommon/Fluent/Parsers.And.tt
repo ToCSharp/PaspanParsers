@@ -1,0 +1,42 @@
+﻿<#@ template language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+// Copyright (c) All contributors. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+
+/* THIS (.cs) FILE IS GENERATED. DO NOT CHANGE IT.
+ * CHANGE THE .tt FILE INSTEAD. */
+
+using System;
+
+namespace Paspan.Fluent
+{
+    public static partial class Parsers
+    {
+<# for (int i = 2; i <= 13; i++) { #>
+        /// <summary>
+        /// Builds a parser that ensure the specified parsers match consecutively.
+        /// </summary>
+<#     var tStr = string.Join(", ", Enumerable.Range(1, i).Select(v => $"T{v}")); #>
+<#     var pStr = i == 2 ? "T1" : "(" + string.Join(", ", Enumerable.Range(1, i - 1).Select(v => $"T{v}")) + ")"; #>
+        public static Parser<(<#= tStr #>)> And<<#= tStr #>>(this Parser<<#= pStr #>> parser, Parser<T<#= i #>> and)
+            => new Sequence<<#= tStr #>>(parser, and);
+
+<# } #>
+
+<# for (int i = 2; i <= 13; i++) { #>
+        /// <summary>
+        /// Builds a parser that ensure the specified parsers match consecutively.
+        /// </summary>
+<#     var tStr2 = string.Join(", ", Enumerable.Range(1, i).Select(v => $"T{v}")); #>
+<#     var tStr = string.Join(", ", Enumerable.Range(1, i - 1).Select(v => $"T{v}")) + $", Labelled<T{i}>"; #>
+<#     var pStr = i == 2 ? "T1" : "(" + string.Join(", ", Enumerable.Range(1, i - 1).Select(v => $"T{v}")) + ")"; #>
+        public static Parser<(<#= tStr #>)> And<<#= tStr2 #>>(this Parser<<#= pStr #>> parser, string label, Parser<T<#= i #>> and)
+            => new Sequence<<#= tStr #>>(parser, and.Labelled(label));
+
+<# } #>
+
+    }
+}

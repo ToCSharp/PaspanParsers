@@ -1,0 +1,1104 @@
+// C# EXAMPLES - Comprehensive Reference
+// This file contains examples of various C# constructs for testing and reference
+// ================================================================================
+
+// USING DIRECTIVES
+// ================================================================================
+
+// NAMESPACE DECLARATIONS
+// ================================================================================
+
+namespace Examples.Basic
+{
+    // Simple class
+    public class Person
+    {
+        public string Name { get; set; }
+        public int Age { get; set; }
+    }
+}
+
+public class FileClass
+{
+    public int Value { get; set; }
+}
+
+// NESTED NAMESPACES
+// ================================================================================
+
+namespace Examples
+{
+    namespace Nested
+    {
+        public class NestedClass { }
+    }
+}
+
+// CLASS DECLARATIONS
+// ================================================================================
+
+namespace Examples.Classes
+{
+    // Basic class with various modifiers
+    public abstract class BaseClass
+    {
+        // Fields
+#pragma warning disable CS0169 // Field is never used
+        private int _privateField;
+#pragma warning restore CS0169
+        protected string _protectedField;
+        public const double PI = 3.14159;
+        public static readonly int MaxValue = 100;
+
+        // Auto-properties
+        public int Id { get; set; }
+        public string Name { get; set; }
+        
+        // Property with backing field
+        private int _age;
+        public int Age
+        {
+            get { return _age; }
+            set { _age = value; }
+        }
+
+        // Expression-bodied property
+        public string DisplayName => $"{Name} ({Age})";
+
+        // Init-only property (C# 9+)
+        public DateTime CreatedAt { get; init; }
+
+        // Required property (C# 11+)
+        public required string Email { get; set; }
+
+        // Constructor
+        public BaseClass(string name, int age)
+        {
+            Name = name;
+            Age = age;
+        }
+
+        // Method
+        public virtual void PrintInfo()
+        {
+            Console.WriteLine($"Name: {Name}, Age: {Age}");
+        }
+
+        // Abstract method
+        public abstract void DoSomething();
+
+        // Static method
+        public static BaseClass Create(string name, int age)
+        {
+            return new DerivedClass(name, age) { Email = "default@example.com" };
+        }
+    }
+
+    // Sealed class
+    public sealed class DerivedClass(string name, int age) : BaseClass(name, age)
+    {
+        public override void DoSomething()
+        {
+            Console.WriteLine("Doing something");
+        }
+
+        // Sealed override
+        public sealed override void PrintInfo()
+        {
+            base.PrintInfo();
+            Console.WriteLine("From DerivedClass");
+        }
+    }
+
+    // Static class
+    public static class Utilities
+    {
+        public static int Add(int a, int b) => a + b;
+        public static void Print(string message) => Console.WriteLine(message);
+    }
+
+    // Partial class
+    public partial class PartialClass
+    {
+        public int Part1 { get; set; }
+    }
+
+    public partial class PartialClass
+    {
+        public int Part2 { get; set; }
+    }
+}
+
+// STRUCT DECLARATIONS
+// ================================================================================
+
+namespace Examples.Structs
+{
+    // Basic struct
+    public struct Point(int x, int y)
+    {
+        public int X { get; set; } = x;
+        public int Y { get; set; } = y;
+
+        public double DistanceFromOrigin() => Math.Sqrt(X * X + Y * Y);
+    }
+
+    // Readonly struct
+    public readonly struct ReadonlyPoint(int x, int y)
+    {
+        public int X { get; } = x;
+        public int Y { get; } = y;
+    }
+
+    // Ref struct (C# 7.2+)
+    public ref struct RefStruct
+    {
+        public Span<int> Data { get; set; }
+    }
+
+    // Record struct (C# 10+)
+    public record struct RecordPoint(int X, int Y);
+}
+
+// INTERFACE DECLARATIONS
+// ================================================================================
+
+namespace Examples.Interfaces
+{
+    // Basic interface
+    public interface IAnimal
+    {
+        string Name { get; set; }
+        void MakeSound();
+    }
+
+    // Interface with default implementation (C# 8+)
+    public interface IDrawable
+    {
+        void Draw();
+        
+        void Clear()
+        {
+            Console.WriteLine("Clearing...");
+        }
+    }
+
+    // Generic interface with variance
+    public interface IRepository<out TEntity> where TEntity : class
+    {
+        TEntity GetById(int id);
+        IEnumerable<TEntity> GetAll();
+    }
+
+    // Covariant and contravariant interfaces
+    public interface ICovariant<out T> { T Get(); }
+    public interface IContravariant<in T> { void Set(T value); }
+}
+
+// ENUM DECLARATIONS
+// ================================================================================
+
+namespace Examples.Enums
+{
+    // Simple enum
+    public enum DayOfWeek
+    {
+        Monday,
+        Tuesday,
+        Wednesday,
+        Thursday,
+        Friday,
+        Saturday,
+        Sunday
+    }
+
+    // Enum with explicit values
+    public enum StatusCode
+    {
+        Success = 200,
+        BadRequest = 400,
+        Unauthorized = 401,
+        NotFound = 404,
+        ServerError = 500
+    }
+
+    // Flags enum
+    [Flags]
+    public enum FileAccess
+    {
+        None = 0,
+        Read = 1,
+        Write = 2,
+        Execute = 4,
+        ReadWrite = Read | Write,
+        All = Read | Write | Execute
+    }
+
+    // Enum with different base type
+    public enum ByteEnum : byte
+    {
+        Zero = 0,
+        One = 1,
+        Two = 2
+    }
+}
+
+// DELEGATE DECLARATIONS
+// ================================================================================
+
+namespace Examples.Delegates
+{
+    // Simple delegate
+    public delegate void SimpleDelegate();
+    
+    // Delegate with parameters and return type
+    public delegate int MathOperation(int x, int y);
+    
+    // Generic delegate
+    public delegate T Factory<T>() where T : new();
+    
+    // Event
+    public class Button
+    {
+        public event EventHandler Clicked;
+        
+        protected virtual void OnClicked(EventArgs e)
+        {
+            Clicked?.Invoke(this, e);
+        }
+    }
+}
+
+// RECORD DECLARATIONS (C# 9+)
+// ================================================================================
+
+namespace Examples.Records
+{
+    // Simple record
+    public record Person(string FirstName, string LastName);
+    
+    // Record with additional members
+    public record Employee(string FirstName, string LastName, string Department)
+    {
+        public string FullName => $"{FirstName} {LastName}";
+    }
+    
+    // Record inheritance
+    public record Manager(string FirstName, string LastName, string Department, int TeamSize)
+        : Employee(FirstName, LastName, Department);
+    
+    // Record class (explicit)
+    public record class Product(int Id, string Name, decimal Price);
+}
+
+// GENERICS
+// ================================================================================
+
+namespace Examples.Generics
+{
+    // Generic class
+    public class Container<T>(T value)
+    {
+        private T _value = value;
+
+        public T GetValue() => _value;
+        public void SetValue(T value) => _value = value;
+    }
+
+    // Generic class with constraints
+    public class Repository<T> where T : class, new()
+    {
+        private List<T> _items = [];
+        
+        public void Add(T item) => _items.Add(item);
+        public T CreateNew() => new T();
+    }
+
+    // Multiple type parameters with constraints
+    public class Mapper<TSource, TDestination>
+        where TSource : class
+        where TDestination : class, new()
+    {
+        public TDestination Map(TSource source)
+        {
+            return new TDestination();
+        }
+    }
+
+    // Generic method
+    public class GenericMethods
+    {
+        public T Max<T>(T a, T b) where T : IComparable<T>
+        {
+            return a.CompareTo(b) > 0 ? a : b;
+        }
+
+        public void Swap<T>(ref T a, ref T b)
+        {
+            T temp = a;
+            a = b;
+            b = temp;
+        }
+    }
+}
+
+// METHODS
+// ================================================================================
+
+namespace Examples.Methods
+{
+    public class MethodExamples
+    {
+        // Regular method
+        public int Add(int a, int b)
+        {
+            return a + b;
+        }
+
+        // Expression-bodied method
+        public int Multiply(int a, int b) => a * b;
+
+        // Async method
+        public async Task<string> FetchDataAsync()
+        {
+            await Task.Delay(1000);
+            return "Data";
+        }
+
+        // Method with optional parameters
+        public void Print(string message, bool uppercase = false)
+        {
+            Console.WriteLine(uppercase ? message.ToUpper() : message);
+        }
+
+        // Method with params
+        public int Sum(params int[] numbers)
+        {
+            return numbers.Sum();
+        }
+
+        // Method with ref parameter
+        public void Increment(ref int value)
+        {
+            value++;
+        }
+
+        // Method with out parameter
+        public bool TryParse(string input, out int result)
+        {
+            return int.TryParse(input, out result);
+        }
+
+        // Method with in parameter (C# 7.2+)
+        public double Calculate(in double value)
+        {
+            return value * 2;
+        }
+
+        // Extension method (must be in static class)
+    }
+
+    public static class StringExtensions
+    {
+        public static bool IsNullOrEmpty(this string value)
+        {
+            return string.IsNullOrEmpty(value);
+        }
+    }
+
+    // Local function
+    public class LocalFunctionExample
+    {
+        public int Factorial(int n)
+        {
+            return CalculateFactorial(n);
+
+            int CalculateFactorial(int num)
+            {
+                if (num <= 1) return 1;
+                return num * CalculateFactorial(num - 1);
+            }
+        }
+    }
+}
+
+// PROPERTIES AND INDEXERS
+// ================================================================================
+
+namespace Examples.Properties
+{
+    public class PropertyExamples
+    {
+        // Auto-property
+        public string Name { get; set; }
+
+        // Property with private setter
+        public int Id { get; private set; }
+
+        // Read-only property
+        public DateTime Created { get; }
+
+        // Property with backing field
+        private string _description;
+        public string Description
+        {
+            get => _description;
+            set => _description = value ?? throw new ArgumentNullException(nameof(value));
+        }
+
+        // Expression-bodied property
+        public string FullName => $"Person: {Name}";
+
+        // Property with different access modifiers
+        public string Email { get; protected set; }
+
+        // Indexer
+        private Dictionary<string, string> _data = [];
+        
+        public string this[string key]
+        {
+            get => _data.ContainsKey(key) ? _data[key] : null;
+            set => _data[key] = value;
+        }
+
+        // Multi-dimensional indexer
+        private int[,] _matrix = new int[10, 10];
+        
+        public int this[int row, int col]
+        {
+            get => _matrix[row, col];
+            set => _matrix[row, col] = value;
+        }
+    }
+}
+
+// OPERATORS
+// ================================================================================
+
+namespace Examples.Operators
+{
+    public struct Complex(double real, double imaginary)
+    {
+        public double Real { get; set; } = real;
+        public double Imaginary { get; set; } = imaginary;
+
+        // Unary operators
+        public static Complex operator +(Complex c) => c;
+        public static Complex operator -(Complex c) => new Complex(-c.Real, -c.Imaginary);
+
+        // Binary operators
+        public static Complex operator +(Complex a, Complex b) 
+            => new Complex(a.Real + b.Real, a.Imaginary + b.Imaginary);
+        
+        public static Complex operator -(Complex a, Complex b)
+            => new Complex(a.Real - b.Real, a.Imaginary - b.Imaginary);
+
+        // Comparison operators
+        public static bool operator ==(Complex a, Complex b)
+            => a.Real == b.Real && a.Imaginary == b.Imaginary;
+        
+        public static bool operator !=(Complex a, Complex b)
+            => !(a == b);
+
+        // Conversion operators
+        public static implicit operator Complex(double d) => new Complex(d, 0);
+        public static explicit operator double(Complex c) => c.Real;
+
+        public override bool Equals(object obj)
+        {
+            if (obj is Complex c)
+                return this == c;
+            return false;
+        }
+
+        public override int GetHashCode() => HashCode.Combine(Real, Imaginary);
+    }
+}
+
+// STATEMENTS
+// ================================================================================
+
+namespace Examples.Statements
+{
+    public class StatementExamples
+    {
+        public void IfStatements(int x)
+        {
+            if (x > 0)
+            {
+                Console.WriteLine("Positive");
+            }
+            else if (x < 0)
+            {
+                Console.WriteLine("Negative");
+            }
+            else
+            {
+                Console.WriteLine("Zero");
+            }
+        }
+
+        public void SwitchStatements(int day)
+        {
+            // Traditional switch
+            switch (day)
+            {
+                case 1:
+                    Console.WriteLine("Monday");
+                    break;
+                case 2:
+                    Console.WriteLine("Tuesday");
+                    break;
+                default:
+                    Console.WriteLine("Other day");
+                    break;
+            }
+
+            // Switch with pattern matching (C# 7+)
+            object obj = "test";
+            switch (obj)
+            {
+                case string s:
+                    Console.WriteLine($"String: {s}");
+                    break;
+                case int i when i > 0:
+                    Console.WriteLine($"Positive int: {i}");
+                    break;
+                case null:
+                    Console.WriteLine("Null");
+                    break;
+                default:
+                    Console.WriteLine("Other");
+                    break;
+            }
+        }
+
+        public string SwitchExpression(int value)
+        {
+            // Switch expression (C# 8+)
+            return value switch
+            {
+                1 => "One",
+                2 => "Two",
+                3 => "Three",
+                > 3 and < 10 => "Between 3 and 10",
+                _ => "Other"
+            };
+        }
+
+        public void LoopStatements()
+        {
+            // While loop
+            int i = 0;
+            while (i < 10)
+            {
+                Console.WriteLine(i);
+                i++;
+            }
+
+            // Do-while loop
+            do
+            {
+                Console.WriteLine(i);
+                i++;
+            } while (i < 20);
+
+            // For loop
+            for (int j = 0; j < 10; j++)
+            {
+                Console.WriteLine(j);
+            }
+
+            // Foreach loop
+            int[] numbers = { 1, 2, 3, 4, 5 };
+            foreach (int num in numbers)
+            {
+                Console.WriteLine(num);
+            }
+        }
+
+        public void TryStatements(int zero = 0)
+        {
+            // Try-catch
+            try
+            {
+                int result = 10 / zero;
+            }
+            catch (DivideByZeroException ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"General error: {ex.Message}");
+            }
+            finally
+            {
+                Console.WriteLine("Cleanup");
+            }
+
+            // Try-catch with when clause (C# 6+)
+            try
+            {
+                throw new InvalidOperationException("Test");
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("Test"))
+            {
+                Console.WriteLine("Specific error");
+            }
+        }
+
+        public void UsingStatements()
+        {
+            // Traditional using
+            using (var file = File.OpenRead("test.txt"))
+            {
+                // Use file
+            }
+
+            // Using declaration (C# 8+)
+            using var stream = File.OpenRead("test.txt");
+            // stream is disposed at the end of the scope
+        }
+
+        public void LockStatement()
+        {
+            object lockObj = new object();
+            lock (lockObj)
+            {
+                // Thread-safe code
+            }
+        }
+    }
+}
+
+// EXPRESSIONS
+// ================================================================================
+
+namespace Examples.Expressions
+{
+    public class ExpressionExamples
+    {
+#pragma warning disable CS0219 // Variable is assigned but its value is never used
+        public void ArithmeticExpressions()
+        {
+            int a = 10 + 5;
+            int b = 10 - 5;
+            int c = 10 * 5;
+            int d = 10 / 5;
+            int e = 10 % 3;
+        }
+
+        public void LogicalExpressions()
+        {
+            bool a = true && false;
+            bool b = true || false;
+            bool c = !true;
+        }
+
+        public void ComparisonExpressions()
+        {
+            bool a = 10 > 5;
+            bool b = 10 < 5;
+            bool c = 10 >= 5;
+            bool d = 10 <= 5;
+            bool e = 10 == 5;
+            bool f = 10 != 5;
+        }
+#pragma warning restore CS0219
+
+        public void ConditionalExpression()
+        {
+            int x = 10;
+            string result = x > 0 ? "Positive" : "Non-positive";
+        }
+
+        public void NullCoalescingExpressions()
+        {
+            string name = null;
+            string displayName = name ?? "Unknown";
+            
+            // Null-coalescing assignment (C# 8+)
+            name ??= "Default";
+        }
+
+        public void NullConditionalExpressions()
+        {
+            string text = null;
+            int? length = text?.Length;
+            char? firstChar = text?[0];
+        }
+
+        public void RangeAndIndexExpressions()
+        {
+            int[] numbers = { 1, 2, 3, 4, 5 };
+            
+            // Index from end
+            int last = numbers[^1];
+            
+            // Range
+            int[] slice = numbers[1..4];
+            int[] fromStart = numbers[..3];
+            int[] toEnd = numbers[2..];
+            int[] all = numbers[..];
+        }
+
+        public void IsAndAsExpressions()
+        {
+            object obj = "test";
+            
+            if (obj is string)
+            {
+                Console.WriteLine("It's a string");
+            }
+
+            string str = obj as string;
+        }
+
+        public void PatternMatching()
+        {
+            object obj = 42;
+
+            // Type pattern with variable
+            if (obj is int number)
+            {
+                Console.WriteLine($"Integer: {number}");
+            }
+
+            // Property pattern
+            if (obj is int { } value and > 0)
+            {
+                Console.WriteLine($"Positive: {value}");
+            }
+        }
+
+        public void ObjectInitializers()
+        {
+            var person = new Person
+            {
+                Name = "John",
+                Age = 30
+            };
+
+            // Collection initializer
+            var list = new List<int> { 1, 2, 3, 4, 5 };
+
+            // Dictionary initializer
+            var dict = new Dictionary<string, int>
+            {
+                ["one"] = 1,
+                ["two"] = 2
+            };
+        }
+
+        public void AnonymousTypes()
+        {
+            var person = new { Name = "John", Age = 30 };
+            Console.WriteLine($"{person.Name}, {person.Age}");
+        }
+
+        public void TupleExpressions()
+        {
+            // Tuple creation
+            var tuple = (Name: "John", Age: 30);
+            Console.WriteLine($"{tuple.Name}, {tuple.Age}");
+
+            // Tuple deconstruction
+            var (name, age) = tuple;
+            Console.WriteLine($"{name}, {age}");
+        }
+
+        public void ThrowExpressions()
+        {
+            string name = null;
+            string displayName = name ?? throw new ArgumentNullException(nameof(name));
+        }
+
+        public void WithExpressions()
+        {
+            var person = new Person { Name = "John", Age = 30 };
+            var olderPerson = person with { Age = 31 };
+        }
+    }
+
+    public record Person
+    {
+        public string Name { get; set; }
+        public int Age { get; set; }
+    }
+}
+
+// LAMBDA EXPRESSIONS
+// ================================================================================
+
+namespace Examples.Lambdas
+{
+    public class LambdaExamples
+    {
+        public void BasicLambdas()
+        {
+            // Expression lambda
+            Func<int, int> square = x => x * x;
+
+            // Statement lambda
+            Func<int, int> cube = x =>
+            {
+                return x * x * x;
+            };
+
+            // Multiple parameters
+            Func<int, int, int> add = (a, b) => a + b;
+
+            // No parameters
+            Action greet = () => Console.WriteLine("Hello");
+        }
+
+        public void AsyncLambdas()
+        {
+            Func<Task<string>> fetchData = async () =>
+            {
+                await Task.Delay(1000);
+                return "Data";
+            };
+        }
+
+        public void LambdasWithLinq()
+        {
+            int[] numbers = { 1, 2, 3, 4, 5 };
+
+            var evens = numbers.Where(n => n % 2 == 0);
+            var squares = numbers.Select(n => n * n);
+            var sum = numbers.Aggregate(0, (acc, n) => acc + n);
+        }
+    }
+}
+
+// LINQ QUERY EXPRESSIONS
+// ================================================================================
+
+namespace Examples.Linq
+{
+    public class LinqExamples
+    {
+        public void QuerySyntax()
+        {
+            int[] numbers = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+
+            // Basic query
+            var evens = from n in numbers
+                        where n % 2 == 0
+                        select n;
+
+            // Query with multiple clauses
+            var result = from n in numbers
+                         where n > 5
+                         orderby n descending
+                         select n * 2;
+
+            // Query with let
+            var query = from n in numbers
+                        let squared = n * n
+                        where squared > 10
+                        select new { Number = n, Squared = squared };
+
+            // Group by
+            var groups = from n in numbers
+                         group n by n % 2 into g
+                         select new { Key = g.Key, Values = g };
+
+            // Join
+            var people = new[] { new { Id = 1, Name = "John" } };
+            var orders = new[] { new { PersonId = 1, Product = "Book" } };
+
+            var joined = from p in people
+                         join o in orders on p.Id equals o.PersonId
+                         select new { p.Name, o.Product };
+        }
+
+        public void MethodSyntax()
+        {
+            int[] numbers = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+
+            var evens = numbers.Where(n => n % 2 == 0);
+            var doubled = numbers.Select(n => n * 2);
+            var sorted = numbers.OrderBy(n => n);
+            var groups = numbers.GroupBy(n => n % 2);
+            var first = numbers.FirstOrDefault(n => n > 5);
+            var any = numbers.Any(n => n > 100);
+            var all = numbers.All(n => n > 0);
+            var count = numbers.Count(n => n % 2 == 0);
+            var sum = numbers.Sum();
+            var average = numbers.Average();
+        }
+    }
+}
+
+// ASYNC/AWAIT
+// ================================================================================
+
+namespace Examples.Async
+{
+    public class AsyncExamples
+    {
+        public async Task<string> FetchDataAsync()
+        {
+            await Task.Delay(1000);
+            return "Data";
+        }
+
+        public async Task ProcessDataAsync()
+        {
+            string data = await FetchDataAsync();
+            Console.WriteLine(data);
+        }
+
+        public async Task ParallelOperationsAsync()
+        {
+            Task<string> task1 = FetchDataAsync();
+            Task<string> task2 = FetchDataAsync();
+
+            string[] results = await Task.WhenAll(task1, task2);
+        }
+
+        public async IAsyncEnumerable<int> GenerateNumbersAsync()
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                await Task.Delay(100);
+                yield return i;
+            }
+        }
+
+        public async Task ConsumeAsyncStream()
+        {
+            await foreach (int number in GenerateNumbersAsync())
+            {
+                Console.WriteLine(number);
+            }
+        }
+    }
+}
+
+// PATTERN MATCHING (Advanced)
+// ================================================================================
+
+namespace Examples.PatternMatching
+{
+    public class PatternExamples
+    {
+        public void TypePatterns(object obj)
+        {
+            if (obj is string s)
+            {
+                Console.WriteLine($"String: {s}");
+            }
+            else if (obj is int i)
+            {
+                Console.WriteLine($"Int: {i}");
+            }
+        }
+
+        public void PropertyPatterns(object obj)
+        {
+            if (obj is Person { Age: > 18, Name: not null } person)
+            {
+                Console.WriteLine($"Adult: {person.Name}");
+            }
+        }
+
+        public void RelationalPatterns(int number)
+        {
+            string category = number switch
+            {
+                < 0 => "Negative",
+                0 => "Zero",
+                > 0 and < 10 => "Small positive",
+                >= 10 and < 100 => "Medium positive",
+                >= 100 => "Large positive"
+            };
+        }
+
+        public void ListPatterns(int[] numbers)
+        {
+            var result = numbers switch
+            {
+                [] => "Empty",
+                [var first] => $"Single: {first}",
+                [var first, var second] => $"Two: {first}, {second}",
+                [var first, .., var last] => $"First: {first}, Last: {last}",
+                _ => "Other"
+            };
+        }
+    }
+
+    public class Person
+    {
+        public string Name { get; set; }
+        public int Age { get; set; }
+    }
+}
+
+// ATTRIBUTES
+// ================================================================================
+
+namespace Examples.Attributes
+{
+    // Custom attribute
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.ReturnValue | AttributeTargets.Parameter)]
+    public class CustomAttribute(string description) : Attribute
+    {
+        public string Description { get; set; } = description;
+    }
+
+    // Using attributes
+    [Custom("This is a test class")]
+    [Serializable]
+    public class AttributedClass
+    {
+        [Custom("This is a test method")]
+        [Obsolete("Use NewMethod instead")]
+        public void OldMethod() { }
+
+        public void NewMethod() { }
+
+        [return: Custom("Return value")]
+        public int Calculate([Custom("Parameter")] int value)
+        {
+            return value * 2;
+        }
+    }
+}
+
+// NULLABLE REFERENCE TYPES (C# 8+)
+// ================================================================================
+
+#nullable enable
+
+namespace Examples.Nullable
+{
+    public class NullableExamples
+    {
+        public string NotNullable { get; set; } = "";
+        public string? Nullable { get; set; }
+
+        public void ProcessString(string notNull, string? maybeNull)
+        {
+            Console.WriteLine(notNull.Length); // Safe
+            
+            if (maybeNull != null)
+            {
+                Console.WriteLine(maybeNull.Length); // Safe after null check
+            }
+
+            // Null-forgiving operator
+            Console.WriteLine(maybeNull!.Length); // Tells compiler it's not null
+        }
+    }
+}
+
+#nullable restore
+
+// ================================================================================
+// END OF C# EXAMPLES
+// ================================================================================
+

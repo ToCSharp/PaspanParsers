@@ -1,0 +1,94 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <MSBuildAllProjects Condition="'$(MSBuildVersion)' == '' Or '$(MSBuildVersion)' &lt; '16.0'">$(MSBuildAllProjects);$(MSBuildThisFileFullPath)</MSBuildAllProjects>
+    <HasSharedItems>true</HasSharedItems>
+    <SharedGUID>1932c820-2d38-4274-9db9-8ca51dc21ca3</SharedGUID>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration">
+    <Import_RootNamespace>PaspanCommon</Import_RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Common\Character.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Common\Character.SearchValues.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Common\Constants.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Common\HexConverter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Common\Tuples.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Always.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Between.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\BytesBefore.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Capture.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Deferred.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Discard.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Else.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Empty.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Eof.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Error.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Fail.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\If.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Labelled.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\ListOfCharsLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\CharLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\DecimalLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\Helpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\Identifier.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\Integer64Literal.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\IntegerLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\Keyword.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\NonWhiteSpaceLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\NumberOptions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\PatternLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\StringLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\StringRegion.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\TextLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\WhiteSpaceLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Not.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\NumberLiteral.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Literals\NumberLiterals.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\OneOf.ABT.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\OneOf.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\OneOrMany.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Optional.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\ParseContext.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parser.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parser.TryParse.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\ParserExtensions.Cardinality.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\ParserExtensions.WhiteSpace.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parsers.And.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parsers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parsers.OneOf.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parsers.Read.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parsers.Skip.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parsers.SkipAnd.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parsers.Structure.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Parsers.Values.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\ParsersPlus.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Read.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\ReadBefore.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\RegionBefore.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Select.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Separated.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Sequence.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\SequenceAndSkip.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\SequenceSkipAnd.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\SkipWhiteSpace.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Switch.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\TextBefore.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\TextBeforeEof.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Then.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Unit.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\Values.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\When.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\WhenFollowedBy.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\WhenNotFollowedBy.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\WhiteSpaceParser.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\WithWhiteSpaceParser.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\ZeroOrMany.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Fluent\ZeroOrOne.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Option.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ParseError.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ParseException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ParseResult.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SpanReaderHelpers.cs" />
+  </ItemGroup>
+</Project>

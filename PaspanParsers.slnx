@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/docs/">
+    <File Path="docs/fluent-api-differences.md" />
+    <File Path="docs/parlot-to-paspan-migration-guide.md" />
+    <File Path="docs/parsers.md" />
+    <File Path="docs/project-structure.md" />
+    <File Path="docs/remaining-test-failures.md" />
+    <File Path="docs/writing.md" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="src/Paspan/Paspan.csproj" />
+  <Project Path="src/PaspanCommon/PaspanCommon.shproj" Id="1932c820-2d38-4274-9db9-8ca51dc21ca3" />
+  <Project Path="src/PaspanParsers.Tests/PaspanParsers.Tests.csproj" />
+  <Project Path="src/PaspanParsers/PaspanParsers.csproj" />
+</Solution>

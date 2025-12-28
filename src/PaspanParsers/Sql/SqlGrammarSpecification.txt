@@ -1,0 +1,685 @@
+SQL GRAMMAR SPECIFICATION (BNF/EBNF)
+Based on ISO/IEC 9075 (SQL Standard)
+========================================
+
+This document provides a reference grammar for SQL in BNF notation.
+
+NOTATION:
+  ::=         means "is defined as"
+  |           means "or"
+  [ ... ]     means optional (zero or one occurrence)
+  { ... }     means zero or more occurrences
+  < >         denotes a non-terminal symbol
+  UPPERCASE   denotes keywords
+  lowercase   denotes user-defined names
+
+========================================
+STATEMENTS
+========================================
+
+<statement list> ::=
+    <statement> [ { ';' <statement> } ] [ ';' ]
+
+<statement> ::=
+    <select statement>
+  | <insert statement>
+  | <update statement>
+  | <delete statement>
+  | <create statement>
+  | <drop statement>
+  | <alter statement>
+
+========================================
+SELECT STATEMENT
+========================================
+
+<select statement> ::=
+    [ <with clause> ] <query expression> [ <order by clause> ] [ <limit clause> ] [ <offset clause> ]
+
+<with clause> ::=
+    WITH [ RECURSIVE ] <common table expression> [ { ',' <common table expression> } ]
+
+<common table expression> ::=
+    <table name> [ '(' <column name list> ')' ] AS '(' <query expression> ')'
+
+<query expression> ::=
+    <query term> [ { UNION [ ALL | DISTINCT ] <query term> } ]
+
+<query term> ::=
+    <query primary>
+  | <query term> INTERSECT [ ALL | DISTINCT ] <query primary>
+  | <query term> EXCEPT [ ALL | DISTINCT ] <query primary>
+
+<query primary> ::=
+    <simple table>
+  | '(' <query expression> ')'
+
+<simple table> ::=
+    <query specification>
+
+<query specification> ::=
+    SELECT [ <set quantifier> ] <select list>
+    [ <from clause> ]
+    [ <where clause> ]
+    [ <group by clause> ]
+    [ <having clause> ]
+
+<set quantifier> ::=
+    DISTINCT | ALL
+
+<select list> ::=
+    '*'
+  | <select sublist> [ { ',' <select sublist> } ]
+
+<select sublist> ::=
+    <derived column>
+  | <qualified name> '.' '*'
+
+<derived column> ::=
+    <value expression> [ [ AS ] <column name> ]
+
+========================================
+FROM CLAUSE
+========================================
+
+<from clause> ::=
+    FROM <table reference list>
+
+<table reference list> ::=
+    <table reference> [ { ',' <table reference> } ]
+
+<table reference> ::=
+    <table primary> [ <joined table> ]
+
+<table primary> ::=
+    <table or query name> [ [ AS ] <correlation name> [ '(' <derived column list> ')' ] ]
+  | <derived table> [ AS ] <correlation name> [ '(' <derived column list> ')' ]
+  | <lateral derived table> [ AS ] <correlation name> [ '(' <derived column list> ')' ]
+
+<derived table> ::=
+    '(' <query expression> ')'
+
+<lateral derived table> ::=
+    LATERAL <derived table>
+
+<joined table> ::=
+    <cross join>
+  | <qualified join>
+  | <natural join>
+
+<cross join> ::=
+    <table reference> CROSS JOIN <table primary>
+
+<qualified join> ::=
+    <table reference> [ <join type> ] JOIN <table primary> <join specification>
+
+<natural join> ::=
+    <table reference> NATURAL [ <join type> ] JOIN <table primary>
+
+<join type> ::=
+    INNER
+  | <outer join type> [ OUTER ]
+
+<outer join type> ::=
+    LEFT | RIGHT | FULL
+
+<join specification> ::=
+    <join condition>
+  | <named columns join>
+
+<join condition> ::=
+    ON <search condition>
+
+<named columns join> ::=
+    USING '(' <column name list> ')'
+
+========================================
+WHERE CLAUSE
+========================================
+
+<where clause> ::=
+    WHERE <search condition>
+
+<search condition> ::=
+    <boolean term> [ { OR <boolean term> } ]
+
+<boolean term> ::=
+    <boolean factor> [ { AND <boolean factor> } ]
+
+<boolean factor> ::=
+    [ NOT ] <boolean test>
+
+<boolean test> ::=
+    <boolean primary> [ IS [ NOT ] <truth value> ]
+
+<truth value> ::=
+    TRUE | FALSE | UNKNOWN
+
+<boolean primary> ::=
+    <predicate>
+  | '(' <search condition> ')'
+
+<predicate> ::=
+    <comparison predicate>
+  | <between predicate>
+  | <in predicate>
+  | <like predicate>
+  | <null predicate>
+  | <exists predicate>
+  | <quantified comparison predicate>
+
+<comparison predicate> ::=
+    <value expression> <comp op> <value expression>
+
+<comp op> ::=
+    '=' | '<>' | '!=' | '<' | '>' | '<=' | '>=' | '!>' | '!<'
+
+<between predicate> ::=
+    <value expression> [ NOT ] BETWEEN <value expression> AND <value expression>
+
+<in predicate> ::=
+    <value expression> [ NOT ] IN <in predicate value>
+
+<in predicate value> ::=
+    '(' <query expression> ')'
+  | '(' <value expression> [ { ',' <value expression> } ] ')'
+
+<like predicate> ::=
+    <value expression> [ NOT ] LIKE <pattern> [ ESCAPE <escape character> ]
+
+<null predicate> ::=
+    <value expression> IS [ NOT ] NULL
+
+<exists predicate> ::=
+    EXISTS '(' <query expression> ')'
+
+<quantified comparison predicate> ::=
+    <value expression> <comp op> <quantifier> '(' <query expression> ')'
+
+<quantifier> ::=
+    ALL | SOME | ANY
+
+========================================
+GROUP BY CLAUSE
+========================================
+
+<group by clause> ::=
+    GROUP BY <grouping element list>
+
+<grouping element list> ::=
+    <grouping element> [ { ',' <grouping element> } ]
+
+<grouping element> ::=
+    <ordinary grouping set>
+  | <rollup list>
+  | <cube list>
+  | <grouping sets specification>
+  | <empty grouping set>
+
+<ordinary grouping set> ::=
+    <value expression>
+  | '(' <column reference list> ')'
+
+<rollup list> ::=
+    ROLLUP '(' <grouping element list> ')'
+
+<cube list> ::=
+    CUBE '(' <grouping element list> ')'
+
+<grouping sets specification> ::=
+    GROUPING SETS '(' <grouping element list> ')'
+
+<empty grouping set> ::=
+    '(' ')'
+
+========================================
+HAVING CLAUSE
+========================================
+
+<having clause> ::=
+    HAVING <search condition>
+
+========================================
+ORDER BY CLAUSE
+========================================
+
+<order by clause> ::=
+    ORDER BY <sort specification list>
+
+<sort specification list> ::=
+    <sort specification> [ { ',' <sort specification> } ]
+
+<sort specification> ::=
+    <sort key> [ <ordering specification> ] [ <null ordering> ]
+
+<sort key> ::=
+    <value expression>
+
+<ordering specification> ::=
+    ASC | DESC
+
+<null ordering> ::=
+    NULLS FIRST | NULLS LAST
+
+========================================
+LIMIT AND OFFSET CLAUSES
+========================================
+
+<limit clause> ::=
+    LIMIT <numeric value expression>
+  | FETCH FIRST <numeric value expression> ROWS ONLY
+
+<offset clause> ::=
+    OFFSET <numeric value expression> [ ROW | ROWS ]
+
+========================================
+VALUE EXPRESSIONS
+========================================
+
+<value expression> ::=
+    <numeric value expression>
+  | <string value expression>
+  | <datetime value expression>
+  | <boolean value expression>
+
+<numeric value expression> ::=
+    <term> [ { '+' <term> | '-' <term> } ]
+
+<term> ::=
+    <factor> [ { '*' <factor> | '/' <factor> | '%' <factor> } ]
+
+<factor> ::=
+    [ <sign> ] <numeric primary>
+
+<sign> ::=
+    '+' | '-'
+
+<numeric primary> ::=
+    <value expression primary>
+  | <numeric value function>
+
+<value expression primary> ::=
+    <unsigned literal>
+  | <column reference>
+  | <set function specification>
+  | <scalar subquery>
+  | <case expression>
+  | <cast specification>
+  | <function call>
+  | '(' <value expression> ')'
+
+========================================
+COLUMN REFERENCE
+========================================
+
+<column reference> ::=
+    [ <qualifier> '.' ] <column name>
+
+<qualifier> ::=
+    <table name>
+  | <correlation name>
+
+========================================
+LITERALS
+========================================
+
+<unsigned literal> ::=
+    <unsigned numeric literal>
+  | <general literal>
+
+<unsigned numeric literal> ::=
+    <exact numeric literal>
+  | <approximate numeric literal>
+
+<exact numeric literal> ::=
+    <unsigned integer> [ '.' [ <unsigned integer> ] ]
+  | '.' <unsigned integer>
+
+<approximate numeric literal> ::=
+    <mantissa> 'E' <exponent>
+
+<general literal> ::=
+    <character string literal>
+  | <datetime literal>
+  | <boolean literal>
+  | NULL
+
+<character string literal> ::=
+    "'" [ <character representation> ... ] "'"
+
+<boolean literal> ::=
+    TRUE | FALSE | UNKNOWN
+
+========================================
+FUNCTION CALLS
+========================================
+
+<function call> ::=
+    <function name> '(' [ <function argument list> ] ')'
+
+<function argument list> ::=
+    <value expression> [ { ',' <value expression> } ]
+
+========================================
+SET FUNCTIONS (AGGREGATES)
+========================================
+
+<set function specification> ::=
+    <aggregate function> '(' [ <set quantifier> ] <value expression> ')' [ <filter clause> ]
+  | COUNT '(' '*' ')' [ <filter clause> ]
+
+<aggregate function> ::=
+    AVG | MAX | MIN | SUM | COUNT
+  | EVERY | ANY | SOME
+  | STDDEV_POP | STDDEV_SAMP | VAR_SAMP | VAR_POP
+
+<filter clause> ::=
+    FILTER '(' WHERE <search condition> ')'
+
+========================================
+WINDOW FUNCTIONS
+========================================
+
+<window function> ::=
+    <window function type> OVER <window specification>
+
+<window function type> ::=
+    <rank function type> '(' ')'
+  | ROW_NUMBER '(' ')'
+  | <aggregate function>
+
+<rank function type> ::=
+    RANK | DENSE_RANK | PERCENT_RANK | CUME_DIST
+
+<window specification> ::=
+    '(' [ <partition clause> ] [ <order by clause> ] [ <frame clause> ] ')'
+
+<partition clause> ::=
+    PARTITION BY <partition column reference list>
+
+<frame clause> ::=
+    <frame units> <frame extent> [ <frame exclusion> ]
+
+<frame units> ::=
+    ROWS | RANGE | GROUPS
+
+<frame extent> ::=
+    <frame start>
+  | <frame between>
+
+<frame start> ::=
+    UNBOUNDED PRECEDING
+  | <unsigned value specification> PRECEDING
+  | CURRENT ROW
+
+<frame between> ::=
+    BETWEEN <frame bound 1> AND <frame bound 2>
+
+<frame bound> ::=
+    <frame start>
+  | UNBOUNDED FOLLOWING
+  | <unsigned value specification> FOLLOWING
+
+========================================
+CASE EXPRESSION
+========================================
+
+<case expression> ::=
+    <case abbreviation>
+  | <case specification>
+
+<case abbreviation> ::=
+    NULLIF '(' <value expression> ',' <value expression> ')'
+  | COALESCE '(' <value expression> [ { ',' <value expression> } ] ')'
+
+<case specification> ::=
+    <simple case>
+  | <searched case>
+
+<simple case> ::=
+    CASE <case operand>
+        <simple when clause> ...
+        [ <else clause> ]
+    END
+
+<searched case> ::=
+    CASE
+        <searched when clause> ...
+        [ <else clause> ]
+    END
+
+<simple when clause> ::=
+    WHEN <when operand> THEN <result>
+
+<searched when clause> ::=
+    WHEN <search condition> THEN <result>
+
+<else clause> ::=
+    ELSE <result>
+
+<result> ::=
+    <value expression>
+  | NULL
+
+========================================
+INSERT STATEMENT
+========================================
+
+<insert statement> ::=
+    INSERT INTO <table name> [ '(' <column name list> ')' ]
+    <insert values>
+  | INSERT INTO <table name> [ '(' <column name list> ')' ]
+    <query expression>
+
+<insert values> ::=
+    VALUES <insert value list>
+
+<insert value list> ::=
+    '(' <value expression> [ { ',' <value expression> } ] ')'
+    [ { ',' '(' <value expression> [ { ',' <value expression> } ] ')' } ]
+
+========================================
+UPDATE STATEMENT
+========================================
+
+<update statement> ::=
+    UPDATE <table name>
+    SET <set clause list>
+    [ <where clause> ]
+
+<set clause list> ::=
+    <set clause> [ { ',' <set clause> } ]
+
+<set clause> ::=
+    <column name> '=' <value expression>
+  | '(' <column name list> ')' '=' '(' <query expression> ')'
+
+========================================
+DELETE STATEMENT
+========================================
+
+<delete statement> ::=
+    DELETE FROM <table name>
+    [ <where clause> ]
+
+========================================
+CREATE TABLE STATEMENT
+========================================
+
+<create table statement> ::=
+    CREATE [ <table scope> ] TABLE <table name>
+    '(' <table element list> ')'
+
+<table scope> ::=
+    GLOBAL TEMPORARY | LOCAL TEMPORARY | TEMPORARY | TEMP
+
+<table element list> ::=
+    <table element> [ { ',' <table element> } ]
+
+<table element> ::=
+    <column definition>
+  | <table constraint definition>
+
+<column definition> ::=
+    <column name> <data type>
+    [ <default clause> ]
+    [ <column constraint definition> ... ]
+
+<data type> ::=
+    <predefined type>
+  | <user-defined type>
+
+<predefined type> ::=
+    INTEGER | INT | SMALLINT | BIGINT
+  | NUMERIC [ '(' <precision> [ ',' <scale> ] ')' ]
+  | DECIMAL [ '(' <precision> [ ',' <scale> ] ')' ]
+  | FLOAT [ '(' <precision> ')' ]
+  | REAL | DOUBLE PRECISION
+  | CHARACTER [ '(' <length> ')' ] | CHAR [ '(' <length> ')' ]
+  | CHARACTER VARYING '(' <length> ')' | VARCHAR '(' <length> ')'
+  | TEXT
+  | DATE | TIME | TIMESTAMP
+  | BOOLEAN
+  | BLOB | CLOB
+
+<default clause> ::=
+    DEFAULT <default option>
+
+<default option> ::=
+    <literal>
+  | <datetime value function>
+  | USER
+  | CURRENT_USER
+  | SESSION_USER
+  | SYSTEM_USER
+  | NULL
+
+<column constraint definition> ::=
+    [ CONSTRAINT <constraint name> ] <column constraint>
+
+<column constraint> ::=
+    NOT NULL
+  | UNIQUE
+  | PRIMARY KEY
+  | <references specification>
+  | <check constraint definition>
+
+<references specification> ::=
+    REFERENCES <referenced table> [ '(' <referenced column> ')' ]
+    [ <referential triggered action> ]
+
+<table constraint definition> ::=
+    [ CONSTRAINT <constraint name> ] <table constraint>
+
+<table constraint> ::=
+    UNIQUE '(' <column name list> ')'
+  | PRIMARY KEY '(' <column name list> ')'
+  | FOREIGN KEY '(' <column name list> ')' <references specification>
+  | <check constraint definition>
+
+<check constraint definition> ::=
+    CHECK '(' <search condition> ')'
+
+========================================
+DROP TABLE STATEMENT
+========================================
+
+<drop table statement> ::=
+    DROP TABLE <table name> [ <drop behavior> ]
+
+<drop behavior> ::=
+    CASCADE | RESTRICT
+
+========================================
+ALTER TABLE STATEMENT
+========================================
+
+<alter table statement> ::=
+    ALTER TABLE <table name> <alter table action>
+
+<alter table action> ::=
+    <add column definition>
+  | <drop column definition>
+  | <add table constraint definition>
+  | <drop table constraint definition>
+
+<add column definition> ::=
+    ADD [ COLUMN ] <column definition>
+
+<drop column definition> ::=
+    DROP [ COLUMN ] <column name> [ <drop behavior> ]
+
+<add table constraint definition> ::=
+    ADD <table constraint definition>
+
+<drop table constraint definition> ::=
+    DROP CONSTRAINT <constraint name> [ <drop behavior> ]
+
+========================================
+CREATE INDEX STATEMENT
+========================================
+
+<create index statement> ::=
+    CREATE [ UNIQUE ] INDEX <index name>
+    ON <table name> '(' <index column list> ')'
+
+<index column list> ::=
+    <index column> [ { ',' <index column> } ]
+
+<index column> ::=
+    <column name> [ <ordering specification> ]
+
+========================================
+DROP INDEX STATEMENT
+========================================
+
+<drop index statement> ::=
+    DROP INDEX <index name>
+
+========================================
+TRANSACTION STATEMENTS
+========================================
+
+<begin transaction> ::=
+    BEGIN [ TRANSACTION | WORK ]
+
+<commit statement> ::=
+    COMMIT [ TRANSACTION | WORK ]
+
+<rollback statement> ::=
+    ROLLBACK [ TRANSACTION | WORK ]
+
+<savepoint statement> ::=
+    SAVEPOINT <savepoint name>
+
+<release savepoint> ::=
+    RELEASE SAVEPOINT <savepoint name>
+
+========================================
+ADDITIONAL REFERENCES
+========================================
+
+For complete SQL standards:
+- ISO/IEC 9075-1:2023 - Framework (SQL/Framework)
+- ISO/IEC 9075-2:2023 - Foundation (SQL/Foundation)
+- ISO/IEC 9075-3:2023 - Call-Level Interface (SQL/CLI)
+- ISO/IEC 9075-4:2023 - Persistent Stored Modules (SQL/PSM)
+- ISO/IEC 9075-9:2023 - Management of External Data (SQL/MED)
+- ISO/IEC 9075-10:2023 - Object Language Bindings (SQL/OLB)
+- ISO/IEC 9075-11:2023 - Information and Definition Schemas (SQL/Schemata)
+- ISO/IEC 9075-13:2023 - Routines and Types Using Java (SQL/JRT)
+- ISO/IEC 9075-14:2023 - XML-Related Specifications (SQL/XML)
+- ISO/IEC 9075-15:2023 - Multi-Dimensional Arrays (SQL/MDA)
+- ISO/IEC 9075-16:2023 - Property Graph Queries (SQL/PGQ)
+
+Online Resources:
+- PostgreSQL Documentation: https://www.postgresql.org/docs/
+- MySQL Reference Manual: https://dev.mysql.com/doc/
+- SQL Server Documentation: https://docs.microsoft.com/sql/
+- SQLite Syntax: https://www.sqlite.org/lang.html
+- Modern SQL: https://modern-sql.com/
+
+========================================
+END OF SPECIFICATION
+========================================
+

@@ -1,0 +1,748 @@
+Python Grammar Specification (Python 3.6 - 3.12)
+================================================
+
+This document describes the grammar for a subset of Python suitable for parsing
+with the Paspan library. The grammar covers Python 3.6 through 3.12 features.
+
+Note: This is a simplified educational grammar. It may not cover all edge cases
+or the complete Python language specification.
+
+Notation
+--------
+- UPPERCASE: Keywords or tokens
+- lowercase: Non-terminals
+- |: Alternation
+- ?: Optional (zero or one)
+- *: Zero or more
+- +: One or more
+- (): Grouping
+- []: Optional (same as ?)
+
+================================================================================
+1. LEXICAL STRUCTURE
+================================================================================
+
+1.1 Keywords
+------------
+False      await      else       import     pass
+None       break      except     in         raise
+True       class      finally    is         return
+and        continue   for        lambda     try
+as         def        from       nonlocal   while
+assert     del        global     not        with
+async      elif       if         or         yield
+match      case       _          (Python 3.10+)
+
+1.2 Operators and Delimiters
+-----------------------------
++       -       *       **      /       //      %       @
+<<      >>      &       |       ^       ~       :=
+<       >       <=      >=      ==      !=
+(       )       [       ]       {       }
+,       :       .       ;       @       =       ->
++=      -=      *=      /=      //=     %=      @=
+&=      |=      ^=      >>=     <<=     **=
+
+1.3 Literals
+------------
+integer_literal:
+    decimal_integer | bin_integer | oct_integer | hex_integer
+
+decimal_integer: [0-9] ('_'? [0-9])*
+
+bin_integer: '0' [bB] ('_'? [01])+
+
+oct_integer: '0' [oO] ('_'? [0-7])+
+
+hex_integer: '0' [xX] ('_'? [0-9a-fA-F])+
+
+float_literal:
+    digit_part '.' [digit_part] [exponent]
+    | digit_part exponent
+    | '.' digit_part [exponent]
+
+digit_part: [0-9] ('_'? [0-9])*
+
+exponent: [eE] [+-]? digit_part
+
+imaginary_literal:
+    (integer_literal | float_literal) [jJ]
+
+string_literal:
+    string_prefix? (short_string | long_string)
+
+string_prefix:
+    'r' | 'u' | 'R' | 'U' | 'f' | 'F' | 'fr' | 'Fr' | 'fR' | 'FR' | 'rf' | 'rF' | 'Rf' | 'RF'
+    | 'b' | 'B' | 'br' | 'Br' | 'bR' | 'BR' | 'rb' | 'rB' | 'Rb' | 'RB'
+
+short_string:
+    '"' string_item* '"'
+    | "'" string_item* "'"
+
+long_string:
+    '"""' long_string_item* '"""'
+    | "'''" long_string_item* "'''"
+
+bytes_literal:
+    bytes_prefix (short_bytes | long_bytes)
+
+bytes_prefix:
+    'b' | 'B' | 'br' | 'Br' | 'bR' | 'BR' | 'rb' | 'rB' | 'Rb' | 'RB'
+
+1.4 Identifiers
+---------------
+identifier:
+    (letter | '_') (letter | digit | '_')*
+
+letter: [a-zA-Z]
+digit: [0-9]
+
+================================================================================
+2. MODULE STRUCTURE
+================================================================================
+
+2.1 Module (Compilation Unit)
+------------------------------
+module:
+    statement*
+
+file_input:
+    (NEWLINE | statement)* ENDMARKER
+
+2.2 Interactive Input
+---------------------
+interactive_input:
+    [statement_newline]
+
+eval_input:
+    testlist NEWLINE* ENDMARKER
+
+================================================================================
+3. STATEMENTS
+================================================================================
+
+3.1 Simple Statements
+---------------------
+simple_stmt:
+    small_stmt (';' small_stmt)* [';'] NEWLINE
+
+small_stmt:
+    expr_stmt
+    | del_stmt
+    | pass_stmt
+    | flow_stmt
+    | import_stmt
+    | global_stmt
+    | nonlocal_stmt
+    | assert_stmt
+
+expr_stmt:
+    testlist_star_expr (annassign | augassign (yield_expr | testlist) | ('=' (yield_expr | testlist_star_expr))*)
+
+annassign:
+    ':' test ['=' (yield_expr | testlist_star_expr)]
+
+testlist_star_expr:
+    (test | star_expr) (',' (test | star_expr))* [',']
+
+augassign:
+    '+=' | '-=' | '*=' | '@=' | '/=' | '%=' | '&=' | '|=' | '^=' | '<<=' | '>>=' | '**=' | '//='
+
+del_stmt:
+    'del' exprlist
+
+pass_stmt:
+    'pass'
+
+flow_stmt:
+    break_stmt | continue_stmt | return_stmt | raise_stmt | yield_stmt
+
+break_stmt:
+    'break'
+
+continue_stmt:
+    'continue'
+
+return_stmt:
+    'return' [testlist_star_expr]
+
+yield_stmt:
+    yield_expr
+
+yield_expr:
+    'yield' [yield_arg]
+
+yield_arg:
+    'from' test | testlist_star_expr
+
+raise_stmt:
+    'raise' [test ['from' test]]
+
+import_stmt:
+    import_name | import_from
+
+import_name:
+    'import' dotted_as_names
+
+import_from:
+    'from' (('.' | '...')* dotted_name | ('.' | '...')+) 'import' ('*' | '(' import_as_names ')' | import_as_names)
+
+import_as_name:
+    NAME ['as' NAME]
+
+dotted_as_name:
+    dotted_name ['as' NAME]
+
+import_as_names:
+    import_as_name (',' import_as_name)* [',']
+
+dotted_as_names:
+    dotted_as_name (',' dotted_as_name)*
+
+dotted_name:
+    NAME ('.' NAME)*
+
+global_stmt:
+    'global' NAME (',' NAME)*
+
+nonlocal_stmt:
+    'nonlocal' NAME (',' NAME)*
+
+assert_stmt:
+    'assert' test [',' test]
+
+3.2 Compound Statements
+-----------------------
+compound_stmt:
+    if_stmt
+    | while_stmt
+    | for_stmt
+    | try_stmt
+    | with_stmt
+    | funcdef
+    | classdef
+    | decorated
+    | async_stmt
+    | match_stmt
+
+if_stmt:
+    'if' namedexpr_test ':' suite ('elif' namedexpr_test ':' suite)* ['else' ':' suite]
+
+while_stmt:
+    'while' namedexpr_test ':' suite ['else' ':' suite]
+
+for_stmt:
+    'for' exprlist 'in' testlist ':' suite ['else' ':' suite]
+
+try_stmt:
+    'try' ':' suite
+    ((except_clause ':' suite)+ ['else' ':' suite] ['finally' ':' suite]
+    | 'finally' ':' suite)
+
+except_clause:
+    'except' [test ['as' NAME]]
+
+with_stmt:
+    'with' with_item (',' with_item)* ':' suite
+
+with_item:
+    test ['as' expr]
+
+suite:
+    simple_stmt | NEWLINE INDENT statement+ DEDENT
+
+3.3 Function Definition
+------------------------
+funcdef:
+    'def' NAME parameters ['->' test] ':' suite
+
+parameters:
+    '(' [typedargslist] ')'
+
+typedargslist:
+    (tfpdef ['=' test] (',' tfpdef ['=' test])* [',' [
+        '*' [tfpdef] (',' tfpdef ['=' test])* [',' ['**' tfpdef [',']]]
+        | '**' tfpdef [',']]]
+    | '*' [tfpdef] (',' tfpdef ['=' test])* [',' ['**' tfpdef [',']]]
+    | '**' tfpdef [','])
+
+tfpdef:
+    NAME [':' test]
+
+varargslist:
+    (vfpdef ['=' test] (',' vfpdef ['=' test])* [',' [
+        '*' [vfpdef] (',' vfpdef ['=' test])* [',' ['**' vfpdef [',']]]
+        | '**' vfpdef [',']]]
+    | '*' [vfpdef] (',' vfpdef ['=' test])* [',' ['**' vfpdef [',']]]
+    | '**' vfpdef [','])
+
+vfpdef:
+    NAME
+
+3.4 Class Definition
+--------------------
+classdef:
+    'class' NAME ['(' [arglist] ')'] ':' suite
+
+3.5 Decorators
+--------------
+decorated:
+    decorators (classdef | funcdef | async_funcdef)
+
+decorators:
+    decorator+
+
+decorator:
+    '@' namedexpr_test NEWLINE
+
+3.6 Async Statements (Python 3.5+)
+-----------------------------------
+async_stmt:
+    async_funcdef | async_with_stmt | async_for_stmt
+
+async_funcdef:
+    'async' funcdef
+
+async_with_stmt:
+    'async' with_stmt
+
+async_for_stmt:
+    'async' for_stmt
+
+3.7 Match Statement (Python 3.10+)
+----------------------------------
+match_stmt:
+    'match' subject_expr ':' NEWLINE INDENT case_block+ DEDENT
+
+subject_expr:
+    star_named_expression ',' star_named_expressions?
+    | named_expression
+
+case_block:
+    'case' patterns [guard] ':' suite
+
+guard:
+    'if' named_expression
+
+patterns:
+    open_sequence_pattern | pattern
+
+pattern:
+    as_pattern | or_pattern
+
+or_pattern:
+    '|'.closed_pattern+
+
+as_pattern:
+    or_pattern 'as' capture_pattern
+
+closed_pattern:
+    literal_pattern
+    | capture_pattern
+    | wildcard_pattern
+    | value_pattern
+    | group_pattern
+    | sequence_pattern
+    | mapping_pattern
+    | class_pattern
+
+literal_pattern:
+    signed_number | complex_number | strings | 'None' | 'True' | 'False'
+
+capture_pattern:
+    NAME
+
+wildcard_pattern:
+    '_'
+
+value_pattern:
+    attr ('.' NAME)+
+
+attr:
+    NAME
+
+group_pattern:
+    '(' pattern ')'
+
+sequence_pattern:
+    '[' [maybe_sequence_pattern] ']'
+    | '(' [open_sequence_pattern] ')'
+
+open_sequence_pattern:
+    maybe_star_pattern ',' [maybe_sequence_pattern]
+
+maybe_sequence_pattern:
+    ','.maybe_star_pattern+ [',']
+
+maybe_star_pattern:
+    star_pattern | pattern
+
+star_pattern:
+    '*' capture_pattern | '*' wildcard_pattern
+
+mapping_pattern:
+    '{' [items_pattern] '}'
+
+items_pattern:
+    ','.key_value_pattern+ [',']
+
+key_value_pattern:
+    (literal_pattern | value_pattern) ':' pattern
+
+double_star_pattern:
+    '**' capture_pattern
+
+class_pattern:
+    name_or_attr '(' [pattern_arguments [',']] ')'
+
+pattern_arguments:
+    positional_patterns [',' keyword_patterns]
+    | keyword_patterns
+
+positional_patterns:
+    ','.pattern+
+
+keyword_patterns:
+    ','.keyword_pattern+
+
+keyword_pattern:
+    NAME '=' pattern
+
+name_or_attr:
+    attr | NAME
+
+================================================================================
+4. EXPRESSIONS
+================================================================================
+
+4.1 Test Expressions
+--------------------
+test:
+    or_test ['if' or_test 'else' test] | lambdef
+
+test_nocond:
+    or_test | lambdef_nocond
+
+lambdef:
+    'lambda' [varargslist] ':' test
+
+lambdef_nocond:
+    'lambda' [varargslist] ':' test_nocond
+
+or_test:
+    and_test ('or' and_test)*
+
+and_test:
+    not_test ('and' not_test)*
+
+not_test:
+    'not' not_test | comparison
+
+comparison:
+    expr (comp_op expr)*
+
+comp_op:
+    '<' | '>' | '==' | '>=' | '<=' | '!=' | 'in' | 'not' 'in' | 'is' | 'is' 'not'
+
+4.2 Named Expression (Walrus Operator, Python 3.8+)
+---------------------------------------------------
+namedexpr_test:
+    test [':=' test]
+
+star_named_expression:
+    '*' expr | named_expression
+
+named_expression:
+    NAME ':=' test | test
+
+star_named_expressions:
+    ','.star_named_expression+ [',']
+
+4.3 Star Expressions
+--------------------
+star_expr:
+    '*' expr
+
+4.4 Expressions
+---------------
+expr:
+    xor_expr ('|' xor_expr)*
+
+xor_expr:
+    and_expr ('^' and_expr)*
+
+and_expr:
+    shift_expr ('&' shift_expr)*
+
+shift_expr:
+    arith_expr (('<<' | '>>') arith_expr)*
+
+arith_expr:
+    term (('+' | '-') term)*
+
+term:
+    factor (('*' | '@' | '/' | '%' | '//') factor)*
+
+factor:
+    ('+' | '-' | '~') factor | power
+
+power:
+    atom_expr ['**' factor]
+
+atom_expr:
+    ['await'] atom trailer*
+
+atom:
+    '(' [yield_expr | testlist_comp] ')'
+    | '[' [testlist_comp] ']'
+    | '{' [dictorsetmaker] '}'
+    | NAME
+    | NUMBER
+    | STRING+
+    | '...'
+    | 'None'
+    | 'True'
+    | 'False'
+
+testlist_comp:
+    (namedexpr_test | star_expr) (comp_for | (',' (namedexpr_test | star_expr))* [','])
+
+trailer:
+    '(' [arglist] ')' | '[' subscriptlist ']' | '.' NAME
+
+subscriptlist:
+    subscript (',' subscript)* [',']
+
+subscript:
+    test [':' [test] [sliceop]] | ':' [test] [sliceop]
+
+sliceop:
+    ':' [test]
+
+exprlist:
+    (expr | star_expr) (',' (expr | star_expr))* [',']
+
+testlist:
+    test (',' test)* [',']
+
+dictorsetmaker:
+    ((test ':' test | '**' expr) (comp_for | (',' (test ':' test | '**' expr))* [',']))
+    | ((test | star_expr) (comp_for | (',' (test | star_expr))* [',']))
+
+4.5 Comprehensions
+------------------
+comp_iter:
+    comp_for | comp_if
+
+comp_for:
+    ['async'] 'for' exprlist 'in' or_test [comp_iter]
+
+comp_if:
+    'if' test_nocond [comp_iter]
+
+4.6 Arguments
+-------------
+arglist:
+    argument (',' argument)* [',']
+
+argument:
+    (test [comp_for] | test ':=' test | test '=' test | '**' test | '*' test)
+
+================================================================================
+5. TYPE HINTS (Python 3.5+)
+================================================================================
+
+type_comment:
+    '# type:' type_expr
+
+type_expr:
+    test
+
+func_type_comment:
+    '# type:' '(' [type_expr_list] ')' '->' type_expr
+
+type_expr_list:
+    type_expr (',' type_expr)*
+
+parameter_with_type:
+    NAME [':' type_expr] ['=' test]
+
+return_type:
+    '->' type_expr
+
+5.1 Variable Annotations (Python 3.6+)
+---------------------------------------
+annotated_assignment:
+    NAME ':' type_expr ['=' test]
+
+================================================================================
+6. F-STRINGS (Python 3.6+)
+================================================================================
+
+f_string:
+    f_string_prefix string_literal
+
+f_string_prefix:
+    'f' | 'F' | 'fr' | 'Fr' | 'fR' | 'FR' | 'rf' | 'rF' | 'Rf' | 'RF'
+
+f_string_content:
+    (f_string_text | f_string_replacement_field)*
+
+f_string_replacement_field:
+    '{' testlist_star_expr ['!' conversion] [':' format_spec] '}'
+    | '{{' | '}}'
+
+conversion:
+    's' | 'r' | 'a'
+
+format_spec:
+    (f_string_text | f_string_replacement_field)*
+
+================================================================================
+7. INDENTATION
+================================================================================
+
+Python uses indentation to delimit blocks. The parser must track:
+- INDENT: Increase in indentation level
+- DEDENT: Decrease in indentation level
+- NEWLINE: End of logical line
+
+Rules:
+1. Indentation at the start of a logical line determines its grouping
+2. A sequence of DEDENT tokens is generated when returning to a previous indentation level
+3. INDENT/DEDENT must be balanced
+4. Tabs and spaces should not be mixed (typically 4 spaces per level)
+
+================================================================================
+8. SPECIAL CONSTRUCTS
+================================================================================
+
+8.1 Context Managers (with statement)
+--------------------------------------
+with_stmt:
+    'with' with_item (',' with_item)* ':' suite
+
+with_item:
+    test ['as' expr]
+
+8.2 Async/Await (Python 3.5+)
+------------------------------
+async_funcdef:
+    'async' 'def' NAME parameters ['->' test] ':' suite
+
+await_expr:
+    'await' primary
+
+8.3 Ellipsis
+------------
+ellipsis:
+    '...'
+
+8.4 Unpacking
+-------------
+Unpacking in assignments:
+    a, b, c = iterable
+    a, *b, c = iterable  # Extended unpacking (Python 3.0+)
+    *a, = iterable
+
+Unpacking in function calls:
+    func(*args, **kwargs)
+
+Unpacking in literals:
+    [*a, *b]  # Python 3.5+
+    {**a, **b}  # Python 3.5+
+
+================================================================================
+9. PYTHON VERSION-SPECIFIC FEATURES
+================================================================================
+
+Python 3.6:
+- F-strings
+- Variable annotations
+- Underscores in numeric literals
+
+Python 3.7:
+- Postponed evaluation of annotations
+- dataclasses
+
+Python 3.8:
+- Walrus operator (:=)
+- Positional-only parameters (/)
+- f-string = specifier
+
+Python 3.9:
+- Dictionary merge operator (|, |=)
+- Type hinting generics (list[int] instead of List[int])
+- String methods removeprefix() and removesuffix()
+
+Python 3.10:
+- Match statement (structural pattern matching)
+- Parenthesized context managers
+- Better error messages
+
+Python 3.11:
+- Exception groups (except*)
+- Task groups
+- tomllib module
+
+Python 3.12:
+- PEP 695 (Type Parameter Syntax)
+- PEP 698 (Override decorator)
+- Improved f-string parsing
+
+================================================================================
+10. GRAMMAR SIMPLIFICATIONS
+================================================================================
+
+For educational purposes, this grammar simplifies or omits:
+1. Encoding declarations
+2. Line continuation rules
+3. Comment handling
+4. Complex error recovery
+5. Some edge cases in numeric literals
+6. Complex string prefix combinations
+7. Some advanced pattern matching features
+8. Exception groups (Python 3.11+)
+9. Type parameter syntax (Python 3.12+)
+
+================================================================================
+11. OPERATOR PRECEDENCE (Highest to Lowest)
+================================================================================
+
+1.  ()                              Parentheses
+2.  x[index], x[index:index], x.attribute, x(...)
+                                    Subscription, slicing, attribute reference, call
+3.  await x                         Await expression
+4.  **                              Exponentiation
+5.  +x, -x, ~x                      Unary positive, negative, bitwise NOT
+6.  *, @, /, //, %                  Multiplication, matrix mult, division, floor division, modulo
+7.  +, -                            Addition and subtraction
+8.  <<, >>                          Bit shifts
+9.  &                               Bitwise AND
+10. ^                               Bitwise XOR
+11. |                               Bitwise OR
+12. in, not in, is, is not, <, <=, >, >=, !=, ==
+                                    Comparisons, membership, identity
+13. not x                           Boolean NOT
+14. and                             Boolean AND
+15. or                              Boolean OR
+16. if-else                         Conditional expression
+17. lambda                          Lambda expression
+18. :=                              Assignment expression (walrus)
+
+================================================================================
+12. REFERENCES
+================================================================================
+
+- Python Language Reference: https://docs.python.org/3/reference/
+- Python Grammar: https://docs.python.org/3/reference/grammar.html
+- PEP 8 - Style Guide: https://www.python.org/dev/peps/pep-0008/
+- PEP 484 - Type Hints: https://www.python.org/dev/peps/pep-0484/
+- PEP 498 - F-strings: https://www.python.org/dev/peps/pep-0498/
+- PEP 572 - Walrus Operator: https://www.python.org/dev/peps/pep-0572/
+- PEP 634 - Structural Pattern Matching: https://www.python.org/dev/peps/pep-0634/
+
+================================================================================
+END OF GRAMMAR SPECIFICATION
+================================================================================
+

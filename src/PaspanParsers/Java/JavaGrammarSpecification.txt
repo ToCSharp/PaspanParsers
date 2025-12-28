@@ -1,0 +1,1320 @@
+================================================================================
+Java Language Grammar Specification
+================================================================================
+
+Based on:
+- Java Language Specification (JLS) - Java SE 8 through Java SE 21
+- https://docs.oracle.com/javase/specs/
+- https://openjdk.org/projects/jdk/
+
+This grammar covers Java language features from Java 8 through Java 21,
+including:
+- Lambda expressions (Java 8)
+- Default interface methods (Java 8)
+- Type annotations (Java 8)
+- Modules (Java 9)
+- Local variable type inference - var (Java 10)
+- Switch expressions (Java 14)
+- Text blocks (Java 15)
+- Records (Java 16)
+- Pattern matching for instanceof (Java 16)
+- Sealed classes (Java 17)
+- Pattern matching for switch (Java 21)
+- Record patterns (Java 21)
+
+================================================================================
+NOTATION
+================================================================================
+
+Terminal symbols:
+    'keyword'           - Keywords (exact match)
+    "text"              - Literal text
+    IDENTIFIER          - User-defined identifier
+    LITERAL             - Literal value
+
+Non-terminal symbols:
+    rule-name           - Grammar rule reference
+
+Operators:
+    |                   - Alternative (or)
+    [ ... ]             - Optional (zero or one)
+    { ... }             - Repetition (zero or more)
+    ( ... )             - Grouping
+    ?                   - Optional (zero or one)
+    *                   - Zero or more
+    +                   - One or more
+
+================================================================================
+COMPILATION UNIT
+================================================================================
+
+compilation-unit:
+    [package-declaration]
+    {import-declaration}
+    {type-declaration}
+
+package-declaration:
+    {annotation} 'package' qualified-name ';'
+
+import-declaration:
+    'import' ['static'] import-target ';'
+
+import-target:
+    qualified-name
+    | qualified-name '.' '*'
+
+qualified-name:
+    IDENTIFIER {'.' IDENTIFIER}
+
+================================================================================
+TYPE DECLARATIONS
+================================================================================
+
+type-declaration:
+    class-declaration
+    | interface-declaration
+    | enum-declaration
+    | annotation-type-declaration
+    | record-declaration
+    | ';'                                   // Empty declaration
+
+modifiers:
+    {modifier}
+
+modifier:
+    'public' | 'protected' | 'private'
+    | 'static' | 'abstract' | 'final'
+    | 'synchronized' | 'native' | 'strictfp'
+    | 'default'                             // Interface methods (Java 8)
+    | 'transient' | 'volatile'
+    | 'sealed' | 'non-sealed'              // Sealed classes (Java 17)
+    | annotation
+
+--------------------------------------------------------------------------------
+Class Declaration
+--------------------------------------------------------------------------------
+
+class-declaration:
+    modifiers 'class' IDENTIFIER [type-parameters]
+    [extends-clause] [implements-clause]
+    [permits-clause]                        // Sealed classes (Java 17)
+    class-body
+
+extends-clause:
+    'extends' class-type
+
+implements-clause:
+    'implements' interface-type-list
+
+permits-clause:
+    'permits' class-type-list               // Sealed classes (Java 17)
+
+class-body:
+    '{' {class-body-declaration} '}'
+
+class-body-declaration:
+    field-declaration
+    | method-declaration
+    | constructor-declaration
+    | initializer-block
+    | class-declaration                     // Inner class
+    | interface-declaration                 // Inner interface
+    | enum-declaration                      // Inner enum
+    | record-declaration                    // Inner record
+    | ';'                                  // Empty declaration
+
+initializer-block:
+    ['static'] block
+
+--------------------------------------------------------------------------------
+Interface Declaration
+--------------------------------------------------------------------------------
+
+interface-declaration:
+    modifiers 'interface' IDENTIFIER [type-parameters]
+    [extends-clause] [permits-clause]
+    interface-body
+
+extends-clause:                             // For interfaces
+    'extends' interface-type-list
+
+interface-body:
+    '{' {interface-member-declaration} '}'
+
+interface-member-declaration:
+    constant-declaration                    // Fields are implicitly public static final
+    | method-declaration                    // Abstract or default/static (Java 8)
+    | class-declaration
+    | interface-declaration
+    | enum-declaration
+    | annotation-type-declaration
+    | ';'
+
+constant-declaration:
+    modifiers type variable-declarator-list ';'
+
+--------------------------------------------------------------------------------
+Enum Declaration
+--------------------------------------------------------------------------------
+
+enum-declaration:
+    modifiers 'enum' IDENTIFIER [implements-clause]
+    enum-body
+
+enum-body:
+    '{' [enum-constants] [';' {class-body-declaration}] '}'
+
+enum-constants:
+    enum-constant {',' enum-constant} [',']
+
+enum-constant:
+    {annotation} IDENTIFIER [argument-list] [class-body]
+
+--------------------------------------------------------------------------------
+Annotation Type Declaration
+--------------------------------------------------------------------------------
+
+annotation-type-declaration:
+    modifiers '@' 'interface' IDENTIFIER annotation-type-body
+
+annotation-type-body:
+    '{' {annotation-type-member-declaration} '}'
+
+annotation-type-member-declaration:
+    annotation-type-element-declaration
+    | constant-declaration
+    | class-declaration
+    | interface-declaration
+    | enum-declaration
+    | annotation-type-declaration
+    | ';'
+
+annotation-type-element-declaration:
+    modifiers type IDENTIFIER '(' ')' [default-value] ';'
+
+default-value:
+    'default' element-value
+
+--------------------------------------------------------------------------------
+Record Declaration (Java 16+)
+--------------------------------------------------------------------------------
+
+record-declaration:
+    modifiers 'record' IDENTIFIER [type-parameters]
+    record-header [implements-clause] record-body
+
+record-header:
+    '(' [record-component-list] ')'
+
+record-component-list:
+    record-component {',' record-component}
+
+record-component:
+    {annotation} type IDENTIFIER
+
+record-body:
+    '{' {record-body-declaration} '}'
+
+record-body-declaration:
+    field-declaration
+    | method-declaration
+    | constructor-declaration                // Compact or canonical
+    | class-declaration
+    | interface-declaration
+    | ';'
+
+================================================================================
+MEMBERS
+================================================================================
+
+--------------------------------------------------------------------------------
+Field Declaration
+--------------------------------------------------------------------------------
+
+field-declaration:
+    modifiers type variable-declarator-list ';'
+
+variable-declarator-list:
+    variable-declarator {',' variable-declarator}
+
+variable-declarator:
+    IDENTIFIER [array-dimensions] ['=' variable-initializer]
+
+variable-initializer:
+    expression
+    | array-initializer
+
+array-initializer:
+    '{' [variable-initializer-list] [','] '}'
+
+variable-initializer-list:
+    variable-initializer {',' variable-initializer}
+
+array-dimensions:
+    {'[' ']'}
+
+--------------------------------------------------------------------------------
+Method Declaration
+--------------------------------------------------------------------------------
+
+method-declaration:
+    modifiers [type-parameters] result-type IDENTIFIER
+    formal-parameters [array-dimensions]
+    [throws-clause] method-body
+
+result-type:
+    type
+    | 'void'
+
+formal-parameters:
+    '(' [formal-parameter-list] ')'
+
+formal-parameter-list:
+    formal-parameter {',' formal-parameter}
+    | receiver-parameter
+    | formal-parameter {',' formal-parameter} ',' last-formal-parameter
+
+formal-parameter:
+    {annotation} ['final'] type variable-declarator-id
+
+last-formal-parameter:
+    {annotation} ['final'] type '...' variable-declarator-id    // Varargs
+
+receiver-parameter:
+    {annotation} type [IDENTIFIER '.'] 'this'
+
+variable-declarator-id:
+    IDENTIFIER [array-dimensions]
+
+throws-clause:
+    'throws' exception-type-list
+
+exception-type-list:
+    exception-type {',' exception-type}
+
+exception-type:
+    class-type
+
+method-body:
+    block
+    | ';'                                   // Abstract method
+
+--------------------------------------------------------------------------------
+Constructor Declaration
+--------------------------------------------------------------------------------
+
+constructor-declaration:
+    modifiers [type-parameters] IDENTIFIER
+    formal-parameters [throws-clause] constructor-body
+
+constructor-body:
+    '{' [explicit-constructor-invocation] {block-statement} '}'
+
+explicit-constructor-invocation:
+    [type-arguments] 'this' argument-list ';'
+    | [type-arguments] 'super' argument-list ';'
+    | expression-name '.' [type-arguments] 'super' argument-list ';'
+    | primary '.' [type-arguments] 'super' argument-list ';'
+
+================================================================================
+TYPE SYSTEM
+================================================================================
+
+type:
+    primitive-type [array-dimensions]
+    | reference-type [array-dimensions]
+
+primitive-type:
+    {annotation} primitive-type-name
+
+primitive-type-name:
+    'boolean' | 'byte' | 'short' | 'int'
+    | 'long' | 'char' | 'float' | 'double'
+
+reference-type:
+    class-or-interface-type
+    | array-type
+
+class-or-interface-type:
+    class-type
+    | interface-type
+
+class-type:
+    {annotation} type-name [type-arguments]
+    | class-or-interface-type '.' {annotation} IDENTIFIER [type-arguments]
+
+interface-type:
+    class-type                              // Same syntax as class-type
+
+type-name:
+    IDENTIFIER
+    | package-or-type-name '.' IDENTIFIER
+
+package-or-type-name:
+    IDENTIFIER
+    | package-or-type-name '.' IDENTIFIER
+
+array-type:
+    primitive-type array-dimensions
+    | class-or-interface-type array-dimensions
+
+--------------------------------------------------------------------------------
+Generics and Type Parameters
+--------------------------------------------------------------------------------
+
+type-parameters:
+    '<' type-parameter-list '>'
+
+type-parameter-list:
+    type-parameter {',' type-parameter}
+
+type-parameter:
+    {annotation} IDENTIFIER [type-bound]
+
+type-bound:
+    'extends' type-variable
+    | 'extends' class-or-interface-type {additional-bound}
+
+additional-bound:
+    '&' interface-type
+
+type-arguments:
+    '<' type-argument-list '>'
+
+type-argument-list:
+    type-argument {',' type-argument}
+
+type-argument:
+    reference-type
+    | wildcard
+
+wildcard:
+    {annotation} '?' [wildcard-bounds]
+
+wildcard-bounds:
+    'extends' reference-type
+    | 'super' reference-type
+
+class-type-list:
+    class-type {',' class-type}
+
+interface-type-list:
+    interface-type {',' interface-type}
+
+================================================================================
+ANNOTATIONS
+================================================================================
+
+annotation:
+    normal-annotation
+    | marker-annotation
+    | single-element-annotation
+
+normal-annotation:
+    '@' type-name '(' [element-value-pair-list] ')'
+
+marker-annotation:
+    '@' type-name
+
+single-element-annotation:
+    '@' type-name '(' element-value ')'
+
+element-value-pair-list:
+    element-value-pair {',' element-value-pair}
+
+element-value-pair:
+    IDENTIFIER '=' element-value
+
+element-value:
+    conditional-expression
+    | element-value-array-initializer
+    | annotation
+
+element-value-array-initializer:
+    '{' [element-value-list] [','] '}'
+
+element-value-list:
+    element-value {',' element-value}
+
+================================================================================
+STATEMENTS
+================================================================================
+
+block:
+    '{' {block-statement} '}'
+
+block-statement:
+    local-variable-declaration-statement
+    | class-declaration
+    | statement
+
+statement:
+    block
+    | empty-statement
+    | expression-statement
+    | assert-statement
+    | switch-statement
+    | do-statement
+    | break-statement
+    | continue-statement
+    | return-statement
+    | synchronized-statement
+    | throw-statement
+    | try-statement
+    | labeled-statement
+    | if-statement
+    | while-statement
+    | for-statement
+    | yield-statement                       // Switch expressions (Java 14)
+
+--------------------------------------------------------------------------------
+Local Variable Declaration
+--------------------------------------------------------------------------------
+
+local-variable-declaration-statement:
+    local-variable-declaration ';'
+
+local-variable-declaration:
+    {annotation} ['final'] local-variable-type variable-declarator-list
+
+local-variable-type:
+    type
+    | 'var'                                 // Local variable type inference (Java 10)
+
+--------------------------------------------------------------------------------
+Control Flow Statements
+--------------------------------------------------------------------------------
+
+empty-statement:
+    ';'
+
+expression-statement:
+    statement-expression ';'
+
+statement-expression:
+    assignment
+    | pre-increment-expression
+    | pre-decrement-expression
+    | post-increment-expression
+    | post-decrement-expression
+    | method-invocation
+    | class-instance-creation-expression
+
+if-statement:
+    'if' '(' expression ')' statement ['else' statement]
+
+assert-statement:
+    'assert' expression [':' expression] ';'
+
+switch-statement:
+    'switch' '(' expression ')' switch-block
+
+switch-block:
+    '{' {switch-block-statement-group} {switch-label} '}'
+
+switch-block-statement-group:
+    switch-labels block-statements
+
+switch-labels:
+    switch-label {switch-label}
+
+switch-label:
+    'case' case-constant ':'
+    | 'case' pattern [guard] ':'            // Pattern matching (Java 21)
+    | 'default' ':'
+
+case-constant:
+    conditional-expression
+    | enum-constant-name
+
+guard:
+    'when' expression                        // Pattern guards (Java 21)
+
+block-statements:
+    {block-statement}
+
+switch-expression:                           // Switch expressions (Java 14)
+    'switch' '(' expression ')' '{'
+        {switch-rule}
+    '}'
+
+switch-rule:
+    switch-label '->' expression ';'
+    | switch-label '->' block
+    | switch-label '->' 'throw' expression ';'
+
+while-statement:
+    'while' '(' expression ')' statement
+
+do-statement:
+    'do' statement 'while' '(' expression ')' ';'
+
+for-statement:
+    basic-for-statement
+    | enhanced-for-statement
+
+basic-for-statement:
+    'for' '(' [for-init] ';' [expression] ';' [for-update] ')' statement
+
+for-init:
+    statement-expression-list
+    | local-variable-declaration
+
+for-update:
+    statement-expression-list
+
+statement-expression-list:
+    statement-expression {',' statement-expression}
+
+enhanced-for-statement:
+    'for' '(' {annotation} ['final'] local-variable-type variable-declarator-id ':' expression ')' statement
+
+break-statement:
+    'break' [IDENTIFIER] ';'
+
+continue-statement:
+    'continue' [IDENTIFIER] ';'
+
+return-statement:
+    'return' [expression] ';'
+
+throw-statement:
+    'throw' expression ';'
+
+synchronized-statement:
+    'synchronized' '(' expression ')' block
+
+try-statement:
+    'try' block catches
+    | 'try' block [catches] finally-block
+    | try-with-resources-statement
+
+catches:
+    catch-clause {catch-clause}
+
+catch-clause:
+    'catch' '(' catch-formal-parameter ')' block
+
+catch-formal-parameter:
+    {annotation} ['final'] catch-type variable-declarator-id
+
+catch-type:
+    class-type {'|' class-type}             // Multi-catch (Java 7)
+
+finally-block:
+    'finally' block
+
+try-with-resources-statement:               // Try-with-resources (Java 7)
+    'try' resource-specification block [catches] [finally-block]
+
+resource-specification:
+    '(' resource-list [';'] ')'
+
+resource-list:
+    resource {';' resource}
+
+resource:
+    {annotation} ['final'] local-variable-type IDENTIFIER '=' expression
+    | variable-access                        // Effectively final vars (Java 9)
+
+variable-access:
+    expression-name
+    | field-access
+
+labeled-statement:
+    IDENTIFIER ':' statement
+
+yield-statement:                             // For switch expressions (Java 14)
+    'yield' expression ';'
+
+================================================================================
+EXPRESSIONS
+================================================================================
+
+expression:
+    lambda-expression
+    | assignment-expression
+
+--------------------------------------------------------------------------------
+Primary Expressions
+--------------------------------------------------------------------------------
+
+primary:
+    primary-no-new-array
+    | array-creation-expression
+
+primary-no-new-array:
+    literal
+    | class-literal
+    | 'this'
+    | type-name '.' 'this'
+    | '(' expression ')'
+    | class-instance-creation-expression
+    | field-access
+    | array-access
+    | method-invocation
+    | method-reference
+
+literal:
+    INTEGER_LITERAL
+    | FLOATING_POINT_LITERAL
+    | BOOLEAN_LITERAL
+    | CHARACTER_LITERAL
+    | STRING_LITERAL
+    | TEXT_BLOCK                            // Text blocks (Java 15)
+    | NULL_LITERAL
+
+class-literal:
+    type-name {'[' ']'} '.' 'class'
+    | primitive-type {'[' ']'} '.' 'class'
+    | 'void' '.' 'class'
+
+class-instance-creation-expression:
+    'new' [type-arguments] type-arguments-or-diamond
+    '(' [argument-list] ')' [class-body]
+    | expression-name '.' 'new' [type-arguments] IDENTIFIER
+      [type-arguments-or-diamond] '(' [argument-list] ')' [class-body]
+    | primary '.' 'new' [type-arguments] IDENTIFIER
+      [type-arguments-or-diamond] '(' [argument-list] ')' [class-body]
+
+type-arguments-or-diamond:
+    type-arguments
+    | '<' '>'                               // Diamond operator (Java 7)
+
+field-access:
+    primary '.' IDENTIFIER
+    | 'super' '.' IDENTIFIER
+    | type-name '.' 'super' '.' IDENTIFIER
+
+array-access:
+    expression-name '[' expression ']'
+    | primary-no-new-array '[' expression ']'
+
+method-invocation:
+    method-name '(' [argument-list] ')'
+    | type-name '.' [type-arguments] IDENTIFIER '(' [argument-list] ')'
+    | expression-name '.' [type-arguments] IDENTIFIER '(' [argument-list] ')'
+    | primary '.' [type-arguments] IDENTIFIER '(' [argument-list] ')'
+    | 'super' '.' [type-arguments] IDENTIFIER '(' [argument-list] ')'
+    | type-name '.' 'super' '.' [type-arguments] IDENTIFIER '(' [argument-list] ')'
+
+argument-list:
+    expression {',' expression}
+
+method-reference:                            // Method references (Java 8)
+    expression-name '::' [type-arguments] IDENTIFIER
+    | reference-type '::' [type-arguments] IDENTIFIER
+    | primary '::' [type-arguments] IDENTIFIER
+    | 'super' '::' [type-arguments] IDENTIFIER
+    | type-name '.' 'super' '::' [type-arguments] IDENTIFIER
+    | class-type '::' [type-arguments] 'new'
+    | array-type '::' 'new'
+
+array-creation-expression:
+    'new' primitive-type dim-exprs [array-dimensions]
+    | 'new' class-or-interface-type dim-exprs [array-dimensions]
+    | 'new' primitive-type array-dimensions array-initializer
+    | 'new' class-or-interface-type array-dimensions array-initializer
+
+dim-exprs:
+    dim-expr {dim-expr}
+
+dim-expr:
+    {annotation} '[' expression ']'
+
+--------------------------------------------------------------------------------
+Operators and Expressions
+--------------------------------------------------------------------------------
+
+post-increment-expression:
+    postfix-expression '++'
+
+post-decrement-expression:
+    postfix-expression '--'
+
+postfix-expression:
+    primary
+    | expression-name
+
+pre-increment-expression:
+    '++' unary-expression
+
+pre-decrement-expression:
+    '--' unary-expression
+
+unary-expression:
+    pre-increment-expression
+    | pre-decrement-expression
+    | '+' unary-expression
+    | '-' unary-expression
+    | unary-expression-not-plus-minus
+
+unary-expression-not-plus-minus:
+    postfix-expression
+    | '~' unary-expression
+    | '!' unary-expression
+    | cast-expression
+    | switch-expression                      // Switch expressions (Java 14)
+
+cast-expression:
+    '(' primitive-type ')' unary-expression
+    | '(' reference-type {additional-bound} ')' unary-expression-not-plus-minus
+    | '(' reference-type {additional-bound} ')' lambda-expression
+
+multiplicative-expression:
+    unary-expression
+    | multiplicative-expression '*' unary-expression
+    | multiplicative-expression '/' unary-expression
+    | multiplicative-expression '%' unary-expression
+
+additive-expression:
+    multiplicative-expression
+    | additive-expression '+' multiplicative-expression
+    | additive-expression '-' multiplicative-expression
+
+shift-expression:
+    additive-expression
+    | shift-expression '<<' additive-expression
+    | shift-expression '>>' additive-expression
+    | shift-expression '>>>' additive-expression
+
+relational-expression:
+    shift-expression
+    | relational-expression '<' shift-expression
+    | relational-expression '>' shift-expression
+    | relational-expression '<=' shift-expression
+    | relational-expression '>=' shift-expression
+    | instanceof-expression
+
+instanceof-expression:
+    relational-expression 'instanceof' reference-type
+    | relational-expression 'instanceof' pattern    // Pattern matching (Java 16)
+
+equality-expression:
+    relational-expression
+    | equality-expression '==' relational-expression
+    | equality-expression '!=' relational-expression
+
+and-expression:
+    equality-expression
+    | and-expression '&' equality-expression
+
+exclusive-or-expression:
+    and-expression
+    | exclusive-or-expression '^' and-expression
+
+inclusive-or-expression:
+    exclusive-or-expression
+    | inclusive-or-expression '|' exclusive-or-expression
+
+conditional-and-expression:
+    inclusive-or-expression
+    | conditional-and-expression '&&' inclusive-or-expression
+
+conditional-or-expression:
+    conditional-and-expression
+    | conditional-or-expression '||' conditional-and-expression
+
+conditional-expression:
+    conditional-or-expression
+    | conditional-or-expression '?' expression ':' conditional-expression
+    | conditional-or-expression '?' expression ':' lambda-expression
+
+assignment-expression:
+    conditional-expression
+    | assignment
+
+assignment:
+    left-hand-side assignment-operator expression
+
+left-hand-side:
+    expression-name
+    | field-access
+    | array-access
+
+assignment-operator:
+    '=' | '*=' | '/=' | '%=' | '+=' | '-='
+    | '<<=' | '>>=' | '>>>='
+    | '&=' | '^=' | '|='
+
+expression-name:
+    IDENTIFIER
+    | ambiguous-name '.' IDENTIFIER
+
+ambiguous-name:
+    IDENTIFIER
+    | ambiguous-name '.' IDENTIFIER
+
+method-name:
+    IDENTIFIER
+    | ambiguous-name '.' IDENTIFIER
+
+--------------------------------------------------------------------------------
+Lambda Expressions (Java 8+)
+--------------------------------------------------------------------------------
+
+lambda-expression:
+    lambda-parameters '->' lambda-body
+
+lambda-parameters:
+    IDENTIFIER                              // Single inferred parameter
+    | '(' [formal-parameter-list] ')'       // Multiple parameters
+    | '(' inferred-formal-parameter-list ')'
+
+inferred-formal-parameter-list:
+    IDENTIFIER {',' IDENTIFIER}
+
+lambda-body:
+    expression
+    | block
+
+================================================================================
+PATTERNS (Java 16+)
+================================================================================
+
+pattern:
+    type-pattern
+    | record-pattern                        // Record patterns (Java 21)
+
+type-pattern:
+    local-variable-type variable-declarator-id
+
+record-pattern:                             // Record patterns (Java 21)
+    reference-type '(' [pattern-list] ')'
+
+pattern-list:
+    pattern {',' pattern}
+
+guarded-pattern:
+    pattern 'when' expression
+
+================================================================================
+LEXICAL STRUCTURE
+================================================================================
+
+--------------------------------------------------------------------------------
+Identifiers
+--------------------------------------------------------------------------------
+
+IDENTIFIER:
+    IdentifierStart {IdentifierPart}
+
+IdentifierStart:
+    JavaLetter
+
+IdentifierPart:
+    JavaLetter | JavaDigit
+
+JavaLetter:
+    [a-zA-Z_$] | UnicodeEscape
+
+JavaDigit:
+    [0-9]
+
+--------------------------------------------------------------------------------
+Keywords (Reserved Words)
+--------------------------------------------------------------------------------
+
+Keywords:
+    'abstract'      'continue'      'for'           'new'           'switch'
+    'assert'        'default'       'if'            'package'       'synchronized'
+    'boolean'       'do'            'goto'          'private'       'this'
+    'break'         'double'        'implements'    'protected'     'throw'
+    'byte'          'else'          'import'        'public'        'throws'
+    'case'          'enum'          'instanceof'    'return'        'transient'
+    'catch'         'extends'       'int'           'short'         'try'
+    'char'          'final'         'interface'     'static'        'void'
+    'class'         'finally'       'long'          'strictfp'      'volatile'
+    'const'         'float'         'native'        'super'         'while'
+    '_'             (underscore - reserved since Java 9)
+
+Contextual Keywords (Java 9+):
+    'exports'       'module'        'open'          'opens'         'provides'
+    'requires'      'to'            'transitive'    'uses'          'with'
+    'var'           (Java 10)
+    'yield'         (Java 13)
+    'record'        (Java 16)
+    'sealed'        'permits'       'non-sealed'    (Java 17)
+    'when'          (Java 21 - pattern guards)
+
+Literals:
+    'true'          'false'         'null'
+
+--------------------------------------------------------------------------------
+Literals
+--------------------------------------------------------------------------------
+
+INTEGER_LITERAL:
+    DecimalIntegerLiteral
+    | HexIntegerLiteral
+    | OctalIntegerLiteral
+    | BinaryIntegerLiteral
+
+DecimalIntegerLiteral:
+    DecimalNumeral [IntegerTypeSuffix]
+
+HexIntegerLiteral:
+    HexNumeral [IntegerTypeSuffix]
+
+OctalIntegerLiteral:
+    OctalNumeral [IntegerTypeSuffix]
+
+BinaryIntegerLiteral:
+    BinaryNumeral [IntegerTypeSuffix]
+
+IntegerTypeSuffix:
+    'l' | 'L'
+
+DecimalNumeral:
+    '0'
+    | NonZeroDigit {[Underscores] Digits}
+
+Digits:
+    Digit {[Underscores] Digit}
+
+Digit:
+    '0' | NonZeroDigit
+
+NonZeroDigit:
+    [1-9]
+
+Underscores:
+    '_' {'_'}
+
+HexNumeral:
+    '0x' HexDigits
+    | '0X' HexDigits
+
+HexDigits:
+    HexDigit {[Underscores] HexDigit}
+
+HexDigit:
+    [0-9a-fA-F]
+
+OctalNumeral:
+    '0' [Underscores] OctalDigits
+
+OctalDigits:
+    OctalDigit {[Underscores] OctalDigit}
+
+OctalDigit:
+    [0-7]
+
+BinaryNumeral:
+    '0b' BinaryDigits
+    | '0B' BinaryDigits
+
+BinaryDigits:
+    BinaryDigit {[Underscores] BinaryDigit}
+
+BinaryDigit:
+    [01]
+
+FLOATING_POINT_LITERAL:
+    DecimalFloatingPointLiteral
+    | HexadecimalFloatingPointLiteral
+
+DecimalFloatingPointLiteral:
+    Digits '.' [Digits] [ExponentPart] [FloatTypeSuffix]
+    | '.' Digits [ExponentPart] [FloatTypeSuffix]
+    | Digits ExponentPart [FloatTypeSuffix]
+    | Digits [ExponentPart] FloatTypeSuffix
+
+ExponentPart:
+    ExponentIndicator SignedInteger
+
+ExponentIndicator:
+    'e' | 'E'
+
+SignedInteger:
+    [Sign] Digits
+
+Sign:
+    '+' | '-'
+
+FloatTypeSuffix:
+    'f' | 'F' | 'd' | 'D'
+
+HexadecimalFloatingPointLiteral:
+    HexSignificand BinaryExponent [FloatTypeSuffix]
+
+HexSignificand:
+    HexNumeral ['.']
+    | '0x' [HexDigits] '.' HexDigits
+    | '0X' [HexDigits] '.' HexDigits
+
+BinaryExponent:
+    BinaryExponentIndicator SignedInteger
+
+BinaryExponentIndicator:
+    'p' | 'P'
+
+BOOLEAN_LITERAL:
+    'true' | 'false'
+
+CHARACTER_LITERAL:
+    "'" SingleCharacter "'"
+    | "'" EscapeSequence "'"
+
+SingleCharacter:
+    InputCharacter except ' and \
+
+STRING_LITERAL:
+    '"' {StringCharacter} '"'
+
+StringCharacter:
+    InputCharacter except " and \
+    | EscapeSequence
+
+TEXT_BLOCK:                                 // Text blocks (Java 15)
+    '"""' {TextBlockCharacter} '"""'
+
+EscapeSequence:
+    '\b'    (backspace)
+    '\t'    (tab)
+    '\n'    (linefeed)
+    '\f'    (form feed)
+    '\r'    (carriage return)
+    '\"'    (double quote)
+    '\''    (single quote)
+    '\\'    (backslash)
+    OctalEscape
+    UnicodeEscape
+
+OctalEscape:
+    '\' OctalDigit
+    | '\' OctalDigit OctalDigit
+    | '\' ZeroToThree OctalDigit OctalDigit
+
+ZeroToThree:
+    [0-3]
+
+UnicodeEscape:
+    '\u' HexDigit HexDigit HexDigit HexDigit
+
+NULL_LITERAL:
+    'null'
+
+--------------------------------------------------------------------------------
+Separators
+--------------------------------------------------------------------------------
+
+Separators:
+    '('     ')'     '{'     '}'     '['     ']'
+    ';'     ','     '.'     '...'   '@'     '::'
+
+--------------------------------------------------------------------------------
+Operators
+--------------------------------------------------------------------------------
+
+Operators:
+    '='     '>'     '<'     '!'     '~'     '?'     ':'
+    '->'    (lambda)
+    '=='    '>='    '<='    '!='    '&&'    '||'    '++'    '--'
+    '+'     '-'     '*'     '/'     '&'     '|'     '^'     '%'
+    '<<'    '>>'    '>>>'
+    '+='    '-='    '*='    '/='    '&='    '|='    '^='    '%='
+    '<<='   '>>='   '>>>='
+
+--------------------------------------------------------------------------------
+Comments
+--------------------------------------------------------------------------------
+
+Comment:
+    EndOfLineComment
+    | TraditionalComment
+    | DocumentationComment
+
+EndOfLineComment:
+    '//' {InputCharacter}
+
+TraditionalComment:
+    '/*' {CommentCharacter} '*/'
+
+DocumentationComment:
+    '/**' {DocumentationCommentCharacter} '*/'
+
+================================================================================
+MODULES (Java 9+)
+================================================================================
+
+module-declaration:
+    {annotation} ['open'] 'module' qualified-name
+    '{' {module-directive} '}'
+
+module-directive:
+    requires-directive
+    | exports-directive
+    | opens-directive
+    | uses-directive
+    | provides-directive
+
+requires-directive:
+    'requires' {requires-modifier} qualified-name ';'
+
+requires-modifier:
+    'transitive' | 'static'
+
+exports-directive:
+    'exports' package-name ['to' module-name {',' module-name}] ';'
+
+opens-directive:
+    'opens' package-name ['to' module-name {',' module-name}] ';'
+
+uses-directive:
+    'uses' type-name ';'
+
+provides-directive:
+    'provides' type-name 'with' type-name {',' type-name} ';'
+
+package-name:
+    qualified-name
+
+module-name:
+    qualified-name
+
+================================================================================
+OPERATOR PRECEDENCE (highest to lowest)
+================================================================================
+
+1.  Postfix:            expr++ expr--
+2.  Unary:              ++expr --expr +expr -expr ~ !
+3.  Multiplicative:     * / %
+4.  Additive:           + -
+5.  Shift:              << >> >>>
+6.  Relational:         < > <= >= instanceof
+7.  Equality:           == !=
+8.  Bitwise AND:        &
+9.  Bitwise XOR:        ^
+10. Bitwise OR:         |
+11. Logical AND:        &&
+12. Logical OR:         ||
+13. Ternary:            ? :
+14. Lambda:             ->
+15. Assignment:         = += -= *= /= %= &= ^= |= <<= >>= >>>=
+
+================================================================================
+EXAMPLES
+================================================================================
+
+Example 1: Simple Class
+------------------------
+package com.example;
+
+import java.util.List;
+
+public class Person {
+    private String name;
+    private int age;
+
+    public Person(String name, int age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    public String getName() {
+        return name;
+    }
+}
+
+Example 2: Generic Class
+-------------------------
+public class Box<T extends Number> {
+    private T value;
+
+    public T getValue() {
+        return value;
+    }
+
+    public void setValue(T value) {
+        this.value = value;
+    }
+}
+
+Example 3: Lambda Expression
+-----------------------------
+List<String> names = Arrays.asList("John", "Jane", "Bob");
+names.stream()
+     .filter(n -> n.startsWith("J"))
+     .map(String::toUpperCase)
+     .forEach(System.out::println);
+
+Example 4: Record (Java 16+)
+-----------------------------
+public record Point(int x, int y) {
+    public double distanceFromOrigin() {
+        return Math.sqrt(x * x + y * y);
+    }
+}
+
+Example 5: Sealed Class (Java 17+)
+-----------------------------------
+public sealed interface Shape permits Circle, Rectangle, Triangle {
+    double area();
+}
+
+public final class Circle implements Shape {
+    private final double radius;
+
+    public Circle(double radius) {
+        this.radius = radius;
+    }
+
+    @Override
+    public double area() {
+        return Math.PI * radius * radius;
+    }
+}
+
+Example 6: Pattern Matching (Java 16+)
+---------------------------------------
+if (obj instanceof String s) {
+    System.out.println(s.toUpperCase());
+}
+
+Example 7: Switch Expression (Java 14+)
+----------------------------------------
+String result = switch (day) {
+    case MONDAY, FRIDAY, SUNDAY -> "Good day";
+    case TUESDAY -> "Not so good";
+    case THURSDAY, SATURDAY -> "Okay";
+    case WEDNESDAY -> "Meh";
+    default -> "Unknown";
+};
+
+Example 8: Text Block (Java 15+)
+---------------------------------
+String html = """
+    <html>
+        <body>
+            <p>Hello, World!</p>
+        </body>
+    </html>
+    """;
+
+Example 9: Pattern Matching in Switch (Java 21+)
+-------------------------------------------------
+static String formatterPatternSwitch(Object obj) {
+    return switch (obj) {
+        case Integer i -> "int: " + i;
+        case String s when s.length() > 5 -> "long string: " + s;
+        case String s -> "short string: " + s;
+        default -> "unknown";
+    };
+}
+
+Example 10: Record Pattern (Java 21+)
+--------------------------------------
+record Point(int x, int y) {}
+record ColoredPoint(Point point, String color) {}
+
+void printColoredPoint(ColoredPoint cp) {
+    if (cp instanceof ColoredPoint(Point(int x, int y), String color)) {
+        System.out.println("x: " + x + ", y: " + y + ", color: " + color);
+    }
+}
+
+================================================================================
+END OF GRAMMAR SPECIFICATION
+================================================================================
+
