@@ -1,0 +1,442 @@
+SQL Grammar Specification
+=========================
+
+This document describes the SQL grammar implemented by the SqlParser.
+The parser supports standard SQL (SQL-92/SQL:2003) syntax.
+
+EBNF-like Grammar Notation:
+  ::=     means "is defined as"
+  |       means "or"
+  [ ]     means optional (0 or 1 times)
+  { }     means repeated (0 or more times)
+  ( )     means grouping
+  
+================================================================================
+1. SCRIPT AND STATEMENTS
+================================================================================
+
+script ::= statement { ";" statement } [ ";" ]
+
+statement ::=
+    | select_statement
+    | insert_statement
+    | update_statement
+    | delete_statement
+    | create_table_statement
+    | drop_table_statement
+    | create_index_statement
+    | drop_index_statement
+
+================================================================================
+2. SELECT STATEMENT
+================================================================================
+
+select_statement ::=
+    "SELECT" [ "DISTINCT" ] select_column { "," select_column }
+    [ from_clause ]
+    [ where_clause ]
+    [ group_by_clause ]
+    [ having_clause ]
+    [ order_by_clause ]
+    [ limit_clause ]
+    [ offset_clause ]
+
+select_column ::= expression [ "AS" identifier ]
+
+from_clause ::= "FROM" table_reference { "," table_reference }
+
+where_clause ::= "WHERE" expression
+
+group_by_clause ::= "GROUP" "BY" expression { "," expression }
+
+having_clause ::= "HAVING" expression
+
+order_by_clause ::= "ORDER" "BY" order_by_item { "," order_by_item }
+
+order_by_item ::= expression [ "ASC" | "DESC" ]
+
+limit_clause ::= "LIMIT" integer
+
+offset_clause ::= "OFFSET" integer
+
+================================================================================
+3. TABLE REFERENCES AND JOINS
+================================================================================
+
+table_reference ::= table_name [ join_clause ]
+
+table_name ::= identifier [ [ "AS" ] identifier ]
+
+join_clause ::= { join_type table_name "ON" expression }
+
+join_type ::=
+    | "INNER" "JOIN"
+    | "LEFT" [ "OUTER" ] "JOIN"
+    | "RIGHT" [ "OUTER" ] "JOIN"
+    | "FULL" [ "OUTER" ] "JOIN"
+    | "CROSS" "JOIN"
+    | "JOIN"
+
+================================================================================
+4. INSERT STATEMENT
+================================================================================
+
+insert_statement ::=
+    "INSERT" "INTO" identifier
+    [ "(" identifier { "," identifier } ")" ]
+    "VALUES"
+    value_list { "," value_list }
+
+value_list ::= "(" expression { "," expression } ")"
+
+================================================================================
+5. UPDATE STATEMENT
+================================================================================
+
+update_statement ::=
+    "UPDATE" identifier
+    "SET" assignment { "," assignment }
+    [ where_clause ]
+
+assignment ::= identifier "=" expression
+
+================================================================================
+6. DELETE STATEMENT
+================================================================================
+
+delete_statement ::=
+    "DELETE" "FROM" identifier
+    [ where_clause ]
+
+================================================================================
+7. CREATE TABLE STATEMENT
+================================================================================
+
+create_table_statement ::=
+    "CREATE" "TABLE" [ "IF" "NOT" "EXISTS" ] identifier
+    "(" table_element { "," table_element } ")"
+
+table_element ::= column_definition | table_constraint
+
+column_definition ::=
+    identifier data_type
+    [ "NOT" "NULL" ]
+    [ "DEFAULT" expression ]
+    [ "PRIMARY" "KEY" ]
+    [ "UNIQUE" ]
+    [ "AUTO_INCREMENT" | "AUTOINCREMENT" ]
+
+data_type ::=
+    type_name [ "(" integer [ "," integer ] ")" ]
+
+type_name ::=
+    | "INT" | "INTEGER"
+    | "VARCHAR" | "CHAR" | "TEXT"
+    | "BOOLEAN" | "BOOL"
+    | "DATE" | "TIME" | "DATETIME" | "TIMESTAMP"
+    | "DECIMAL" | "NUMERIC"
+    | "FLOAT" | "DOUBLE" | "REAL"
+    | "SMALLINT" | "BIGINT"
+
+table_constraint ::=
+    | primary_key_constraint
+    | foreign_key_constraint
+    | unique_constraint
+
+primary_key_constraint ::=
+    "PRIMARY" "KEY" "(" identifier { "," identifier } ")"
+
+foreign_key_constraint ::=
+    "FOREIGN" "KEY" "(" identifier { "," identifier } ")"
+    "REFERENCES" identifier "(" identifier { "," identifier } ")"
+
+unique_constraint ::=
+    "UNIQUE" "(" identifier { "," identifier } ")"
+
+================================================================================
+8. DROP TABLE STATEMENT
+================================================================================
+
+drop_table_statement ::=
+    "DROP" "TABLE" [ "IF" "EXISTS" ] identifier
+
+================================================================================
+9. CREATE INDEX STATEMENT
+================================================================================
+
+create_index_statement ::=
+    "CREATE" [ "UNIQUE" ] "INDEX" [ "IF" "NOT" "EXISTS" ]
+    identifier "ON" identifier
+    "(" identifier { "," identifier } ")"
+
+================================================================================
+10. DROP INDEX STATEMENT
+================================================================================
+
+drop_index_statement ::=
+    "DROP" "INDEX" [ "IF" "EXISTS" ] identifier
+
+================================================================================
+11. EXPRESSIONS
+================================================================================
+
+expression ::= or_expression
+
+or_expression ::= and_expression { "OR" and_expression }
+
+and_expression ::= comparison_expression { "AND" comparison_expression }
+
+comparison_expression ::=
+    additive_expression
+    [ ( "=" | "<>" | "!=" | "<" | "<=" | ">" | ">=" ) additive_expression ]
+
+additive_expression ::=
+    multiplicative_expression
+    { ( "+" | "-" ) multiplicative_expression }
+
+multiplicative_expression ::=
+    like_expression
+    { ( "*" | "/" | "%" ) like_expression }
+
+like_expression ::=
+    in_expression
+    [ [ "NOT" ] "LIKE" in_expression ]
+
+in_expression ::=
+    between_expression
+    [ [ "NOT" ] "IN" "(" expression { "," expression } ")" ]
+
+between_expression ::=
+    is_null_expression
+    [ [ "NOT" ] "BETWEEN" is_null_expression "AND" is_null_expression ]
+
+is_null_expression ::=
+    unary_expression
+    [ "IS" [ "NOT" ] "NULL" ]
+
+unary_expression ::=
+    | "NOT" primary_expression
+    | "+" primary_expression
+    | "-" primary_expression
+    | primary_expression
+
+primary_expression ::=
+    | literal
+    | column_reference
+    | all_columns
+    | function_call
+    | case_expression
+    | cast_expression
+    | "(" expression ")"
+
+================================================================================
+12. LITERALS
+================================================================================
+
+literal ::=
+    | integer_literal
+    | float_literal
+    | string_literal
+    | boolean_literal
+    | null_literal
+
+integer_literal ::= digit { digit }
+
+float_literal ::= digit { digit } "." digit { digit }
+
+string_literal ::= "'" { string_char } "'"
+
+string_char ::= any_character_except_single_quote | "''"
+
+boolean_literal ::= "TRUE" | "FALSE"
+
+null_literal ::= "NULL"
+
+================================================================================
+13. COLUMN REFERENCES
+================================================================================
+
+column_reference ::= [ identifier "." ] identifier
+
+all_columns ::= [ identifier "." ] "*"
+
+================================================================================
+14. FUNCTION CALLS
+================================================================================
+
+function_call ::=
+    identifier "(" [ "DISTINCT" ] [ expression { "," expression } ] ")"
+
+Common functions:
+  - COUNT, SUM, AVG, MIN, MAX (aggregate functions)
+  - UPPER, LOWER, LENGTH, SUBSTRING, TRIM (string functions)
+  - NOW, YEAR, MONTH, DAY, DATE, TIME (date/time functions)
+  - ROUND, ABS, CEIL, FLOOR (numeric functions)
+
+================================================================================
+15. CASE EXPRESSION
+================================================================================
+
+case_expression ::=
+    "CASE" [ expression ]
+    { "WHEN" expression "THEN" expression }
+    [ "ELSE" expression ]
+    "END"
+
+Examples:
+  CASE status
+    WHEN 'active' THEN 1
+    WHEN 'inactive' THEN 0
+    ELSE -1
+  END
+
+  CASE
+    WHEN age < 18 THEN 'minor'
+    WHEN age >= 18 AND age < 65 THEN 'adult'
+    ELSE 'senior'
+  END
+
+================================================================================
+16. CAST EXPRESSION
+================================================================================
+
+cast_expression ::=
+    "CAST" "(" expression "AS" data_type ")"
+
+Examples:
+  CAST(price AS INTEGER)
+  CAST('2024-01-01' AS DATE)
+
+================================================================================
+17. IDENTIFIERS
+================================================================================
+
+identifier ::=
+    | regular_identifier
+    | quoted_identifier
+
+regular_identifier ::= letter { letter | digit | "_" }
+
+quoted_identifier ::=
+    | '"' { any_character_except_double_quote | '""' } '"'
+    | '[' { any_character_except_right_bracket } ']'
+    | '`' { any_character_except_backtick } '`'
+
+Note: Identifiers cannot be SQL keywords unless quoted.
+
+================================================================================
+18. KEYWORDS
+================================================================================
+
+Reserved keywords (case-insensitive):
+  SELECT, FROM, WHERE, INSERT, INTO, VALUES, UPDATE, SET, DELETE,
+  CREATE, TABLE, DROP, ALTER, INDEX, ON, AND, OR, NOT, NULL, TRUE, FALSE,
+  IS, IN, LIKE, BETWEEN, CASE, WHEN, THEN, ELSE, END, AS,
+  JOIN, INNER, LEFT, RIGHT, FULL, CROSS, OUTER,
+  GROUP, BY, HAVING, ORDER, ASC, DESC, LIMIT, OFFSET, DISTINCT, ALL,
+  PRIMARY, KEY, FOREIGN, REFERENCES, UNIQUE, CHECK, DEFAULT,
+  AUTO_INCREMENT, AUTOINCREMENT, IF, EXISTS, CAST
+
+Data type keywords:
+  INT, INTEGER, VARCHAR, CHAR, TEXT, BOOLEAN, BOOL,
+  DATE, TIME, DATETIME, TIMESTAMP,
+  DECIMAL, NUMERIC, FLOAT, DOUBLE, REAL,
+  SMALLINT, BIGINT
+
+================================================================================
+19. OPERATOR PRECEDENCE (highest to lowest)
+================================================================================
+
+1. Parentheses: ( )
+2. Unary: +, -, NOT
+3. Multiplicative: *, /, %
+4. Additive: +, -
+5. Comparison: =, <>, !=, <, <=, >, >=
+6. LIKE, IN, BETWEEN, IS NULL
+7. AND
+8. OR
+
+================================================================================
+20. COMMENTS
+================================================================================
+
+Single-line comment: -- comment text
+Multi-line comment: /* comment text */
+
+Note: Comments are currently not parsed by this implementation.
+
+================================================================================
+21. EXAMPLES
+================================================================================
+
+-- Simple SELECT
+SELECT * FROM users;
+
+-- SELECT with WHERE and ORDER BY
+SELECT name, email FROM users WHERE age >= 18 ORDER BY name ASC;
+
+-- SELECT with JOIN
+SELECT u.name, o.total 
+FROM users u 
+INNER JOIN orders o ON u.id = o.user_id 
+WHERE o.status = 'completed';
+
+-- SELECT with GROUP BY and aggregate functions
+SELECT category, COUNT(*), AVG(price) 
+FROM products 
+GROUP BY category 
+HAVING AVG(price) > 100;
+
+-- INSERT
+INSERT INTO users (name, email, age) 
+VALUES ('John Doe', 'john@example.com', 25);
+
+-- UPDATE
+UPDATE products SET price = price * 1.1 WHERE category = 'electronics';
+
+-- DELETE
+DELETE FROM users WHERE last_login < '2023-01-01';
+
+-- CREATE TABLE
+CREATE TABLE users (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  age INT,
+  created_at DATETIME DEFAULT NOW()
+);
+
+-- CREATE TABLE with constraints
+CREATE TABLE orders (
+  id INT PRIMARY KEY,
+  user_id INT NOT NULL,
+  total DECIMAL(10, 2),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- DROP TABLE
+DROP TABLE IF EXISTS temp_users;
+
+-- CREATE INDEX
+CREATE UNIQUE INDEX idx_email ON users(email);
+
+-- CASE expression
+SELECT 
+  name,
+  CASE 
+    WHEN age < 18 THEN 'minor'
+    WHEN age >= 18 AND age < 65 THEN 'adult'
+    ELSE 'senior'
+  END AS age_group
+FROM users;
+
+-- Subquery (in WHERE clause)
+SELECT name FROM users 
+WHERE id IN (SELECT user_id FROM orders WHERE total > 1000);
+
+-- BETWEEN
+SELECT * FROM products WHERE price BETWEEN 10 AND 100;
+
+-- CAST
+SELECT CAST(price AS INTEGER) AS price_int FROM products;
+
