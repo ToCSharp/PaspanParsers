@@ -51,10 +51,8 @@ public sealed class TextBefore<T>(Parser<T> delimiter, bool canBeEmpty = false, 
                 {
                     return false;
                 }
-                if (_addDelimiterToResult)
-                {
-                    length += parsed.Length + 1;
-                }
+
+                // No delimiter was found at Eof, so there is nothing to add to the result
 
                 reader.SetValue(reader.GetPosition(start), reader.GetCurrentPosition());
                 //result.Set(PooledStringValue.GetString(reader.GetValue()));
@@ -69,6 +67,8 @@ public sealed class TextBefore<T>(Parser<T> delimiter, bool canBeEmpty = false, 
 
             if (delimiterFound)
             {
+                // Use the bytes actually consumed, delimiter parsers don't always set Start/End
+                var delimiterLength = reader.GetCurrentPosition() - previous;
 
                 if (!_consumeDelimiter)
                 {
@@ -77,11 +77,12 @@ public sealed class TextBefore<T>(Parser<T> delimiter, bool canBeEmpty = false, 
 
                 if (length == 0 && !_canBeEmpty)
                 {
+                    reader.RollBackState(start);
                     return false;
                 }
                 if (_addDelimiterToResult)
                 {
-                    length += parsed.Length + 1;
+                    length += delimiterLength;
                 }
 
                 reader.SetValue(reader.GetPosition(start), reader.GetCurrentPosition());

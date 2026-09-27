@@ -14,8 +14,14 @@ public sealed class Optional<T>(Parser<T> parser) : Parser<Option<T>>
         context.EnterParser(this);
 
         var parsed = new ParseResult<T>();
+        var start = reader.CaptureState();
 
         var success = _parser.Parse(ref reader, context, ref parsed);
+
+        if (!success)
+        {
+            reader.RollBackState(start);
+        }
 
         result.Set(parsed.Start, parsed.End, success ? new Option<T>(parsed.Value) : new Option<T>());
 

@@ -85,6 +85,8 @@ public sealed class StringLiteral(StringLiteralQuotes quotes) : Parser<string>
                         case 't': c = '\t'; break;
                         case 'v': c = '\v'; break;
                         case '/': c = '/'; break; // JSON escape
+                        case 'u': c = DecodeHex(span, ref i, 4, 4); break;
+                        case 'x': c = DecodeHex(span, ref i, 1, 4); break;
                     }
                 }
 
@@ -101,4 +103,25 @@ public sealed class StringLiteral(StringLiteralQuotes quotes) : Parser<string>
             }
         }
     }
+
+    /// <summary>
+    /// Decodes the hex digits following an escape char at <paramref name="i"/>, leaving <paramref name="i"/> on the last digit.
+    /// The digits have already been validated by <see cref="SpanReader"/>.
+    /// </summary>
+    private static char DecodeHex(ReadOnlySpan<char> span, ref int i, int minDigits, int maxDigits)
+    {
+        var value = 0;
+        var digits = 0;
+
+        while (digits < maxDigits && i + 1 < span.Length && char.IsAsciiHexDigit(span[i + 1]))
+        {
+            i++;
+            digits++;
+            value = (value << 4) | HexValue(span[i]);
+        }
+
+        return digits >= minDigits ? (char)value : span[i];
+    }
+
+    private static int HexValue(char c) => c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10;
 }

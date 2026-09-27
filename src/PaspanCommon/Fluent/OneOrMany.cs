@@ -9,21 +9,36 @@ public sealed class OneOrMany<T>(Parser<T> parser) : Parser<List<T>>
         context.EnterParser(this);
 
         var parsed = new ParseResult<T>();
+        var start = reader.CaptureState();
 
         if (!_parser.Parse(ref reader, context, ref parsed))
         {
+            reader.RollBackState(start);
             return false;
         }
 
-        //var start = parsed.Start;
-        var results = new List<T>();
+        var results = new List<T> { parsed.Value };
 
-        do
+        // A parser that succeeds without consuming anything would loop forever
+        var before = start;
+
+        while (reader.GetCurrentPosition() != before)
         {
-            //end = parsed.End;
-            results.Add(parsed.Value);
+            before = reader.CaptureState();
 
-        } while (_parser.Parse(ref reader, context, ref parsed));
+            if (!_parser.Parse(ref reader, context, ref parsed))
+            {
+                reader.RollBackState(before);
+                break;
+            }
+
+            if (reader.GetCurrentPosition() == before)
+            {
+                break;
+            }
+
+            results.Add(parsed.Value);
+        }
 
         result = new ParseResult<List<T>>(results);
         return true;

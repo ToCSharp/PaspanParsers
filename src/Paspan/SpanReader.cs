@@ -177,7 +177,7 @@ public ref partial struct SpanReader
 
     public bool ReadByte(out byte b)
     {
-        if (_consumed > _buffer.Length)
+        if (_consumed >= _buffer.Length)
         {
             b = 0;
             return false;
@@ -263,6 +263,11 @@ public ref partial struct SpanReader
 
     public byte Current => _consumed >= _buffer.Length ? (byte)0 : _buffer[_consumed];
     public bool Eof() => _consumed >= _buffer.Length;
+
+    /// <summary>
+    /// Returns the unread part of the buffer without moving the cursor.
+    /// </summary>
+    public ReadOnlySpan<byte> GetRemaining() => _buffer[_consumed..];
 
     public bool ReadToEof()
     {
@@ -446,7 +451,9 @@ public ref partial struct SpanReader
             return true;
         }
 
-        // Fast path if there aren't any escape char until next quote
+        // Fast path if there aren't any escape char until next quote.
+        // The first content char is known not to be a quote (empty string is handled above),
+        // so the closing quote search can start one char later.
         var startOffset = _consumed + 2;
 
         var nextQuote = _buffer[startOffset..].IndexOf(startChar);
@@ -457,7 +464,8 @@ public ref partial struct SpanReader
             return false;
         }
 
-        var nextEscape = _buffer.Slice(startOffset, nextQuote + 1).IndexOf(BackSlash);
+        // The escape search must include the first content char, e.g. "\"x"
+        var nextEscape = _buffer.Slice(_consumed + 1, nextQuote + 1).IndexOf(BackSlash);
 
         // If the next escape if not before the next quote, we can return the string as-is
         if (nextEscape == -1)
@@ -506,72 +514,30 @@ public ref partial struct SpanReader
                         break;
 
                     case (byte)'u':
-
-                        // https://stackoverflow.com/a/32175520/142772
-                        // exactly 4 digits
-
-                        var isValidUnicode = false;
-
-                        _consumed++;
-
-                        if (_consumed < _buffer.Length && Character.IsHexDigit(_buffer[_consumed]))
+                        // exactly 4 hex digits, leave the cursor on the last one
+                        for (var i = 0; i < 4; i++)
                         {
                             _consumed++;
-                            if (_consumed < _buffer.Length && Character.IsHexDigit(_buffer[_consumed]))
+                            if (_consumed >= _buffer.Length || !Character.IsHexDigit(_buffer[_consumed]))
                             {
-                                _consumed++;
-                                if (_consumed < _buffer.Length && Character.IsHexDigit(_buffer[_consumed]))
-                                {
-                                    _consumed++;
-                                    if (_consumed < _buffer.Length && Character.IsHexDigit(_buffer[_consumed]))
-                                    {
-                                        isValidUnicode = true;
-                                    }
-                                }
+                                _consumed = start;
+                                return false;
                             }
-                        }
-
-                        if (!isValidUnicode)
-                        {
-                            _consumed = start;
-
-                            return false;
                         }
 
                         break;
                     case (byte)'x':
-
-                        // https://stackoverflow.com/a/32175520/142772
-                        // exactly 4 digits
-
-                        bool isValidHex = false;
-
-                        _consumed++;
-
-                        if (_consumed < _buffer.Length && Character.IsHexDigit(_buffer[_consumed]))
+                        // 1 to 4 hex digits, leave the cursor on the last one
+                        var hexDigits = 0;
+                        while (hexDigits < 4 && _consumed + 1 < _buffer.Length && Character.IsHexDigit(_buffer[_consumed + 1]))
                         {
-                            isValidHex = true;
                             _consumed++;
-                            if (_consumed < _buffer.Length && Character.IsHexDigit(_buffer[_consumed]))
-                            {
-                                _consumed++;
-
-                                if (_consumed < _buffer.Length && Character.IsHexDigit(_buffer[_consumed]))
-                                {
-                                    _consumed++;
-
-                                    if (_consumed < _buffer.Length && Character.IsHexDigit(_buffer[_consumed]))
-                                    {
-                                        isValidUnicode = true;
-                                    }
-                                }
-                            }
+                            hexDigits++;
                         }
 
-                        if (!isValidHex)
+                        if (hexDigits == 0)
                         {
                             _consumed = start;
-
                             return false;
                         }
 

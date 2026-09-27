@@ -42,7 +42,7 @@ namespace PaspanParsers.Json
             var json = Deferred<IJson>();
 
             var jsonArray =
-                Between(LBracket, Separated(Comma, json), RBracket)
+                Between(LBracket, ZeroOrOne(Separated(Comma, json), []), RBracket)
                     .Then<IJson>(static els => new JsonArray(els.ToImmutableArray()));
 
             var jsonMember =
@@ -50,7 +50,7 @@ namespace PaspanParsers.Json
                     .Then(static member => new KeyValuePair<string, IJson>(member.Item1, member.Item2));
 
             var jsonObject =
-                Between(LBrace, Separated(Comma, jsonMember), RBrace)
+                Between(LBrace, ZeroOrOne(Separated(Comma, jsonMember), []), RBrace)
                     .Then<IJson>(static kvps => new JsonObject(kvps.ToImmutableDictionary()));
 
             Json = json.Parser = jsonString.Or(jsonNumber).Or(jsonTrue).Or(jsonFalse).Or(jsonNull).Or(jsonArray).Or(jsonObject);

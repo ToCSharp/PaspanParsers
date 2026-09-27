@@ -12,10 +12,9 @@ public static partial class Character
 
     public static bool IsHexDigit(byte b) => HexConverter.IsHexChar(b);
 
-    public static bool IsWhiteSpace(byte ch) => (ch == Space) || (ch == Tab) || (ch == FormFeed)
-        || (ch == 0xA0) //  non-breaking space
-                        // TODO: 0x1680 && (0x1680 || 0x180E || (ch >= 0x2000 && ch <= 0x200A) || 0x202F || 0x205F || 0x3000 || 0xFEFF) Parlot
-        ;
+    // Only ASCII whitespace: in UTF-8 any byte >= 0x80 is part of a multi-byte sequence,
+    // e.g. 0xA0 is the second byte of NBSP (C2 A0) but also of Cyrillic 'Р' (D0 A0).
+    public static bool IsWhiteSpace(byte ch) => (ch == Space) || (ch == Tab) || (ch == FormFeed);
     public static bool IsNewLine(byte ch) => (ch == LineFeed) || (ch == CarriageReturn) || (ch == 11/*'\v'*/);
 
     public static bool IsWhiteSpaceOrNewLine(byte ch)

@@ -21,8 +21,14 @@ public sealed class ZeroOrOne<T> : Parser<T>
         context.EnterParser(this);
 
         var parsed = new ParseResult<T>();
+        var start = reader.CaptureState();
 
         var success = _parser.Parse(ref reader, context, ref parsed);
+
+        if (!success)
+        {
+            reader.RollBackState(start);
+        }
 
         result.Set(parsed.Start, parsed.End, success ? parsed.Value : _defaultValue);
 

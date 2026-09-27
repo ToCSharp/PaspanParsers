@@ -10,13 +10,11 @@ public sealed class Not<T>(Parser<T> parser) : Parser<T>
 
         var start = reader.CaptureState();
 
-        if (!_parser.Parse(ref reader, context, ref result))
-        {
-            return true;
-        }
+        var success = _parser.Parse(ref reader, context, ref result);
 
+        // Not is a negative lookahead, it never consumes input
         reader.RollBackState(start);
-        return false;
+        return !success;
     }
 
     public override string ToString() => $"Not ({_parser})";

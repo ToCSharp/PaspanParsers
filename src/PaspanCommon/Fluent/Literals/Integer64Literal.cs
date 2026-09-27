@@ -12,23 +12,23 @@ public sealed class Integer64Literal(NumberOptions numberOptions = NumberOptions
 
         var start = reader.CaptureState();
 
-        var sign = 1;
         if ((_numberOptions & NumberOptions.AllowLeadingSign) == NumberOptions.AllowLeadingSign)
         {
-            if (reader.Skip(Minus))
-            {
-                sign = -1;
-            }
-            else
+            if (!reader.Skip(Minus))
             {
                 reader.Skip(Plus);
             }
         }
 
-        if (reader.ConsumeIntegerDigits() && reader.TryGetInt64(out var value))
+        // Parse the sign together with the digits so that MinValue doesn't overflow
+        if (reader.ConsumeIntegerDigits())
         {
-            result.Set(sign * value);
-            return true;
+            reader.SetValue(start, reader.GetCurrentPosition());
+            if (reader.TryGetInt64(out var value))
+            {
+                result.Set(value);
+                return true;
+            }
         }
 
         reader.RollBackState(start);

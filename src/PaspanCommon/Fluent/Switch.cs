@@ -11,28 +11,22 @@ public sealed class Switch<T, U>(Parser<T> previousParser, Func<ParseContext, T,
 
     public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<U> result)
     {
+        var start = reader.CaptureState();
         var previousResult = new ParseResult<T>();
 
-        if (!_previousParser.Parse(ref reader, context, ref previousResult))
+        if (_previousParser.Parse(ref reader, context, ref previousResult))
         {
-            return false;
+            var nextParser = _action(context, previousResult.Value);
+            var parsed = new ParseResult<U>();
+
+            if (nextParser != null && nextParser.Parse(ref reader, context, ref parsed))
+            {
+                result.Set(parsed.Value);
+                return true;
+            }
         }
 
-        var nextParser = _action(context, previousResult.Value);
-
-        if (nextParser == null)
-        {
-            return false;
-        }
-
-        var parsed = new ParseResult<U>();
-
-        if (nextParser.Parse(ref reader, context, ref parsed))
-        {
-            result.Set(parsed.Value);
-            return true;
-        }
-
+        reader.RollBackState(start);
         return false;
     }
 }

@@ -15,19 +15,20 @@ public sealed class If<C, S, T>(Parser<T> parser, Func<C, S, bool> predicate, S 
     {
         context.EnterParser(this);
 
-        var valid = _predicate((C)context, _state);
-
-        if (valid)
+        if (!_predicate((C)context, _state))
         {
-            var start = reader.CaptureState();
-
-            if (!_parser.Parse(ref reader, context, ref result))
-            {
-                reader.RollBackState(start);
-            }
+            return false;
         }
 
-        return valid;
+        var start = reader.CaptureState();
+
+        if (_parser.Parse(ref reader, context, ref result))
+        {
+            return true;
+        }
+
+        reader.RollBackState(start);
+        return false;
     }
 
     public override string ToString() => $"{_parser} (If)";

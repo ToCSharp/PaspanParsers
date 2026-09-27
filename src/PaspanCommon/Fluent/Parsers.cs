@@ -172,7 +172,7 @@ public class LiteralBuilder
     public Parser<string> Text(string text, bool caseInsensitive = false) => new TextLiteral(text, caseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     /// <summary>
-    /// Builds a parser that matches a keyword by ensuring the following character is not a letter or digit.
+    /// Builds a parser that matches a keyword by ensuring the following character is not a letter.
     /// </summary>
     public Parser<string> Keyword(string text, bool caseInsensitive = false) => new Keyword(text, caseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
@@ -257,7 +257,8 @@ public class LiteralBuilder
     /// <param name="singleLineStart">The text that starts the single line comment, e.g., <code>"//"</code>, <code>"--"</code>, <code>"#"</code></param>
     /// <returns></returns>
     //public Parser<Region> Comments(string singleLineStart) => Capture(Text(singleLineStart).And(AnyCharBefore(Text("\r\n").Or(Text("\n")), canBeEmpty: true, failOnEof: false, consumeDelimiter: false)));
-    public Parser<Region> Comments(string singleLineStart) => Parsers.Capture(Text(singleLineStart).And(BytesBefore(Text("\r\n").Or(Text("\n")))));
+    // An empty comment and a comment at Eof are both valid
+    public Parser<Region> Comments(string singleLineStart) => Parsers.Capture(Text(singleLineStart).And(new BytesBefore<byte[], string, string>(Text("\r\n").Or(Text("\n")), canBeEmpty: true, failOnEof: false, consumeDelimiter: true)));
 
     /// <summary>
     /// Builds a parser that matches multi line comments.
@@ -286,7 +287,7 @@ public class TermBuilder
     public Parser<string> Text(string text, bool caseInsensitive = false) => Parsers.SkipWhiteSpace(new TextLiteral(text, caseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
 
     /// <summary>
-    /// Builds a parser that matches a keyword by ensuring the following character is not a letter or digit.
+    /// Builds a parser that matches a keyword by ensuring the following character is not a letter.
     /// </summary>
     public Parser<string> Keyword(string text, bool caseInsensitive = false) => Parsers.SkipWhiteSpace(new Keyword(text, caseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
 
