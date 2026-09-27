@@ -34,6 +34,22 @@ public sealed class CSharpParseContext(CSharpParseOptions options) : ParseContex
     internal SyntaxState SyntaxState { get; set; }
 
     /// <summary>
+    /// The parts parsed before the rule that is running, by type (see <see cref="SyntaxRules.WithPrefix{TPrefix, T}"/>).
+    /// </summary>
+    internal Stack<T> PrefixStack<T>()
+    {
+        _prefixStacks ??= [];
+        if (!_prefixStacks.TryGetValue(typeof(T), out var stack))
+        {
+            _prefixStacks[typeof(T)] = stack = new Stack<T>();
+        }
+
+        return (Stack<T>)stack;
+    }
+
+    private Dictionary<Type, object> _prefixStacks;
+
+    /// <summary>
     /// Lets the next parse reuse the caches; the context must not be used to parse again.
     /// </summary>
     internal void ReleaseCaches()

@@ -15,21 +15,15 @@ internal sealed partial class HybridGrammar
     public Parser<CompilationUnit> CompilationUnit { get; }
 
     /// <summary>
-    /// The attributes and modifiers before the rest of a member declaration.
+    /// The attributes and modifiers before the rest of a member declaration. The rest builds the member node and reads
+    /// them with <see cref="SyntaxRules.Prefix{TPrefix}(ParseContext)"/>; a member that is not valid with them is null.
     /// </summary>
     private readonly record struct MemberPrefix(List<AttributeSection> Attributes, Modifiers Modifiers, List<Modifiers> ModifierList);
 
     /// <summary>
-    /// Builds a member declaration from the part after its attributes and modifiers; returns null when the member
-    /// is not valid with them.
+    /// The return type and the explicit interface before the name of a method, property, indexer, field or operator.
     /// </summary>
-    private delegate MemberDeclaration MemberBuilder(MemberPrefix prefix);
-
-    /// <summary>
-    /// Builds a member that follows a return type and an optional explicit interface; returns null when the member
-    /// is not valid with them.
-    /// </summary>
-    private delegate MemberDeclaration TypedMemberBuilder(MemberPrefix prefix, TypeReference type, TypeReference explicitInterface);
+    private readonly record struct TypedPrefix(TypeReference Type, TypeReference ExplicitInterface);
 
     /// <summary>
     /// The body of a class, struct, interface or record: '{' member* '}' [';'], or ';'.
@@ -416,13 +410,13 @@ internal sealed partial class HybridGrammar
             });
 
         // keyword Name [type parameters] [parameters] [':' base types] constraints body
-        Parser<MemberBuilder> TypeDeclaration(Parser<TypeKeyword> keyword, bool allowParameters) =>
+        Parser<MemberDeclaration> TypeDeclaration(Parser<TypeKeyword> keyword, bool allowParameters) =>
             keyword.And(identifier).And(typeParameterList)
                 .And(allowParameters ? ZeroOrOne(parameterList) : Always<List<Parameter>>(null))
                 .And(ZeroOrOne(baseList, (null, null)))
                 .And(constraintClauses)
                 .And(typeBodyOrSemicolon)
-                .Then(static x => (MemberBuilder)(p => BuildTypeDeclaration(p, x.Item1, x.Item2.Text, x.Item3, x.Item4, x.Item5.Types, x.Item5.Arguments, x.Item6, x.Item7)));
+                .Then(static (c, x) => BuildTypeDeclaration(Prefix<MemberPrefix>(c), x.Item1, x.Item2.Text, x.Item3, x.Item4, x.Item5.Types, x.Item5.Arguments, x.Item6, x.Item7));
 
         Parser<TypeKeyword> PlainTypeKeyword(string keyword) => Keyword(keyword).Then(_ => new TypeKeyword(keyword, false, false));
 
@@ -444,31 +438,43 @@ internal sealed partial class HybridGrammar
         var enumDeclaration = Keyword("enum").SkipAnd(identifier).And(ZeroOrOne(Punctuator(":").SkipAnd(type)))
             .AndSkip(Punctuator("{")).And(ZeroOrOne(enumMembers, (null, false))).AndSkip(Punctuator("}"))
             .And(optionalSemicolon)
-            .Then(static x => (MemberBuilder)(p => new EnumDeclaration(x.Item1.Text, p.Attributes, p.Modifiers, x.Item2, x.Item3.Members)
+            .Then(static (c, x) =>
             {
-                ModifierList = p.ModifierList,
-                HasBody = true,
-                HasTrailingComma = x.Item3.HasTrailingComma,
-                HasTrailingSemicolon = x.Item4,
-            }));
+                var p = Prefix<MemberPrefix>(c);
+                return (MemberDeclaration)new EnumDeclaration(x.Item1.Text, p.Attributes, p.Modifiers, x.Item2, x.Item3.Members)
+                {
+                    ModifierList = p.ModifierList,
+                    HasBody = true,
+                    HasTrailingComma = x.Item3.HasTrailingComma,
+                    HasTrailingSemicolon = x.Item4,
+                };
+            });
 
         // delegate ReturnType Name [type parameters] '(' parameters ')' constraints ';'
         var delegateDeclaration = Keyword("delegate").SkipAnd(returnType).And(identifier).And(typeParameterList).And(parameterList).And(constraintClauses).AndSkip(semicolon)
-            .Then(static x => (MemberBuilder)(p => new DelegateDeclaration(x.Item1, x.Item2.Text, p.Attributes, p.Modifiers, x.Item3, x.Item4, NullIfEmpty(x.Item5))
+            .Then(static (c, x) =>
             {
-                ModifierList = p.ModifierList,
-            }));
+                var p = Prefix<MemberPrefix>(c);
+                return (MemberDeclaration)new DelegateDeclaration(x.Item1, x.Item2.Text, p.Attributes, p.Modifiers, x.Item3, x.Item4, NullIfEmpty(x.Item5))
+                {
+                    ModifierList = p.ModifierList,
+                };
+            });
 
         // extension [type parameters] '(' receiver ')' constraints '{' members '}' (C# 14)
         var extensionBlock = Contextual("extension").SkipAnd(typeParameterList)
             .AndSkip(Punctuator("(")).And(parts.Receiver).AndSkip(Punctuator(")"))
             .And(constraintClauses)
             .And(typeBody)
-            .Then(static x => (MemberBuilder)(p => new ExtensionBlockDeclaration(x.Item2, NullIfEmpty(x.Item4.Item2), x.Item1, NullIfEmpty(x.Item3), p.Attributes, p.Modifiers)
+            .Then(static (c, x) =>
             {
-                ModifierList = p.ModifierList,
-                CloseBraceNullableDirectives = x.Item4.Item3.NullableDirectives,
-            }));
+                var p = Prefix<MemberPrefix>(c);
+                return (MemberDeclaration)new ExtensionBlockDeclaration(x.Item2, NullIfEmpty(x.Item4.Item2), x.Item1, NullIfEmpty(x.Item3), p.Attributes, p.Modifiers)
+                {
+                    ModifierList = p.ModifierList,
+                    CloseBraceNullableDirectives = x.Item4.Item3.NullableDirectives,
+                };
+            });
 
         // ========================================
         // Members
@@ -476,31 +482,40 @@ internal sealed partial class HybridGrammar
 
         // Name [type parameters] '(' parameters ')' constraints body
         var method = identifier.And(typeParameterList).And(parameterList).And(constraintClauses).And(memberBody)
-            .Then(static x => (TypedMemberBuilder)((p, type, explicitInterface) =>
-                new MethodDeclaration(type, x.Item1.Text, p.Attributes, p.Modifiers, x.Item2, x.Item3, NullIfEmpty(x.Item4), x.Item5)
+            .Then(static (c, x) =>
+            {
+                var (p, t) = (Prefix<MemberPrefix>(c), Prefix<TypedPrefix>(c));
+                return (MemberDeclaration)new MethodDeclaration(t.Type, x.Item1.Text, p.Attributes, p.Modifiers, x.Item2, x.Item3, NullIfEmpty(x.Item4), x.Item5)
                 {
                     ModifierList = p.ModifierList,
-                    ExplicitInterface = explicitInterface,
-                }));
+                    ExplicitInterface = t.ExplicitInterface,
+                };
+            });
 
         // Name '=>' expression ';'
         var expressionProperty = identifier.AndSkip(Punctuator("=>")).And(expression).AndSkip(semicolon)
-            .Then(static x => (TypedMemberBuilder)((p, type, explicitInterface) =>
-                new PropertyDeclaration(type, x.Item1.Text, p.Attributes, p.Modifiers, expressionBody: x.Item2)
+            .Then(static (c, x) =>
+            {
+                var (p, t) = (Prefix<MemberPrefix>(c), Prefix<TypedPrefix>(c));
+                return (MemberDeclaration)new PropertyDeclaration(t.Type, x.Item1.Text, p.Attributes, p.Modifiers, expressionBody: x.Item2)
                 {
                     ModifierList = p.ModifierList,
-                    ExplicitInterface = explicitInterface,
-                }));
+                    ExplicitInterface = t.ExplicitInterface,
+                };
+            });
 
         // Name '{' accessors '}' ['=' initializer ';']
         var property = identifier.And(accessorList).And(ZeroOrOne(Punctuator("=").SkipAnd(variableInitializer).AndSkip(semicolon)))
-            .Then(static x => (TypedMemberBuilder)((p, type, explicitInterface) =>
-                new PropertyDeclaration(type, x.Item1.Text, p.Attributes, p.Modifiers, x.Item2.Item2, initializer: x.Item3)
+            .Then(static (c, x) =>
+            {
+                var (p, t) = (Prefix<MemberPrefix>(c), Prefix<TypedPrefix>(c));
+                return (MemberDeclaration)new PropertyDeclaration(t.Type, x.Item1.Text, p.Attributes, p.Modifiers, x.Item2.Item2, initializer: x.Item3)
                 {
                     ModifierList = p.ModifierList,
-                    ExplicitInterface = explicitInterface,
+                    ExplicitInterface = t.ExplicitInterface,
                     OpenBraceNullableDirectives = x.Item2.Item1.NullableDirectives,
-                }));
+                };
+            });
 
         // identifier ['[' size ']'] ['=' initializer] (',' ...)* ';'
         var fieldDeclarator = Node(
@@ -508,27 +523,36 @@ internal sealed partial class HybridGrammar
                 .Then(static x => new VariableDeclarator(x.Item1.Text, x.Item3) { BracketedArguments = x.Item2 }));
 
         var field = Separated(comma, fieldDeclarator).AndSkip(semicolon)
-            .Then(static variables => (TypedMemberBuilder)((p, type, explicitInterface) =>
-                explicitInterface != null ? null : new FieldDeclaration(type, variables, p.Attributes, p.Modifiers) { ModifierList = p.ModifierList }));
+            .Then(static (c, variables) =>
+            {
+                var (p, t) = (Prefix<MemberPrefix>(c), Prefix<TypedPrefix>(c));
+                return t.ExplicitInterface != null
+                    ? null
+                    : (MemberDeclaration)new FieldDeclaration(t.Type, variables, p.Attributes, p.Modifiers) { ModifierList = p.ModifierList };
+            });
 
         // this '[' parameters ']' ('=>' expression ';' | '{' accessors '}')
         var indexerBody = Punctuator("=>").SkipAnd(expression).AndSkip(semicolon).Then(static e => (Expression: e, OpenBrace: default(SyntaxToken), Accessors: (List<Accessor>)null))
             .Or(accessorList.Then(static x => (Expression: (Expression)null, OpenBrace: x.Item1, Accessors: x.Item2)));
 
         var indexer = Keyword("this").SkipAnd(Punctuator("[")).SkipAnd(parts.Parameters).AndSkip(Punctuator("]")).And(indexerBody)
-            .Then(static x => (TypedMemberBuilder)((p, type, explicitInterface) => x.Item2.Accessors == null
-                ? new IndexerDeclaration(type, x.Item1, null, p.Attributes, p.Modifiers)
-                {
-                    ModifierList = p.ModifierList,
-                    ExplicitInterface = explicitInterface,
-                    ExpressionBody = x.Item2.Expression,
-                }
-                : new IndexerDeclaration(type, x.Item1, x.Item2.Accessors, p.Attributes, p.Modifiers)
-                {
-                    ModifierList = p.ModifierList,
-                    ExplicitInterface = explicitInterface,
-                    OpenBraceNullableDirectives = x.Item2.OpenBrace.NullableDirectives,
-                }));
+            .Then(static (c, x) =>
+            {
+                var (p, t) = (Prefix<MemberPrefix>(c), Prefix<TypedPrefix>(c));
+                return (MemberDeclaration)(x.Item2.Accessors == null
+                    ? new IndexerDeclaration(t.Type, x.Item1, null, p.Attributes, p.Modifiers)
+                    {
+                        ModifierList = p.ModifierList,
+                        ExplicitInterface = t.ExplicitInterface,
+                        ExpressionBody = x.Item2.Expression,
+                    }
+                    : new IndexerDeclaration(t.Type, x.Item1, x.Item2.Accessors, p.Attributes, p.Modifiers)
+                    {
+                        ModifierList = p.ModifierList,
+                        ExplicitInterface = t.ExplicitInterface,
+                        OpenBraceNullableDirectives = x.Item2.OpenBrace.NullableDirectives,
+                    });
+            });
 
         // operator [checked] op '(' parameters ')' body
         var overloadableOperator = Keyword("true").Or(Keyword("false"))
@@ -539,17 +563,20 @@ internal sealed partial class HybridGrammar
         var isChecked = ZeroOrOne(Keyword("checked").Then(true), false);
 
         var operatorDeclaration = Keyword("operator").SkipAnd(isChecked).And(overloadableOperator).And(parameterList).And(memberBody)
-            .Then(static x => (TypedMemberBuilder)((p, type, explicitInterface) =>
-                new OperatorDeclaration(type, x.Item2, x.Item3, x.Item4, p.Attributes, p.Modifiers, x.Item1)
+            .Then(static (c, x) =>
+            {
+                var (p, t) = (Prefix<MemberPrefix>(c), Prefix<TypedPrefix>(c));
+                return (MemberDeclaration)new OperatorDeclaration(t.Type, x.Item2, x.Item3, x.Item4, p.Attributes, p.Modifiers, x.Item1)
                 {
                     ModifierList = p.ModifierList,
-                    ExplicitInterface = explicitInterface,
-                }));
+                    ExplicitInterface = t.ExplicitInterface,
+                };
+            });
 
         TokenCondition nextIs(string first, string second) => (ref SyntaxParser p) => p.Peek(1).IsPunctuator(first) || p.Peek(1).IsPunctuator(second);
 
         // After the return type and the explicit interface, the next tokens decide the member
-        var afterType = new TokenSwitch<TypedMemberBuilder>()
+        var afterType = new TokenSwitch<MemberDeclaration>()
             .OnKeyword("this", indexer, commit: true)
             .OnKeyword("operator", operatorDeclaration, commit: true)
             .OnKind(TokenKind.Identifier, method, when: nextIs("(", "<"), commit: true)
@@ -557,8 +584,7 @@ internal sealed partial class HybridGrammar
             .OnKind(TokenKind.Identifier, property, when: static (ref SyntaxParser p) => p.Peek(1).IsPunctuator("{"), commit: true)
             .OnKind(TokenKind.Identifier, field, commit: true);
 
-        var typedMember = returnType.And(explicitInterface).And(afterType)
-            .Then(static x => (MemberBuilder)(p => x.Item3(p, x.Item1, x.Item2)));
+        var typedMember = WithPrefix(returnType.And(explicitInterface).Then(static x => new TypedPrefix(x.Item1, x.Item2)), afterType);
 
         // Name '(' parameters ')' [':' (base | this) '(' arguments ')'] body
         var constructorInitializer = Node(
@@ -566,14 +592,19 @@ internal sealed partial class HybridGrammar
                 .Then(static x => new ConstructorInitializer(x.Item1.Text == "base", x.Item2)));
 
         var constructor = identifier.And(parameterList).And(ZeroOrOne(constructorInitializer)).And(memberBody)
-            .Then(static x => (MemberBuilder)(p => new ConstructorDeclaration(x.Item1.Text, p.Attributes, p.Modifiers, x.Item2, x.Item3, x.Item4)
+            .Then(static (c, x) =>
             {
-                ModifierList = p.ModifierList,
-            }));
+                var p = Prefix<MemberPrefix>(c);
+                return (MemberDeclaration)new ConstructorDeclaration(x.Item1.Text, p.Attributes, p.Modifiers, x.Item2, x.Item3, x.Item4) { ModifierList = p.ModifierList };
+            });
 
         // '~' Name '(' ')' body
         var destructor = Punctuator("~").SkipAnd(identifier).AndSkip(Punctuator("(")).AndSkip(Punctuator(")")).And(memberBody)
-            .Then(static x => (MemberBuilder)(p => new DestructorDeclaration(x.Item1.Text, p.Attributes, p.Modifiers, x.Item2) { ModifierList = p.ModifierList }));
+            .Then(static (c, x) =>
+            {
+                var p = Prefix<MemberPrefix>(c);
+                return (MemberDeclaration)new DestructorDeclaration(x.Item1.Text, p.Attributes, p.Modifiers, x.Item2) { ModifierList = p.ModifierList };
+            });
 
         // event Type ([interface '.'] Name '{' accessors '}' | declarators ';')
         var eventWithAccessors = identifier.And(eventAccessorList)
@@ -584,17 +615,20 @@ internal sealed partial class HybridGrammar
             .Otherwise(declarators.AndSkip(semicolon).Then(static v => (Name: default(SyntaxToken), Accessors: (List<EventAccessor>)null, Variables: v)));
 
         var eventDeclaration = Keyword("event").SkipAnd(type).And(explicitInterface).And(eventTail)
-            .Then(static x => (MemberBuilder)(p => BuildEventDeclaration(p, x.Item1, x.Item2, x.Item3.Name, x.Item3.Accessors, x.Item3.Variables)));
+            .Then(static (c, x) => BuildEventDeclaration(Prefix<MemberPrefix>(c), x.Item1, x.Item2, x.Item3.Name, x.Item3.Accessors, x.Item3.Variables));
 
         // (implicit | explicit) [interface '.'] operator [checked] Type '(' parameters ')' body
         var conversionOperator = Keyword("implicit").Or(Keyword("explicit")).And(explicitInterface).AndSkip(Keyword("operator"))
             .And(isChecked).And(type).And(parameterList).And(memberBody)
-            .Then(static x => (MemberBuilder)(p =>
-                new ConversionOperatorDeclaration(x.Item1.Text == "implicit", x.Item4, x.Item5, x.Item6, p.Attributes, p.Modifiers, x.Item3)
+            .Then(static (c, x) =>
+            {
+                var p = Prefix<MemberPrefix>(c);
+                return (MemberDeclaration)new ConversionOperatorDeclaration(x.Item1.Text == "implicit", x.Item4, x.Item5, x.Item6, p.Attributes, p.Modifiers, x.Item3)
                 {
                     ModifierList = p.ModifierList,
                     ExplicitInterface = x.Item2,
-                }));
+                };
+            });
 
         // ========================================
         // Namespaces
@@ -628,13 +662,13 @@ internal sealed partial class HybridGrammar
 
         // After the attributes and modifiers the first tokens decide the declaration, like
         // SyntaxParser.ParseMemberDeclarationRest; outside types only type declarations are members
-        Parser<MemberBuilder> Rest(MemberContext context)
+        Parser<MemberDeclaration> Rest(MemberContext context)
         {
             TokenCondition isDelegateDeclaration = context == MemberContext.CompilationUnit
                 ? static (ref SyntaxParser p) => p.Peek(1) is not { Kind: TokenKind.Punctuator, Text: "*" or "(" or "{" }
                 : static (ref SyntaxParser p) => !p.Peek(1).IsPunctuator("*");
 
-            var rest = new TokenSwitch<MemberBuilder>()
+            var rest = new TokenSwitch<MemberDeclaration>()
                 .OnKeyword("class", TypeDeclaration(PlainTypeKeyword("class"), allowParameters: true), commit: true)
                 .OnKeyword("struct", TypeDeclaration(PlainTypeKeyword("struct"), allowParameters: true), commit: true)
                 .OnKeyword("interface", TypeDeclaration(PlainTypeKeyword("interface"), allowParameters: false), commit: true)
@@ -659,9 +693,10 @@ internal sealed partial class HybridGrammar
 
         Parser<MemberDeclaration> Member(MemberContext context)
         {
-            Parser<MemberDeclaration> member = attributeSections.And(parts.MemberModifiers).And(Rest(context))
-                .Then(static x => x.Item3(new MemberPrefix(NullIfEmpty(x.Item1), SyntaxParser.Combine(x.Item2), NullIfEmpty(x.Item2))))
-                .When(static m => m != null);
+            var prefix = attributeSections.And(parts.MemberModifiers)
+                .Then(static x => new MemberPrefix(NullIfEmpty(x.Item1), SyntaxParser.Combine(x.Item2), NullIfEmpty(x.Item2)));
+
+            var member = WithPrefix(prefix, Rest(context)).When(static m => m != null);
 
             // A namespace has no attributes or modifiers
             if (context != MemberContext.Type)

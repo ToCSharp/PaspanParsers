@@ -36,6 +36,18 @@ internal static class SyntaxRules
     public static Parser<Unit> Lookahead(TokenCondition condition) => new LookaheadParser(condition);
 
     /// <summary>
+    /// Parses <paramref name="prefix"/>, then <paramref name="parser"/>, which reads the prefix with
+    /// <see cref="Prefix{TPrefix}(ParseContext)"/>. A node built at the end of <paramref name="parser"/> takes the
+    /// parts parsed before it (the attributes and modifiers of a member, its return type) without a closure per node.
+    /// </summary>
+    public static Parser<T> WithPrefix<TPrefix, T>(Parser<TPrefix> prefix, Parser<T> parser) => new PrefixParser<TPrefix, T>(prefix, parser);
+
+    /// <summary>
+    /// The prefix of the innermost <see cref="WithPrefix{TPrefix, T}"/> that is running.
+    /// </summary>
+    public static TPrefix Prefix<TPrefix>(ParseContext context) => ((CSharpParseContext)context).PrefixStack<TPrefix>().Peek();
+
+    /// <summary>
     /// A rule of the hand-written parser (<see cref="SyntaxRuleParser{T}"/>).
     /// </summary>
     public static Parser<T> Rule<T>(SyntaxParser.Rule<T> rule) => new SyntaxRuleParser<T>(rule);
@@ -92,6 +104,37 @@ internal static class SyntaxRules
 
             result.Set(first.Start, end, statement);
             return true;
+        }
+    }
+
+    private sealed class PrefixParser<TPrefix, T>(Parser<TPrefix> prefix, Parser<T> parser) : Parser<T>
+    {
+        public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
+        {
+            var start = reader.GetCurrentPosition();
+            var prefixResult = new ParseResult<TPrefix>();
+            if (!prefix.Parse(ref reader, context, ref prefixResult))
+            {
+                return false;
+            }
+
+            // Nested prefixes (the members of a nested type) are pushed and popped while this one is on the stack
+            var stack = ((CSharpParseContext)context).PrefixStack<TPrefix>();
+            stack.Push(prefixResult.Value);
+            try
+            {
+                if (parser.Parse(ref reader, context, ref result))
+                {
+                    return true;
+                }
+            }
+            finally
+            {
+                stack.Pop();
+            }
+
+            reader.RollBackState(start);
+            return false;
         }
     }
 
