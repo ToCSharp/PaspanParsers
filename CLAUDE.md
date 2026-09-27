@@ -19,4 +19,5 @@ Do not use `dotnet test`: the test project uses Microsoft.Testing.Platform, and 
 ## C# parser benchmarks
 
 - `src/PaspanParsers.Benchmarks` (BenchmarkDotNet) measures the scanner, the parser and Roslyn on the same files: `dotnet run -c Release --project src/PaspanParsers.Benchmarks -- --filter "*"`.
+- `CSharpConstructBenchmarks` measures the two C# parsers per declaration or statement (a class or method of 20 000 copies of one construct): `--filter "*CSharpConstructBenchmarks*"`. Use it to judge optimizations; corpus timings on shared machines vary by 5-10 %.
 - Without `CSHARP_BENCH_CORPORA` only the built-in corpus is measured. `scripts/get-csharp-bench-corpora.sh <dir>` downloads the Roslyn, dotnet/runtime and ASP.NET Core corpora at fixed commits; set `CSHARP_BENCH_CORPORA=<dir>` to measure them. Results and the hybrid parser plan are in `docs/csharp-hybrid-parser-plan.md`.
