@@ -151,8 +151,9 @@ public abstract class Declaration : CppNode
 }
 
 /// <summary>
-/// A declaration of variables or functions: <c>static int a = 1, *b;</c> or <c>int f(int);</c>.
-/// The span includes the ';'.
+/// A declaration of variables, functions or types: <c>static int a = 1, *b;</c>, <c>int f(int);</c>,
+/// <c>typedef int Integer;</c> or, without declarators, <c>struct Point;</c>. The span includes the ';'.
+/// The specifiers are null for a constructor, destructor or conversion function, which have none.
 /// </summary>
 public sealed class SimpleDeclaration(DeclSpecifierSequence specifiers, IReadOnlyList<InitDeclarator> declarators) : Declaration
 {
@@ -161,12 +162,17 @@ public sealed class SimpleDeclaration(DeclSpecifierSequence specifiers, IReadOnl
 }
 
 /// <summary>
-/// A function with its body: <c>int main() { return 0; }</c>.
+/// A function with its body: <c>int main() { return 0; }</c>. The specifiers are null for a constructor,
+/// destructor or conversion function, which have none: <c>S::~S() { }</c>.
 /// </summary>
 public sealed class FunctionDefinition(DeclSpecifierSequence specifiers, Declarator declarator, CompoundStatement body) : Declaration
 {
     public DeclSpecifierSequence Specifiers { get; } = specifiers;
     public Declarator Declarator { get; } = declarator;
+
+    /// <summary>The constraint after the declarator: <c>requires C&lt;T&gt;</c>, or null.</summary>
+    public Expression RequiresClause { get; init; }
+
     public CompoundStatement Body { get; } = body;
 }
 
@@ -187,12 +193,167 @@ public abstract class DeclSpecifier : CppNode
 }
 
 /// <summary>
-/// A declaration specifier that is a keyword: a fundamental type (<c>int</c>, <c>unsigned</c>), a cv-qualifier,
-/// a storage class or a function specifier.
+/// A declaration specifier that is a keyword: a fundamental type (<c>int</c>, <c>unsigned</c>, <c>auto</c>),
+/// a cv-qualifier, a storage class, a function specifier or <c>typedef</c>. The GNU types <c>__int128</c>,
+/// <c>__float128</c>, <c>_Float16</c> and <c>__bf16</c> are keyword specifiers too.
 /// </summary>
 public sealed class KeywordSpecifier(string keyword) : DeclSpecifier
 {
     public string Keyword { get; } = keyword;
+}
+
+/// <summary>
+/// A type named by a name: <c>Integer</c>, <c>std::size_t</c>, <c>vector&lt;int&gt;</c>, or with
+/// <see cref="IsTypename"/>, <c>typename T::value_type</c>.
+/// </summary>
+public sealed class NamedTypeSpecifier(Name name) : DeclSpecifier
+{
+    public Name Name { get; } = name;
+    public bool IsTypename { get; init; }
+}
+
+/// <summary>
+/// An elaborated type specifier: <c>struct Point</c>; <see cref="Key"/> is <c>class</c>, <c>struct</c>,
+/// <c>union</c> or <c>enum</c>.
+/// </summary>
+public sealed class ElaboratedTypeSpecifier(string key, Name name) : DeclSpecifier
+{
+    public string Key { get; } = key;
+    public Name Name { get; } = name;
+}
+
+/// <summary>
+/// <c>decltype(expression)</c>, or <c>decltype(auto)</c> when <see cref="Expression"/> is null.
+/// </summary>
+public sealed class DecltypeSpecifier(Expression expression) : DeclSpecifier
+{
+    public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// A placeholder constrained by a concept: <c>std::integral auto</c>, or <c>C decltype(auto)</c> with
+/// <see cref="IsDecltypeAuto"/>. An unconstrained <c>auto</c> is a <see cref="KeywordSpecifier"/>.
+/// </summary>
+public sealed class PlaceholderTypeSpecifier(Name concept, bool isDecltypeAuto = false) : DeclSpecifier
+{
+    public Name Concept { get; } = concept;
+    public bool IsDecltypeAuto { get; } = isDecltypeAuto;
+}
+
+// ========================================
+// Names
+// ========================================
+
+/// <summary>
+/// A name, qualified or not, as in id-expressions, type names and declarator ids. <see cref="ToString"/>
+/// spells it without white space.
+/// </summary>
+public abstract class Name : CppNode
+{
+}
+
+/// <summary>
+/// An identifier: <c>a</c>.
+/// </summary>
+public sealed class IdentifierName(string identifier) : Name
+{
+    public string Identifier { get; } = identifier;
+
+    public override string ToString() => Identifier;
+}
+
+/// <summary>
+/// A template-id: <c>vector&lt;int&gt;</c>. Each argument is a <see cref="TypeId"/> or an <see cref="Expression"/>;
+/// the template is an <see cref="IdentifierName"/>, <see cref="OperatorFunctionName"/> or <see cref="LiteralOperatorName"/>.
+/// </summary>
+public sealed class TemplateIdName(Name template, IReadOnlyList<CppNode> arguments) : Name
+{
+    public Name Template { get; } = template;
+    public IReadOnlyList<CppNode> Arguments { get; } = arguments ?? [];
+
+    public override string ToString() => $"{Template}<{string.Join(",", Arguments)}>";
+}
+
+/// <summary>
+/// An operator function: <c>operator+</c>, <c>operator()</c>, <c>operator new[]</c>; <see cref="Operator"/> is
+/// the text after <c>operator</c>, like <c>+</c>, <c>()</c> or <c>new[]</c>.
+/// </summary>
+public sealed class OperatorFunctionName(string @operator) : Name
+{
+    public string Operator { get; } = @operator;
+
+    public override string ToString() => "operator" + (char.IsLetter(Operator[0]) ? " " : "") + Operator;
+}
+
+/// <summary>
+/// A conversion function: <c>operator int*</c>.
+/// </summary>
+public sealed class ConversionFunctionName(TypeId type) : Name
+{
+    public TypeId Type { get; } = type;
+
+    public override string ToString() => $"operator {Type}";
+}
+
+/// <summary>
+/// A literal operator: <c>operator""_km</c>; <see cref="Suffix"/> is <c>_km</c>.
+/// </summary>
+public sealed class LiteralOperatorName(string suffix) : Name
+{
+    public string Suffix { get; } = suffix;
+
+    public override string ToString() => "operator\"\"" + Suffix;
+}
+
+/// <summary>
+/// A destructor: <c>~T</c>; the type is an <see cref="IdentifierName"/>, a <see cref="TemplateIdName"/> or a
+/// <see cref="DecltypeName"/>.
+/// </summary>
+public sealed class DestructorName(Name type) : Name
+{
+    public Name Type { get; } = type;
+
+    public override string ToString() => "~" + Type;
+}
+
+/// <summary>
+/// <c>decltype(expression)</c> as the qualifier of a qualified name: <c>decltype(x)::type</c>.
+/// </summary>
+public sealed class DecltypeName(Expression expression) : Name
+{
+    public Expression Expression { get; } = expression;
+
+    public override string ToString() => "decltype(...)";
+}
+
+/// <summary>
+/// A qualified name: <c>std::size_t</c>. The qualifier is the nested name specifier without its final
+/// <c>::</c>; it is null for a name in the global namespace, <c>::size_t</c>. <c>a::b::c</c> is
+/// <c>(a::b)::c</c>. <see cref="IsTemplate"/> is set when <c>template</c> comes before the name:
+/// <c>T::template apply&lt;int&gt;</c>.
+/// </summary>
+public sealed class QualifiedName(Name qualifier, Name name) : Name
+{
+    public Name Qualifier { get; } = qualifier;
+    public Name Name { get; } = name;
+    public bool IsTemplate { get; init; }
+
+    public override string ToString() => $"{Qualifier}::{(IsTemplate ? "template " : "")}{Name}";
+}
+
+// ========================================
+// Types
+// ========================================
+
+/// <summary>
+/// A type-id: the type specifiers and an optional abstract declarator, as in <c>int (*)(int)</c>.
+/// <see cref="IsPackExpansion"/> is set for a template argument followed by <c>...</c>.
+/// </summary>
+public sealed class TypeId(DeclSpecifierSequence specifiers, Declarator declarator = null) : CppNode
+{
+    public DeclSpecifierSequence Specifiers { get; } = specifiers;
+    public Declarator Declarator { get; } = declarator;
+    public bool IsPackExpansion { get; init; }
 }
 
 // ========================================
@@ -205,28 +366,119 @@ public sealed class KeywordSpecifier(string keyword) : DeclSpecifier
 public sealed class InitDeclarator(Declarator declarator, Initializer initializer = null) : CppNode
 {
     public Declarator Declarator { get; } = declarator;
+
+    /// <summary>The constraint after the declarator: <c>requires C&lt;T&gt;</c>, or null.</summary>
+    public Expression RequiresClause { get; init; }
+
     public Initializer Initializer { get; } = initializer;
 }
 
+/// <summary>
+/// A declarator, nested as in the grammar ([dcl.decl]): <c>*a[3]</c> is a <see cref="PointerDeclarator"/>
+/// around the <see cref="ArrayDeclarator"/> <c>a[3]</c>, and <c>(*f)(int)</c> is a
+/// <see cref="FunctionDeclarator"/> around the <see cref="ParenthesizedDeclarator"/> <c>(*f)</c>. In an abstract
+/// declarator (<c>int (*)(int)</c>) the innermost <c>Inner</c> is null.
+/// </summary>
 public abstract class Declarator : CppNode
 {
 }
 
 /// <summary>
-/// The declared name: <c>a</c> in <c>int a;</c>.
+/// The declared name: <c>a</c> in <c>int a;</c>, <c>S::method</c>, <c>operator+</c>.
 /// </summary>
-public sealed class NameDeclarator(string name) : Declarator
+public sealed class NameDeclarator(Name name) : Declarator
 {
-    public string Name { get; } = name;
+    public Name Name { get; } = name;
 }
 
 /// <summary>
-/// A function declarator: <c>f(int a, char b)</c>.
+/// A parameter pack: <c>... args</c>; the inner declarator is null in an abstract declarator.
+/// </summary>
+public sealed class PackDeclarator(Declarator inner) : Declarator
+{
+    public Declarator Inner { get; } = inner;
+}
+
+/// <summary>
+/// <c>* const inner</c>.
+/// </summary>
+public sealed class PointerDeclarator(Declarator inner, IReadOnlyList<string> qualifiers = null) : Declarator
+{
+    public Declarator Inner { get; } = inner;
+
+    /// <summary>The cv-qualifiers after '*', in source order.</summary>
+    public IReadOnlyList<string> Qualifiers { get; } = qualifiers ?? [];
+}
+
+/// <summary>
+/// <c>&amp; inner</c>, or <c>&amp;&amp; inner</c> when <see cref="IsRvalue"/>.
+/// </summary>
+public sealed class ReferenceDeclarator(Declarator inner, bool isRvalue = false) : Declarator
+{
+    public Declarator Inner { get; } = inner;
+    public bool IsRvalue { get; } = isRvalue;
+}
+
+/// <summary>
+/// A pointer to member: <c>S::* const inner</c>; <see cref="Class"/> is the name before <c>::*</c>.
+/// </summary>
+public sealed class MemberPointerDeclarator(Name @class, Declarator inner, IReadOnlyList<string> qualifiers = null) : Declarator
+{
+    public Name Class { get; } = @class;
+    public Declarator Inner { get; } = inner;
+    public IReadOnlyList<string> Qualifiers { get; } = qualifiers ?? [];
+}
+
+/// <summary>
+/// <c>inner[size]</c>; the size is null in <c>inner[]</c>.
+/// </summary>
+public sealed class ArrayDeclarator(Declarator inner, Expression size = null) : Declarator
+{
+    public Declarator Inner { get; } = inner;
+    public Expression Size { get; } = size;
+}
+
+/// <summary>
+/// A function declarator: <c>f(int a, char b) const &amp; noexcept -> int</c>.
 /// </summary>
 public sealed class FunctionDeclarator(Declarator inner, IReadOnlyList<ParameterDeclaration> parameters) : Declarator
 {
     public Declarator Inner { get; } = inner;
+
+    /// <summary>
+    /// The parameters; <c>(void)</c> is one parameter with the specifier <c>void</c>, as written.
+    /// </summary>
     public IReadOnlyList<ParameterDeclaration> Parameters { get; } = parameters ?? [];
+
+    /// <summary>The parameters end with <c>...</c>: <c>(int, ...)</c>, <c>(int...)</c> or <c>(...)</c>.</summary>
+    public bool IsVariadic { get; init; }
+
+    /// <summary>The cv-qualifiers after the parameters, in source order.</summary>
+    public IReadOnlyList<string> Qualifiers { get; init; } = [];
+
+    /// <summary><c>&amp;</c>, <c>&amp;&amp;</c> or null.</summary>
+    public string RefQualifier { get; init; }
+
+    public NoexceptSpecifier Noexcept { get; init; }
+
+    /// <summary>The type after <c>-&gt;</c>, or null.</summary>
+    public TypeId TrailingReturnType { get; init; }
+}
+
+/// <summary>
+/// <c>( inner )</c>.
+/// </summary>
+public sealed class ParenthesizedDeclarator(Declarator inner) : Declarator
+{
+    public Declarator Inner { get; } = inner;
+}
+
+/// <summary>
+/// <c>noexcept</c>, or <c>noexcept(condition)</c>.
+/// </summary>
+public sealed class NoexceptSpecifier(Expression condition = null) : CppNode
+{
+    public Expression Condition { get; } = condition;
 }
 
 /// <summary>
@@ -407,11 +659,11 @@ public sealed class ConcatenatedStringExpression(IReadOnlyList<LiteralExpression
 }
 
 /// <summary>
-/// A name used as an expression: <c>a</c>.
+/// A name used as an expression: <c>a</c>, <c>S::member</c>, <c>operator+</c>.
 /// </summary>
-public sealed class NameExpression(string name) : Expression
+public sealed class NameExpression(Name name) : Expression
 {
-    public string Name { get; } = name;
+    public Name Name { get; } = name;
 }
 
 /// <summary>

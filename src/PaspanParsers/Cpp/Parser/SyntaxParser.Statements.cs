@@ -50,10 +50,17 @@ internal ref partial struct SyntaxParser
             return body == null ? null : Finish(new WhileStatement(condition, body), start);
         }
 
-        if (IsDeclSpecifierStart)
+        if (IsDeclarationStatementStart())
         {
+            // What can be a declaration is one ([stmt.ambig]); otherwise it is an expression
+            var mark = Save();
             var declaration = ParseSimpleDeclaration();
-            return declaration == null ? null : Finish(new DeclarationStatement(declaration), start);
+            if (declaration != null)
+            {
+                return Finish(new DeclarationStatement(declaration), start);
+            }
+
+            Restore(mark);
         }
 
         var expression = ParseExpression();
@@ -63,6 +70,90 @@ internal ref partial struct SyntaxParser
         }
 
         return Finish(new ExpressionStatement(expression), start);
+    }
+
+    /// <summary>
+    /// A statement that starts with a declaration specifier keyword, or with a name that is a type: known as
+    /// one, or unknown and followed by what can only follow a type in a declaration (<c>X y</c>,
+    /// <c>X *y;</c>, <c>X &amp;y =</c>, <c>X&lt;int&gt; y</c>).
+    /// </summary>
+    private bool IsDeclarationStatementStart()
+    {
+        if (IsDeclSpecifierKeyword || (Current.IsIdentifier && ExtensionTypeNames.Contains(Current.Text)))
+        {
+            return true;
+        }
+
+        if (!IsNameStart(Current, NameContext.Expression))
+        {
+            return false;
+        }
+
+        var mark = Save();
+        try
+        {
+            var name = ParseName(NameContext.Expression);
+            if (name == null)
+            {
+                return false;
+            }
+
+            switch (_cache.Symbols.Lookup(name))
+            {
+                case SymbolKind.Type or SymbolKind.Template:
+                    return true;
+                case not null:
+                    return false;
+            }
+
+            if (IsPunctuator("<"))
+            {
+                // An unknown template: vector<int> v;
+                Restore(mark);
+                if (ParseName(NameContext.Type) == null)
+                {
+                    return false;
+                }
+            }
+
+            return FollowsTypeInDeclaration();
+        }
+        finally
+        {
+            Restore(mark);
+        }
+    }
+
+    /// <summary>
+    /// The tokens after a name can only follow a type: a declarator name, a pointer or reference to one
+    /// followed by the end of a declarator, or a pointer to member.
+    /// </summary>
+    private bool FollowsTypeInDeclaration()
+    {
+        var next = Current;
+        if (next.IsIdentifier || next.IsKeyword("operator"))
+        {
+            return true;
+        }
+
+        if (next.IsPunctuator("::") && Peek(1).IsPunctuator("*"))
+        {
+            return true;
+        }
+
+        if (next.IsPunctuator("*") || next.IsPunctuator("&") || next.IsPunctuator("&&"))
+        {
+            var offset = 1;
+            while (Peek(offset).IsPunctuator("*") || Peek(offset).IsPunctuator("&") || Peek(offset).IsKeyword("const"))
+            {
+                offset++;
+            }
+
+            var after = Peek(offset + 1);
+            return Peek(offset).IsIdentifier && (after.IsPunctuator(";") || after.IsPunctuator("=") || after.IsPunctuator(",") || after.IsPunctuator("["));
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -76,6 +167,7 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
+        _cache.Symbols.EnterScope();
         var statements = new List<Statement>();
         while (!IsPunctuator("}"))
         {
@@ -93,6 +185,7 @@ internal ref partial struct SyntaxParser
             statements.Add(statement);
         }
 
+        _cache.Symbols.ExitScope();
         var closeBraceDirectives = DirectivesBefore(EatToken());
         return Finish(new CompoundStatement(statements) { CloseBraceDirectives = closeBraceDirectives }, start);
     }

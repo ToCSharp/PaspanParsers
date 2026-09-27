@@ -20,7 +20,7 @@ public class CppPreprocessorTests
         return Parse(source, options).Declarations
             .OfType<SimpleDeclaration>()
             .SelectMany(d => d.Declarators)
-            .Select(d => ((NameDeclarator)d.Declarator).Name)
+            .Select(d => ((NameDeclarator)d.Declarator).Name.ToString())
             .ToList();
     }
 

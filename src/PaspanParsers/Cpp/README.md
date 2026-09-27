@@ -74,11 +74,15 @@ that the lazily scanned tokens can skip directives and inactive branches in any 
 |---|---|
 | Lexical | Tokens of C++23: punctuators (longest first, digraphs, alternative tokens, `<::`), numbers, character and string literals with encoding prefixes, raw strings and user-defined suffixes, comments, line splices (also inside tokens), Unicode identifiers and universal character names |
 | Literals | Values of integer, floating, character and string literals (`LiteralExpression.Value`), encodings, suffixes; adjacent strings are one `ConcatenatedStringExpression` |
-| Declarations | Function definitions and simple declarations with keyword specifiers (`int`, `const`, `static`, ...), function declarators, parameters with default values, `=` initializers |
+| Names | Qualified names (`::a::b<int>::c`, `decltype(x)::type`, `T::template f<int>`), template-ids with type and expression arguments, operator, conversion and literal operator functions, destructors |
+| Types | Declaration specifiers in any order: fundamental types, cv-qualifiers, storage classes, `typedef`, named types, `typename`, elaborated types (`struct X`), `decltype`, `decltype(auto)`, constrained placeholders (`C auto`), GNU `__int128` and friends; type-ids |
+| Declarators | Pointers, references, pointers to members, arrays, functions with cv- and ref-qualifiers, `noexcept`, trailing return types and variadic parameters, parentheses, parameter packs, abstract declarators; `requires` after a declarator |
+| Declarations | Function definitions (also constructors, destructors and conversion functions without specifiers) and simple declarations, `struct X;`, parameters with default values, `=` initializers |
+| Names and scopes | A symbol table tells types from values: `a * b;` declares `b` when `a` is a type; unknown names use heuristics (`X y`, `X *y;`, `vector<int> v;`), and `CppParseOptions.TypeNames`/`TemplateNames` add names from headers |
 | Statements | Compound, declaration, expression, null, `if`/`else`, `while`, `return` |
 | Expressions | Literals, names, parentheses, all binary operators with C++ precedence, `?:`, assignments, prefix and postfix operators, calls |
 | Preprocessor | Directives as trivia, conditional compilation, macro expansion in conditions, `__has_include` and other feature tests |
-| Types, declarators, classes, templates, ... | Not yet |
+| Classes, enums, namespaces, templates, initializers `()` and `{}`, ... | Not yet |
 
 ## Checking against clang
 
@@ -93,10 +97,11 @@ must also be clang's (`CppLiteralChecker.cs`).
 | File | Contents |
 |---|---|
 | `CppParser.cs` | Entry points: `Parse`, `TryParse`, `TranslationUnitParser` |
-| `CppParseOptions.cs`, `CppParseContext.cs` | Options (language version, macros, include directories) and per-parse state |
+| `CppParseOptions.cs`, `CppParseContext.cs` | Options (language version, macros, include directories, names from headers) and per-parse state |
 | `CppAst.cs` | AST nodes |
 | `CppWriter.cs` | Prints an AST as C++ |
 | `Parser/Lexer.cs`, `Parser/SyntaxToken.cs` | Tokens and trivia |
 | `Parser/Literals.cs` | Values of literals |
 | `Parser/Preprocessor*.cs` | Directives, conditions and macro expansion in them |
-| `Parser/SyntaxParser*.cs` | Recursive descent parser: declarations, statements, expressions |
+| `Parser/SyntaxParser*.cs` | Recursive descent parser: names, types, declarators, declarations, statements, expressions |
+| `Parser/Symbols.cs` | Scopes and the kinds of declared names |

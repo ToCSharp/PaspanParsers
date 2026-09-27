@@ -24,8 +24,12 @@ public sealed class CppParseOptions
         CppLanguageVersion languageVersion = CppLanguageVersion.Latest,
         IReadOnlyDictionary<string, string> macros = null,
         IReadOnlyList<string> includeDirectories = null,
-        string sourceDirectory = null)
+        string sourceDirectory = null,
+        IReadOnlyCollection<string> typeNames = null,
+        IReadOnlyCollection<string> templateNames = null)
     {
+        TypeNames = new HashSet<string>(typeNames ?? [], StringComparer.Ordinal);
+        TemplateNames = new HashSet<string>(templateNames ?? [], StringComparer.Ordinal);
         LanguageVersion = languageVersion;
         Macros = macros ?? new Dictionary<string, string>(StringComparer.Ordinal);
         IncludeDirectories = includeDirectories ?? [];
@@ -52,4 +56,17 @@ public sealed class CppParseOptions
     /// The directory of the parsed file, where <c>__has_include("header")</c> looks first; null when unknown.
     /// </summary>
     public string SourceDirectory { get; }
+
+    /// <summary>
+    /// Identifiers of types declared outside the parsed file, such as in headers (<c>size_t</c>, <c>string</c>):
+    /// they tell declarations from expressions where the parser cannot see the declaration. A qualified name
+    /// is looked up by its last identifier.
+    /// </summary>
+    public IReadOnlyCollection<string> TypeNames { get; }
+
+    /// <summary>
+    /// Identifiers of class and function templates declared outside the parsed file (<c>vector</c>), so that
+    /// a '&lt;' after them starts template arguments in expressions.
+    /// </summary>
+    public IReadOnlyCollection<string> TemplateNames { get; }
 }

@@ -36,15 +36,17 @@ public static class CppSpanChecker
             return Describe($"the translation unit must span the input [0..{utf8.Length})", unit, unit, utf8);
         }
 
-        var stack = new Stack<(ICppNode Node, ICppNode Parent)>();
+        var root = new Ancestry(unit, null);
+        var stack = new Stack<(ICppNode Node, Ancestry Ancestry)>();
         foreach (var child in Children(unit))
         {
-            stack.Push((child, unit));
+            stack.Push((child, root));
         }
 
         while (stack.Count != 0)
         {
-            var (node, parent) = stack.Pop();
+            var (node, ancestry) = stack.Pop();
+            var parent = ancestry.Node;
             var span = node.Span;
 
             if (span.Start < 0 || span.End > utf8.Length || span.Start > span.End)
@@ -57,7 +59,7 @@ public static class CppSpanChecker
                 return Describe($"outside its parent {parent.GetType().Name} {parent.Span}", node, parent, utf8);
             }
 
-            var rule = CppKindMap.RuleFor(node, parent);
+            var rule = CppKindMap.RuleFor(node, ancestry);
             var problem = rule switch
             {
                 null => $"no rule in {nameof(CppKindMap)} for {node.GetType().Name}",
@@ -77,9 +79,10 @@ public static class CppSpanChecker
                 return Describe(problem, node, parent, utf8);
             }
 
+            var childAncestry = new Ancestry(node, ancestry);
             foreach (var child in Children(node))
             {
-                stack.Push((child, node));
+                stack.Push((child, childAncestry));
             }
         }
 
@@ -116,18 +119,18 @@ public static class CppSpanChecker
     private static string CheckDeclaration(DeclarationRule rule, ICppNode node, ILookup<int, ClangNode> byName)
     {
         var name = rule.Name(node);
-        if (name == null)
+        if (name < 0)
         {
             return null;
         }
 
-        var candidates = byName[name.Span.Start].ToList();
+        var candidates = byName[name].ToList();
         if (candidates.Any(n => n.FromMacro || (rule.Kinds.Contains(n.Kind) && n.Span.End == node.Span.End)))
         {
             return null;
         }
 
-        return $"no clang declaration of kind {string.Join("/", rule.Kinds)} names '{name.Span}' and ends at {node.Span.End}"
+        return $"no clang declaration of kind {string.Join("/", rule.Kinds)} is named at {name} and ends at {node.Span.End}"
             + (candidates.Count == 0 ? "" : $" (found {string.Join(", ", candidates.Select(c => $"{c.Kind} {c.Span}"))})");
     }
 

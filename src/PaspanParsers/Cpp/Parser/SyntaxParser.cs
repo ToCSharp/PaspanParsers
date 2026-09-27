@@ -22,6 +22,12 @@ internal ref partial struct SyntaxParser
     private readonly SyntaxCache _cache;
     private int _position;
 
+    // In template arguments, a '>' outside parentheses closes the arguments instead of comparing
+    private bool _inTemplateArguments;
+
+    // In a requires-clause, where a name followed by template arguments is a concept-id
+    private bool _inConstraint;
+
     public SyntaxParser(ReadOnlySpan<byte> source, int position, ParseContext context)
     {
         _source = source;
@@ -334,6 +340,16 @@ internal ref partial struct SyntaxParser
 internal sealed class SyntaxCache(CppParseOptions options)
 {
     public Dictionary<int, SyntaxToken> Tokens { get; } = [];
+
+    /// <summary>
+    /// The names declared so far.
+    /// </summary>
+    public Symbols Symbols { get; } = new(options);
+
+    /// <summary>
+    /// The positions of '&lt;' where template arguments failed to parse, with the state they were parsed in.
+    /// </summary>
+    public HashSet<(int Position, int Symbols, bool InTemplateArguments, bool InConstraint)> FailedTemplateArguments { get; } = [];
 
     /// <summary>
     /// The directives that the writer writes back before a token, by the start of the token.

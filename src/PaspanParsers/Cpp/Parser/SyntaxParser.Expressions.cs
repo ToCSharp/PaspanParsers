@@ -55,7 +55,7 @@ internal ref partial struct SyntaxParser
         }
 
         var (@operator, precedence, tokens) = PeekBinaryOperator();
-        if (precedence == AssignmentPrecedence)
+        if (precedence == AssignmentPrecedence && !ClosesTemplateArguments(@operator))
         {
             EatTokens(tokens);
             var right = ParseAssignmentExpression();
@@ -74,7 +74,7 @@ internal ref partial struct SyntaxParser
         while (left != null)
         {
             var (@operator, precedence, tokens) = PeekBinaryOperator();
-            if (precedence < minPrecedence || precedence < LogicalOrPrecedence)
+            if (precedence < minPrecedence || precedence < LogicalOrPrecedence || ClosesTemplateArguments(@operator))
             {
                 break;
             }
@@ -142,6 +142,15 @@ internal ref partial struct SyntaxParser
         return (token.Text, precedence, 1);
     }
 
+    /// <summary>
+    /// In template arguments, the first '&gt;' of <paramref name="operator"/> closes them: <c>&gt;</c>,
+    /// <c>&gt;&gt;</c> and <c>&gt;&gt;=</c> are not operators there, <c>&gt;=</c> is.
+    /// </summary>
+    private readonly bool ClosesTemplateArguments(string @operator)
+    {
+        return _inTemplateArguments && @operator is ">" or ">>" or ">>=";
+    }
+
     private void EatTokens(int count)
     {
         for (var i = 0; i < count; i++)
@@ -203,6 +212,15 @@ internal ref partial struct SyntaxParser
     /// The arguments after '(' up to and including ')'.
     /// </summary>
     private List<Expression> ParseArguments()
+    {
+        var saved = _inTemplateArguments;
+        _inTemplateArguments = false;
+        var arguments = ParseArgumentsCore();
+        _inTemplateArguments = saved;
+        return arguments;
+    }
+
+    private List<Expression> ParseArgumentsCore()
     {
         var arguments = new List<Expression>();
         if (TryEatPunctuator(")"))
@@ -269,8 +287,12 @@ internal ref partial struct SyntaxParser
             }
 
             case TokenKind.Identifier:
-                EatToken();
-                return Finish(new NameExpression(token.Text), start);
+            case TokenKind.Keyword when token.Text == "operator":
+            case TokenKind.Punctuator when token.Text == "::" && IsNameStart(token, NameContext.Expression):
+            {
+                var name = ParseName(NameContext.Expression);
+                return name == null ? null : Finish(new NameExpression(name), start);
+            }
 
             case TokenKind.Keyword:
                 switch (token.Text)
@@ -289,7 +311,10 @@ internal ref partial struct SyntaxParser
             case TokenKind.Punctuator when token.Text == "(":
             {
                 EatToken();
+                var saved = _inTemplateArguments;
+                _inTemplateArguments = false;
                 var expression = ParseExpression();
+                _inTemplateArguments = saved;
                 if (expression == null || !TryEatPunctuator(")"))
                 {
                     return null;

@@ -1,0 +1,459 @@
+namespace PaspanParsers.Cpp;
+
+/// <summary>
+/// Which declarators are allowed.
+/// </summary>
+internal enum DeclaratorKind
+{
+    /// <summary>A declarator with a name, as in a declaration.</summary>
+    Named,
+
+    /// <summary>An abstract declarator, as in a type-id: <c>(*)(int)</c>.</summary>
+    Abstract,
+
+    /// <summary>A parameter: named or abstract.</summary>
+    Parameter,
+
+    /// <summary>The abstract declarator of a conversion function: pointer and reference operators only.</summary>
+    Conversion,
+}
+
+// Declarators ([dcl.decl]): pointers, references, pointers to members, arrays, functions and parentheses.
+internal ref partial struct SyntaxParser
+{
+    /// <summary>
+    /// A declarator of <paramref name="kind"/>. Returns false when the input is not valid; an abstract
+    /// declarator may be empty, and <paramref name="declarator"/> is then null.
+    /// </summary>
+    private bool TryParseDeclarator(DeclaratorKind kind, out Declarator declarator)
+    {
+        EnsureSufficientStack();
+        declarator = null;
+        var start = NodeStart;
+
+        // ptr-operator: * cv, & , &&, nested-name-specifier * cv
+        if (IsPunctuator("*") || IsPunctuator("&") || IsPunctuator("&&"))
+        {
+            var @operator = EatToken().Text;
+            var qualifiers = @operator == "*" ? ParseCvQualifiers() : null;
+            if (!TryParseDeclarator(kind, out var inner) || (inner == null && kind == DeclaratorKind.Named))
+            {
+                return false;
+            }
+
+            declarator = @operator == "*"
+                ? Finish(new PointerDeclarator(inner, qualifiers), start)
+                : Finish(new ReferenceDeclarator(inner, isRvalue: @operator == "&&"), start);
+            return true;
+        }
+
+        if (IsNameStart(Current, NameContext.Type) && TryParseMemberPointerClass(out var @class))
+        {
+            var qualifiers = ParseCvQualifiers();
+            if (!TryParseDeclarator(kind, out var inner) || (inner == null && kind == DeclaratorKind.Named))
+            {
+                return false;
+            }
+
+            declarator = Finish(new MemberPointerDeclarator(@class, inner, qualifiers), start);
+            return true;
+        }
+
+        if (kind == DeclaratorKind.Conversion)
+        {
+            return true;
+        }
+
+        return TryParseNoPointerDeclarator(kind, out declarator);
+    }
+
+    /// <summary>
+    /// The class of a pointer to member: a name followed by <c>::*</c>, which are consumed.
+    /// </summary>
+    private bool TryParseMemberPointerClass(out Name @class)
+    {
+        var mark = Save();
+        @class = ParseName(NameContext.Type);
+        if (@class != null && IsPunctuator("::") && Peek(1).IsPunctuator("*"))
+        {
+            EatTokens(2);
+            return true;
+        }
+
+        Restore(mark);
+        @class = null;
+        return false;
+    }
+
+    /// <summary>
+    /// <c>const</c> and <c>volatile</c>, in source order.
+    /// </summary>
+    private List<string> ParseCvQualifiers()
+    {
+        var qualifiers = new List<string>();
+        while (IsKeyword("const") || IsKeyword("volatile"))
+        {
+            qualifiers.Add(EatToken().Text);
+        }
+
+        return qualifiers;
+    }
+
+    /// <summary>
+    /// noptr-declarator: a declarator id, a pack or a parenthesized declarator, followed by parameter lists
+    /// and array bounds.
+    /// </summary>
+    private bool TryParseNoPointerDeclarator(DeclaratorKind kind, out Declarator declarator)
+    {
+        declarator = null;
+        var start = NodeStart;
+
+        if (IsPunctuator("(") && IsNestedDeclarator(kind))
+        {
+            EatToken();
+            if (!TryParseDeclarator(kind, out var inner) || inner == null || !TryEatPunctuator(")"))
+            {
+                return false;
+            }
+
+            declarator = Finish(new ParenthesizedDeclarator(inner), start);
+        }
+        else if (IsPunctuator("...") && kind == DeclaratorKind.Parameter && IsNameStart(Peek(1), NameContext.Declarator))
+        {
+            // A parameter pack: ...args. A '...' before ')' is taken as the ellipsis of a variadic function
+            // (an abstract pack, Ts..., needs to know that Ts is a pack)
+            EatToken();
+            Declarator inner = null;
+            if (IsNameStart(Current, NameContext.Declarator))
+            {
+                var name = ParseName(NameContext.Declarator);
+                if (name == null)
+                {
+                    return false;
+                }
+
+                inner = Finish(new NameDeclarator(name), name);
+            }
+
+            declarator = Finish(new PackDeclarator(inner), start);
+        }
+        else if (kind != DeclaratorKind.Abstract && IsNameStart(Current, NameContext.Declarator))
+        {
+            var name = ParseName(NameContext.Declarator);
+            if (name == null)
+            {
+                return false;
+            }
+
+            declarator = Finish(new NameDeclarator(name), start);
+        }
+        else if (kind == DeclaratorKind.Named)
+        {
+            return false;
+        }
+
+        // Parameter lists and array bounds
+        while (true)
+        {
+            if (IsPunctuator("("))
+            {
+                // In a declaration, a '(' after the name that starts no parameters starts an initializer
+                var mark = Save();
+                var function = ParseFunctionDeclaratorRest(declarator, start);
+                if (function == null)
+                {
+                    Restore(mark);
+                    if (kind == DeclaratorKind.Named && declarator != null)
+                    {
+                        break;
+                    }
+
+                    return false;
+                }
+
+                declarator = function;
+            }
+            else if (IsPunctuator("[") && !Peek(1).IsPunctuator("["))
+            {
+                EatToken();
+                Expression size = null;
+                if (!IsPunctuator("]"))
+                {
+                    var saved = _inTemplateArguments;
+                    _inTemplateArguments = false;
+                    size = ParseAssignmentExpression();
+                    _inTemplateArguments = saved;
+                    if (size == null)
+                    {
+                        return false;
+                    }
+                }
+
+                if (!TryEatPunctuator("]"))
+                {
+                    return false;
+                }
+
+                declarator = Finish(new ArrayDeclarator(declarator, size), start);
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// A '(' at the start of a declarator starts a nested declarator, not a parameter list: always in a
+    /// named declarator; in an abstract one when a pointer operator follows; in a parameter also when a
+    /// name follows that is not a type ([dcl.ambig.res]: <c>int (x)</c> declares <c>x</c>, <c>int (T)</c>
+    /// is a function taking a <c>T</c>).
+    /// </summary>
+    private bool IsNestedDeclarator(DeclaratorKind kind)
+    {
+        if (kind == DeclaratorKind.Named)
+        {
+            return true;
+        }
+
+        var next = Peek(1);
+        if (next.IsPunctuator("*") || next.IsPunctuator("&") || next.IsPunctuator("&&") || next.IsPunctuator("("))
+        {
+            return true;
+        }
+
+        if (!IsNameStart(next, NameContext.Type))
+        {
+            return false;
+        }
+
+        // A pointer to member: (S::*)
+        var mark = Save();
+        EatToken();
+        var isMemberPointer = TryParseMemberPointerClass(out _);
+        Restore(mark);
+        if (isMemberPointer)
+        {
+            return true;
+        }
+
+        if (kind != DeclaratorKind.Parameter || !next.IsIdentifier)
+        {
+            return false;
+        }
+
+        return _cache.Symbols.Lookup(next.Text) is not (SymbolKind.Type or SymbolKind.Template) && !ExtensionTypeNames.Contains(next.Text);
+    }
+
+    /// <summary>
+    /// The parameters after <paramref name="inner"/> and what follows them: cv- and ref-qualifiers,
+    /// <c>noexcept</c> and a trailing return type. Null when there is no parameter list.
+    /// </summary>
+    private FunctionDeclarator ParseFunctionDeclaratorRest(Declarator inner, int start)
+    {
+        if (!TryEatPunctuator("("))
+        {
+            return null;
+        }
+
+        var saved = _inTemplateArguments;
+        _inTemplateArguments = false;
+        var parameters = ParseParameterClause(out var isVariadic);
+        _inTemplateArguments = saved;
+        if (parameters == null)
+        {
+            return null;
+        }
+
+        var qualifiers = ParseCvQualifiers();
+        string refQualifier = null;
+        if (IsPunctuator("&") || IsPunctuator("&&"))
+        {
+            refQualifier = EatToken().Text;
+        }
+
+        NoexceptSpecifier noexcept = null;
+        if (IsKeyword("noexcept"))
+        {
+            noexcept = ParseNoexceptSpecifier();
+            if (noexcept == null)
+            {
+                return null;
+            }
+        }
+
+        TypeId trailingReturnType = null;
+        if (TryEatPunctuator("->"))
+        {
+            trailingReturnType = ParseTypeId();
+            if (trailingReturnType == null)
+            {
+                return null;
+            }
+        }
+
+        return Finish(
+            new FunctionDeclarator(inner, parameters)
+            {
+                IsVariadic = isVariadic,
+                Qualifiers = qualifiers,
+                RefQualifier = refQualifier,
+                Noexcept = noexcept,
+                TrailingReturnType = trailingReturnType,
+            },
+            start);
+    }
+
+    /// <summary>
+    /// <c>noexcept</c> or <c>noexcept(condition)</c>.
+    /// </summary>
+    private NoexceptSpecifier ParseNoexceptSpecifier()
+    {
+        var start = NodeStart;
+        EatToken();
+        Expression condition = null;
+        if (TryEatPunctuator("("))
+        {
+            var saved = _inTemplateArguments;
+            _inTemplateArguments = false;
+            condition = ParseAssignmentExpression();
+            _inTemplateArguments = saved;
+            if (condition == null || !TryEatPunctuator(")"))
+            {
+                return null;
+            }
+        }
+
+        return Finish(new NoexceptSpecifier(condition), start);
+    }
+
+    /// <summary>
+    /// The parameters after '(' up to and including ')', and whether they end with the ellipsis of a
+    /// variadic function: <c>(int, ...)</c>, <c>(int...)</c> or <c>(...)</c>.
+    /// </summary>
+    private List<ParameterDeclaration> ParseParameterClause(out bool isVariadic)
+    {
+        isVariadic = false;
+        var parameters = new List<ParameterDeclaration>();
+        if (TryEatPunctuator(")"))
+        {
+            return parameters;
+        }
+
+        while (true)
+        {
+            if (TryEatPunctuator("..."))
+            {
+                isVariadic = true;
+                return TryEatPunctuator(")") ? parameters : null;
+            }
+
+            var parameter = ParseParameter();
+            if (parameter == null)
+            {
+                return null;
+            }
+
+            parameters.Add(parameter);
+            if (TryEatPunctuator(")"))
+            {
+                return parameters;
+            }
+
+            if (IsPunctuator("...") && Peek(1).IsPunctuator(")"))
+            {
+                EatTokens(2);
+                isVariadic = true;
+                return parameters;
+            }
+
+            if (!TryEatPunctuator(","))
+            {
+                return null;
+            }
+        }
+    }
+
+    private ParameterDeclaration ParseParameter()
+    {
+        var start = NodeStart;
+        var specifiers = ParseDeclSpecifiers();
+        if (specifiers == null || !TryParseDeclarator(DeclaratorKind.Parameter, out var declarator))
+        {
+            return null;
+        }
+
+        Expression defaultValue = null;
+        if (TryEatPunctuator("="))
+        {
+            defaultValue = ParseAssignmentExpression();
+            if (defaultValue == null)
+            {
+                return null;
+            }
+        }
+
+        return Finish(new ParameterDeclaration(specifiers, declarator, defaultValue), start);
+    }
+
+    // ========================================
+    // Declarator queries
+    // ========================================
+
+    /// <summary>
+    /// The name a declarator declares, or null for an abstract declarator.
+    /// </summary>
+    public static NameDeclarator DeclaredName(Declarator declarator) => declarator switch
+    {
+        NameDeclarator name => name,
+        PackDeclarator pack => DeclaredName(pack.Inner),
+        PointerDeclarator pointer => DeclaredName(pointer.Inner),
+        ReferenceDeclarator reference => DeclaredName(reference.Inner),
+        MemberPointerDeclarator member => DeclaredName(member.Inner),
+        ArrayDeclarator array => DeclaredName(array.Inner),
+        FunctionDeclarator function => DeclaredName(function.Inner),
+        ParenthesizedDeclarator parenthesized => DeclaredName(parenthesized.Inner),
+        _ => null,
+    };
+
+    /// <summary>
+    /// The declarator applied first to the declared name, without parentheses: the function declarator in
+    /// <c>(*f(int))[3]</c> (a function returning a pointer to an array). Null when there is no name or
+    /// nothing is applied to it.
+    /// </summary>
+    public static Declarator InnermostOperator(Declarator declarator)
+    {
+        Declarator found = null;
+        var current = declarator;
+        while (current != null)
+        {
+            var inner = current switch
+            {
+                PackDeclarator pack => pack.Inner,
+                PointerDeclarator pointer => pointer.Inner,
+                ReferenceDeclarator reference => reference.Inner,
+                MemberPointerDeclarator member => member.Inner,
+                ArrayDeclarator array => array.Inner,
+                FunctionDeclarator function => function.Inner,
+                ParenthesizedDeclarator parenthesized => parenthesized.Inner,
+                _ => null,
+            };
+
+            if (current is not (ParenthesizedDeclarator or PackDeclarator or NameDeclarator))
+            {
+                found = current;
+            }
+
+            current = inner;
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The declarator declares a function: the first thing applied to the name is a parameter list.
+    /// </summary>
+    public static bool DeclaresFunction(Declarator declarator) => DeclaredName(declarator) != null && InnermostOperator(declarator) is FunctionDeclarator;
+}

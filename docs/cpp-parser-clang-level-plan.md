@@ -255,6 +255,50 @@ C#-парсер переходит на них. Единственное изм�
 - Неактивные ветки пропускаются по строкам с учётом вложенности.
 
 ### Этап 3. Имена, таблица символов, типы и деклараторы
+
+> **Статус: выполнен.**
+> - **Имена** (`Parser/SyntaxParser.Names.cs`, AST `Name`): `IdentifierName`, `TemplateIdName` (аргументы — `TypeId` или `Expression`),
+>   `OperatorFunctionName` (включая `new[]`, `delete[]`, `()`, `[]`, `co_await`, составные `>>=`/`>=`), `ConversionFunctionName`,
+>   `LiteralOperatorName`, `DestructorName`, `DecltypeName` (квалификатор `decltype(x)::`), `QualifiedName` (вложенность слева,
+>   `Qualifier == null` — глобальный `::`, `IsTemplate` — `T::template f<int>`). `NameExpression` и `NameDeclarator` хранят `Name`.
+>   `::` перед `*` (указатель на член) остаётся вызывающему.
+> - **Аргументы шаблона:** type-id, если разбирается как тип и за ним `,`, `>` или `...` ([temp.arg]), иначе выражение; имя, известное как
+>   значение, — выражение. Внутри аргументов `>`, `>>`, `>>=` вне скобок закрывают список (`_inTemplateArguments`), `>=` — оператор.
+>   `<` после имени начинает аргументы: в типе — всегда; в выражении — у известного шаблона или концепта (`Symbols`,
+>   `CppParseOptions.TemplateNames`); у неизвестного имени — если после `>` идёт `::` или внутри `requires`.
+>   Неудачные попытки разобрать `<…>` запоминаются по позиции: цепочки `a < b < c …` иначе разбирались бы экспоненциально долго.
+> - **Спецификаторы** (`SyntaxParser.Types.cs`): любой порядок; имя становится спецификатором типа, только пока другого типа нет
+>   (`unsigned x` объявляет `x`), и не становится, если это конструктор, деструктор или функция преобразования (`S::S`, `S::~S`,
+>   `S::operator int`) — у таких объявлений `Specifiers == null`. Новые узлы: `NamedTypeSpecifier` (`IsTypename`), `ElaboratedTypeSpecifier`,
+>   `DecltypeSpecifier` (`decltype(auto)` — без выражения), `PlaceholderTypeSpecifier` (`C auto`, `C decltype(auto)`); `typedef`, `friend` и
+>   GNU-типы `__int128`, `__float128`, `_Float16`, `__bf16` — `KeywordSpecifier`. `TypeId` — спецификаторы и абстрактный декларатор.
+> - **Деклараторы** (`SyntaxParser.Declarators.cs`) вложены как в грамматике: `PointerDeclarator` (cv), `ReferenceDeclarator`,
+>   `MemberPointerDeclarator`, `ArrayDeclarator`, `FunctionDeclarator` (`IsVariadic` для `, ...`, `...` и `(...)`, cv, ref-qualifier,
+>   `NoexceptSpecifier`, trailing return type), `ParenthesizedDeclarator`, `PackDeclarator` (`Ts&&... args`); у абстрактного декларатора
+>   внутренний `Inner == null`. `(` в начале декларатора параметра — вложенный декларатор, если дальше указатель или имя, не известное как тип
+>   ([dcl.ambig.res]: `int (x)` и `int (T)`). `requires` после декларатора — `InitDeclarator.RequiresClause`/`FunctionDefinition.RequiresClause`.
+>   Тело функции следует, если первым к имени применён список параметров (`int (*f())[3] { … }`).
+> - **Объявления:** `struct X;` — `SimpleDeclaration` без деклараторов; `typedef`. **Таблица символов** `Parser/Symbols.cs`: области
+>   (файл, функция, блок), виды имён (значение, тип, шаблон, концепт, namespace), откат спекулятивных разборов (`Checkpoint`/`Rollback`).
+>   Объявляются: имена деклараторов (тип после `typedef`) — сразу после декларатора, до инициализатора; имена из `struct X`; параметры —
+>   в области тела. Квалифицированное имя ищется по последнему идентификатору. Новые опции `CppParseOptions.TypeNames`/`TemplateNames`.
+> - **Объявление или выражение в блоке:** объявление, если оператор начинается с ключевого слова-спецификатора или с имени, известного как тип;
+>   для неизвестного имени — если дальше имя (`X y`), `X *y;`/`X &y =`, `::*` или аргументы шаблона и имя (`vector<int> v;`). Сначала
+>   пробуется объявление, при неудаче — выражение. Полное [stmt.ambig] — этап 5.
+> - **Writer** печатает имена, спецификаторы, деклараторы, `...`, квалификаторы, `noexcept`, `->`, `requires`.
+> - **Оракул:**
+>   - `CppKindMap.RuleFor(node, Ancestry)` получает цепочку предков;
+>   - выражения внутри типов (границы массивов, `decltype`, аргументы шаблонов, `noexcept`) проверяются по токенам: Clang их не выводит;
+>   - `ParameterDeclaration` ↔ `ParmVarDecl`, только если декларатор функции применён прямо к объявленному имени и объявление — не typedef,
+>     параметр или type-id (у `int (*f)(int)` и параметров параметров их нет), и не `(void)`;
+>   - `InitDeclarator` ↔ ещё и `TypedefDecl`; место объявления — неквалифицированное имя, `operator` или `~`;
+>   - нормализация игнорирует адрес `typeAliasDeclId`.
+> - **Корпус:** `03-Types.cpp` и `04-Declarators.cpp` переписаны под грамматику этапа: вместо определений классов — неполные типы и `typedef`.
+>   Определения классов, `&S::member`, `sizeof(type-id)` и `{}`-инициализация из прежних версий покрываются файлами этапов 4–6 (`05`, `08`, `16`).
+> - **База:** 5/20 (`00`–`04`). Юнит-тесты: `CppDeclaratorTests.cs`.
+> - **Ограничения:** абстрактный пакет `Ts...` в параметрах читается как многоточие вариадической функции — различить их можно,
+>   только зная пакеты параметров шаблона (этап 6); инициализаторы `()` и `{}` — этапы 4–6; члены namespace и классов в таблицу символов
+>   не попадают (этап 6).
 - nested-name-specifier, включая `::`, `decltype(...)::` и `template` в квалификаторе.
 - template-id; operator-function-id, conversion-function-id, literal-operator-id; деструктор `~T`.
 - decl-specifier-seq в любом порядке: cv, `signed`/`unsigned`/`long long`, `auto`, `decltype(auto)`, elaborated `struct X`, `typename T::x`, placeholder с concept `std::integral auto`.

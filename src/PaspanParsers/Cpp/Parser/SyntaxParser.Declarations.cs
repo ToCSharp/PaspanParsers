@@ -1,23 +1,8 @@
 namespace PaspanParsers.Cpp;
 
-// Translation unit, declarations, declaration specifiers and declarators.
+// Translation unit and declarations.
 internal ref partial struct SyntaxParser
 {
-    /// <summary>
-    /// Keywords that are declaration specifiers ([dcl.spec]): fundamental types, cv-qualifiers, storage
-    /// classes and function specifiers.
-    /// </summary>
-    private static readonly HashSet<string> SpecifierKeywords =
-    [
-        "void", "bool", "char", "char8_t", "char16_t", "char32_t", "wchar_t", "short", "int", "long",
-        "signed", "unsigned", "float", "double", "auto",
-        "const", "volatile",
-        "static", "extern", "thread_local", "mutable", "register",
-        "inline", "constexpr", "consteval", "constinit", "virtual", "explicit",
-    ];
-
-    private bool IsDeclSpecifierStart => Current is { Kind: TokenKind.Keyword } token && SpecifierKeywords.Contains(token.Text);
-
     // ========================================
     // Translation Unit
     // ========================================
@@ -51,58 +36,112 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// A function definition or a simple declaration.
     /// </summary>
-    private Declaration ParseDeclaration()
+    private Declaration ParseDeclaration() => ParseDeclaration(allowFunctionDefinition: true);
+
+    /// <summary>
+    /// A simple declaration in a block: <c>int a = 1, *b;</c>.
+    /// </summary>
+    private SimpleDeclaration ParseSimpleDeclaration() => ParseDeclaration(allowFunctionDefinition: false) as SimpleDeclaration;
+
+    private Declaration ParseDeclaration(bool allowFunctionDefinition)
     {
         EnsureSufficientStack();
         var start = NodeStart;
 
         var specifiers = ParseDeclSpecifiers();
-        if (specifiers == null)
+        if (specifiers == null && !IsNameStart(Current, NameContext.Declarator))
         {
             return null;
         }
 
-        var declarator = ParseDeclarator();
-        if (declarator == null)
+        // A declaration without declarators declares a class or enumeration: struct Point;
+        if (IsPunctuator(";"))
+        {
+            if (specifiers?.Specifiers.Any(s => s is ElaboratedTypeSpecifier) != true)
+            {
+                return null;
+            }
+
+            EatToken();
+            return Finish(new SimpleDeclaration(specifiers, []), start);
+        }
+
+        if (!TryParseDeclarator(DeclaratorKind.Named, out var declarator))
         {
             return null;
         }
 
-        if (declarator is FunctionDeclarator && IsPunctuator("{"))
+        // Only constructors, destructors and conversion functions have no specifiers
+        if (specifiers == null && !NamesFunctionWithoutType(DeclaredName(declarator).Name))
         {
-            var body = ParseCompoundStatement();
-            return body == null ? null : Finish(new FunctionDefinition(specifiers, declarator, body), start);
+            return null;
         }
 
-        return ParseSimpleDeclarationRest(start, specifiers, declarator);
+        var requiresClause = ParseOptionalRequiresClause(out var valid);
+        if (!valid)
+        {
+            return null;
+        }
+
+        if (allowFunctionDefinition && IsPunctuator("{") && DeclaresFunction(declarator))
+        {
+            return ParseFunctionBodyRest(start, specifiers, declarator, requiresClause);
+        }
+
+        return ParseSimpleDeclarationRest(start, specifiers, declarator, requiresClause);
     }
 
     /// <summary>
-    /// A simple declaration in a block: <c>int a = 1, b;</c>.
+    /// The body of a function definition: the parameters are declared in the scope of the body.
     /// </summary>
-    private SimpleDeclaration ParseSimpleDeclaration()
+    private FunctionDefinition ParseFunctionBodyRest(int start, DeclSpecifierSequence specifiers, Declarator declarator, Expression requiresClause)
     {
-        var start = NodeStart;
-        var specifiers = ParseDeclSpecifiers();
-        if (specifiers == null)
+        DeclareName(specifiers, declarator);
+        var symbols = _cache.Symbols;
+        symbols.EnterScope();
+        if (InnermostOperator(declarator) is FunctionDeclarator function)
+        {
+            foreach (var parameter in function.Parameters)
+            {
+                DeclareName(parameter.Specifiers, parameter.Declarator);
+            }
+        }
+
+        var body = ParseCompoundStatement();
+        symbols.ExitScope();
+        return body == null ? null : Finish(new FunctionDefinition(specifiers, declarator, body) { RequiresClause = requiresClause }, start);
+    }
+
+    /// <summary>
+    /// <c>requires constraint</c> after a declarator, or null when there is none; <paramref name="valid"/> is
+    /// false when the clause does not parse.
+    /// </summary>
+    private Expression ParseOptionalRequiresClause(out bool valid)
+    {
+        valid = true;
+        if (!TryEatKeyword("requires"))
         {
             return null;
         }
 
-        var declarator = ParseDeclarator();
-        return declarator == null ? null : ParseSimpleDeclarationRest(start, specifiers, declarator);
+        var saved = _inConstraint;
+        _inConstraint = true;
+        var constraint = ParseBinaryExpression(LogicalOrPrecedence);
+        _inConstraint = saved;
+        valid = constraint != null;
+        return constraint;
     }
 
     /// <summary>
     /// The initializer of the first declarator, the other init-declarators and the ';'.
     /// </summary>
-    private SimpleDeclaration ParseSimpleDeclarationRest(int start, DeclSpecifierSequence specifiers, Declarator first)
+    private SimpleDeclaration ParseSimpleDeclarationRest(int start, DeclSpecifierSequence specifiers, Declarator first, Expression requiresClause)
     {
         var declarators = new List<InitDeclarator>();
         var declarator = first;
         while (true)
         {
-            var initDeclarator = ParseInitDeclaratorRest(declarator);
+            var initDeclarator = ParseInitDeclaratorRest(specifiers, declarator, requiresClause);
             if (initDeclarator == null)
             {
                 return null;
@@ -114,8 +153,13 @@ internal ref partial struct SyntaxParser
                 break;
             }
 
-            declarator = ParseDeclarator();
-            if (declarator == null)
+            if (!TryParseDeclarator(DeclaratorKind.Named, out declarator))
+            {
+                return null;
+            }
+
+            requiresClause = ParseOptionalRequiresClause(out var valid);
+            if (!valid)
             {
                 return null;
             }
@@ -130,10 +174,13 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// The optional initializer after <paramref name="declarator"/>.
+    /// The optional initializer after <paramref name="declarator"/>. The name is declared before the
+    /// initializer, which can refer to it.
     /// </summary>
-    private InitDeclarator ParseInitDeclaratorRest(Declarator declarator)
+    private InitDeclarator ParseInitDeclaratorRest(DeclSpecifierSequence specifiers, Declarator declarator, Expression requiresClause)
     {
+        DeclareName(specifiers, declarator);
+
         Initializer initializer = null;
         var start = NodeStart;
         if (TryEatPunctuator("="))
@@ -147,121 +194,19 @@ internal ref partial struct SyntaxParser
             initializer = Finish(new EqualsInitializer(value), start);
         }
 
-        return Finish(new InitDeclarator(declarator, initializer), declarator);
-    }
-
-    // ========================================
-    // Declaration Specifiers
-    // ========================================
-
-    /// <summary>
-    /// decl-specifier-seq: one or more declaration specifiers.
-    /// </summary>
-    private DeclSpecifierSequence ParseDeclSpecifiers()
-    {
-        var start = NodeStart;
-        var specifiers = new List<DeclSpecifier>();
-        while (IsDeclSpecifierStart)
-        {
-            var specifierStart = NodeStart;
-            specifiers.Add(Finish(new KeywordSpecifier(EatToken().Text), specifierStart));
-        }
-
-        return specifiers.Count == 0 ? null : Finish(new DeclSpecifierSequence(specifiers), start);
-    }
-
-    // ========================================
-    // Declarators
-    // ========================================
-
-    /// <summary>
-    /// A declarator: a name, optionally followed by a parameter list.
-    /// </summary>
-    private Declarator ParseDeclarator()
-    {
-        var start = NodeStart;
-        var name = TryEatIdentifier();
-        if (name == null)
-        {
-            return null;
-        }
-
-        Declarator declarator = Finish(new NameDeclarator(name), start);
-        if (TryEatPunctuator("("))
-        {
-            var parameters = ParseParameters();
-            if (parameters == null)
-            {
-                return null;
-            }
-
-            declarator = Finish(new FunctionDeclarator(declarator, parameters), start);
-        }
-
-        return declarator;
+        return Finish(new InitDeclarator(declarator, initializer) { RequiresClause = requiresClause }, declarator);
     }
 
     /// <summary>
-    /// The parameters after '(' up to and including ')'.
+    /// Declares the name of <paramref name="declarator"/> in the current scope: a type after <c>typedef</c>,
+    /// otherwise a value. Qualified names declare nothing new.
     /// </summary>
-    private List<ParameterDeclaration> ParseParameters()
+    private readonly void DeclareName(DeclSpecifierSequence specifiers, Declarator declarator)
     {
-        var parameters = new List<ParameterDeclaration>();
-        if (TryEatPunctuator(")"))
+        if (DeclaredName(declarator)?.Name is IdentifierName identifier)
         {
-            return parameters;
+            var isTypedef = specifiers?.Specifiers.Any(s => s is KeywordSpecifier { Keyword: "typedef" }) == true;
+            _cache.Symbols.Declare(identifier.Identifier, isTypedef ? SymbolKind.Type : SymbolKind.Value);
         }
-
-        while (true)
-        {
-            var parameter = ParseParameter();
-            if (parameter == null)
-            {
-                return null;
-            }
-
-            parameters.Add(parameter);
-            if (TryEatPunctuator(")"))
-            {
-                return parameters;
-            }
-
-            if (!TryEatPunctuator(","))
-            {
-                return null;
-            }
-        }
-    }
-
-    private ParameterDeclaration ParseParameter()
-    {
-        var start = NodeStart;
-        var specifiers = ParseDeclSpecifiers();
-        if (specifiers == null)
-        {
-            return null;
-        }
-
-        Declarator declarator = null;
-        if (Current.IsIdentifier)
-        {
-            declarator = ParseDeclarator();
-            if (declarator == null)
-            {
-                return null;
-            }
-        }
-
-        Expression defaultValue = null;
-        if (TryEatPunctuator("="))
-        {
-            defaultValue = ParseAssignmentExpression();
-            if (defaultValue == null)
-            {
-                return null;
-            }
-        }
-
-        return Finish(new ParameterDeclaration(specifiers, declarator, defaultValue), start);
     }
 }

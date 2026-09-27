@@ -134,8 +134,8 @@ public class ClangOracleTests
     [TestMethod]
     public void Oracle_ReportsValidSourceTheParserRejects()
     {
-        var result = CppTestHelper.AssertOracleFails("struct S { int a; };", OracleStatus.ParseFailed);
-        StringAssert.StartsWith(result.Detail, "(1,1): Unexpected 'struct'");
+        var result = CppTestHelper.AssertOracleFails("namespace N { int a; }", OracleStatus.ParseFailed);
+        StringAssert.StartsWith(result.Detail, "(1,1): Unexpected 'namespace'");
     }
 
     [TestMethod]

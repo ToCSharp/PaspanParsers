@@ -215,7 +215,7 @@ public class CppLexicalTests
 
         var declaration = (SimpleDeclaration)unit.Declarations[0];
         var name = (NameDeclarator)declaration.Declarators[0].Declarator;
-        Assert.AreEqual("main", name.Name);
+        Assert.AreEqual("main", name.Name.ToString());
         Assert.AreEqual("ma\\\nin", name.Span.GetText(source));
 
         // An operator split by a splice is one token
@@ -249,7 +249,7 @@ public class CppLexicalTests
             ("\\N{GREEK SMALL LETTER ALPHA}", "\\N{GREEK SMALL LETTER ALPHA}"),
         })
         {
-            Assert.AreEqual(value, CppTestHelper.Expression<NameExpression>(text).Name, text);
+            Assert.AreEqual(value, CppTestHelper.Expression<NameExpression>(text).Name.ToString(), text);
         }
 
         // Not identifier characters: an emoji, a digit first, a no-break space

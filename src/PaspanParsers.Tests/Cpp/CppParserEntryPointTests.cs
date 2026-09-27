@@ -24,7 +24,7 @@ public class CppParserEntryPointTests
         var main = (FunctionDefinition)unit.Declarations.Single();
         Assert.AreEqual("int", ((KeywordSpecifier)main.Specifiers.Specifiers.Single()).Keyword);
         var declarator = (FunctionDeclarator)main.Declarator;
-        Assert.AreEqual("main", ((NameDeclarator)declarator.Inner).Name);
+        Assert.AreEqual("main", ((NameDeclarator)declarator.Inner).Name.ToString());
         Assert.IsEmpty(declarator.Parameters);
 
         var @return = (ReturnStatement)main.Body.Statements.Single();
