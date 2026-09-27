@@ -11,6 +11,10 @@ back as C++.
 Macros are not expanded and `#include` is not read: the parser works on a single file, as written.
 Conditional directives will be evaluated with the macros given in `CppParseOptions.Macros` (stage 2).
 
+Limitations of the lexer: characters named with `\N{...}` are not decoded (.NET has no table of Unicode
+character names), so literals with them have no value; a line splice inside the `//` or `/*` that starts a
+comment is not supported.
+
 ## Usage
 
 ```csharp
@@ -41,7 +45,8 @@ UTF-8 bytes of a file, and `LineMap(utf8, unicodeLineBreaks: false)` converts of
 
 | Area | Status |
 |---|---|
-| Lexical | Tokens of C++23: punctuators (longest first, digraphs, alternative tokens, `<::`), numbers, character and string literals with encoding prefixes, raw strings and user-defined suffixes, comments and line splices |
+| Lexical | Tokens of C++23: punctuators (longest first, digraphs, alternative tokens, `<::`), numbers, character and string literals with encoding prefixes, raw strings and user-defined suffixes, comments, line splices (also inside tokens), Unicode identifiers and universal character names |
+| Literals | Values of integer, floating, character and string literals (`LiteralExpression.Value`), encodings, suffixes; adjacent strings are one `ConcatenatedStringExpression` |
 | Declarations | Function definitions and simple declarations with keyword specifiers (`int`, `const`, `static`, ...), function declarators, parameters with default values, `=` initializers |
 | Statements | Compound, declaration, expression, null, `if`/`else`, `while`, `return` |
 | Expressions | Literals, names, parentheses, all binary operators with C++ precedence, `?:`, assignments, prefix and postfix operators, calls |
@@ -52,7 +57,8 @@ UTF-8 bytes of a file, and `LineMap(utf8, unicodeLineBreaks: false)` converts of
 `src/PaspanParsers.Tests/Cpp` runs clang as an oracle (see `CLAUDE.md`). For each valid file of the corpus
 the parser must succeed, the printed tree must compile to the same clang AST, and every node must have
 the span and a matching kind of a clang node (`CppKindMap.cs`), so that, for example, `a * b;` read as a
-declaration instead of a multiplication is caught even though it prints the same.
+declaration instead of a multiplication is caught even though it prints the same. The values of literals
+must also be clang's (`CppLiteralChecker.cs`).
 
 ## Files
 
@@ -63,4 +69,5 @@ declaration instead of a multiplication is caught even though it prints the same
 | `CppAst.cs` | AST nodes |
 | `CppWriter.cs` | Prints an AST as C++ |
 | `Parser/Lexer.cs`, `Parser/SyntaxToken.cs` | Tokens and trivia |
+| `Parser/Literals.cs` | Values of literals |
 | `Parser/SyntaxParser*.cs` | Recursive descent parser: declarations, statements, expressions |

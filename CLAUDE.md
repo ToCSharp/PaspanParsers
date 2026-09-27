@@ -18,7 +18,7 @@ Do not use `dotnet test`: the test project uses Microsoft.Testing.Platform, and 
 ## C++ parser oracle
 
 - The C++ parser (`src/PaspanParsers/Cpp`) is being built by stages following `docs/cpp-parser-clang-level-plan.md`; record the status of each stage there.
-- `src/PaspanParsers.Tests/Cpp/CppCorpusTests.cs` checks valid C++ files against clang (`clang++`, or `CLANG_PATH`): parse, write back with `CppWriter`, compare clang's JSON AST of both (`ClangAst.cs`), and check every node's span and kind against clang's nodes (`CppSpanChecker.cs`, `CppKindMap.cs`). Without clang these tests are inconclusive.
+- `src/PaspanParsers.Tests/Cpp/CppCorpusTests.cs` checks valid C++ files against clang (`clang++`, or `CLANG_PATH`): parse, write back with `CppWriter`, compare clang's JSON AST of both (`ClangAst.cs`), check every node's span and kind against clang's nodes (`CppSpanChecker.cs`, `CppKindMap.cs`), and check the values of literals (`CppLiteralChecker.cs`). Without clang these tests are inconclusive.
 - Every new node type needs a rule in `CppKindMap.cs`, and every node gets its span from `SyntaxParser.Finish(node, start)`.
 - Files listed in `src/PaspanParsers.Tests/Cpp/Corpus/oracle-baseline.txt` must keep passing; record newly passing files with the same `UPDATE_ORACLE_BASELINE=1` command as for C# (the filter `Oracle_BuiltInCorpus` covers both). The report is `cpp-oracle-report.txt` next to `oracle-report.txt`.
 - Set `CPP_CORPUS_DIR` to also measure an external corpus (`--filter "FullyQualifiedName~Cpp.CppCorpusTests.Oracle_ExternalCorpus"`, report in `cpp-oracle-external-report.txt`), with `CPP_CORPUS_DEFINES` (for example `NDEBUG;VERSION=3`) and `CPP_CORPUS_INCLUDE` (include directories for clang, separated by the path separator).

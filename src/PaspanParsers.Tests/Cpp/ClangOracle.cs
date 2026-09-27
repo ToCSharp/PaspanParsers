@@ -58,7 +58,8 @@ public sealed record ClangOracleOptions(
 /// <item><see cref="CppParser"/> must parse it;</item>
 /// <item>the tree printed back by <see cref="CppWriter"/> must compile to the same clang AST, apart from
 /// positions and comments (see <see cref="ClangAst.Normalize"/>);</item>
-/// <item>the spans and kinds of the nodes must match clang's (<see cref="CppSpanChecker"/>).</item>
+/// <item>the spans and kinds of the nodes must match clang's (<see cref="CppSpanChecker"/>);</item>
+/// <item>the values of literals must be clang's (<see cref="CppLiteralChecker"/>).</item>
 /// </list>
 /// Only the declarations of the main file are compared: our parser does not read included headers.
 /// </summary>
@@ -113,10 +114,17 @@ public static class ClangOracle
         }
 
         var utf8 = source[bomLength..];
-        var spanProblem = CppSpanChecker.Check(utf8, unit, originalAst.Nodes(bomLength), ClangAst.RawTokens(source, bomLength));
+        var clangNodes = originalAst.Nodes(source, bomLength);
+        var spanProblem = CppSpanChecker.Check(utf8, unit, clangNodes, ClangAst.RawTokens(source, bomLength));
         if (spanProblem != null)
         {
             return new OracleResult(OracleStatus.SpanMismatch, spanProblem);
+        }
+
+        var valueProblem = CppLiteralChecker.Check(unit, clangNodes);
+        if (valueProblem != null)
+        {
+            return new OracleResult(OracleStatus.ValueMismatch, valueProblem);
         }
 
         return new OracleResult(OracleStatus.Passed);

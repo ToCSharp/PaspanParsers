@@ -37,7 +37,7 @@ public static class CppKindMap
     private static readonly string[] FunctionKinds =
         ["FunctionDecl", "CXXMethodDecl", "CXXConstructorDecl", "CXXDestructorDecl", "CXXConversionDecl"];
 
-    public static KindRule RuleFor(ICppNode node) => node switch
+    public static KindRule RuleFor(ICppNode node, ICppNode parent) => node switch
     {
         // Declarations
         FunctionDefinition => new ExactRule(FunctionKinds),
@@ -58,6 +58,8 @@ public static class CppKindMap
         ReturnStatement => new ExactRule("ReturnStmt") { WithoutSemicolon = true },
 
         // Expressions
+        LiteralExpression when parent is ConcatenatedStringExpression => Tokens,
+        ConcatenatedStringExpression => new ExactRule("StringLiteral", "UserDefinedLiteral"),
         LiteralExpression => new ExactRule(
             "IntegerLiteral", "FloatingLiteral", "CharacterLiteral", "StringLiteral", "CXXBoolLiteralExpr",
             "CXXNullPtrLiteralExpr", "UserDefinedLiteral"),

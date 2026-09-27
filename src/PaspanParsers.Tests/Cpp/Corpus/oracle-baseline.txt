@@ -1,1 +1,2 @@
 src/PaspanParsers.Tests/Cpp/Corpus/00-Basics.cpp
+src/PaspanParsers.Tests/Cpp/Corpus/01-Lexical.cpp

@@ -52,7 +52,7 @@ public class ClangOracleTests
     {
         var source = "﻿int é = 1;"u8.ToArray();
         var run = Clang.DumpAst(source, []);
-        var nodes = ClangAst.Read(run.Output).Nodes(bomLength: 3);
+        var nodes = ClangAst.Read(run.Output).Nodes(source, bomLength: 3);
 
         var variable = nodes.Single(n => n.Kind == "VarDecl");
         // 'é' is two bytes
@@ -72,6 +72,41 @@ public class ClangOracleTests
     }
 
     [TestMethod]
+    public void RawTokens_StartAfterLineSplicesAndSpanThem()
+    {
+        Clang.RequireClang();
+        var source = Encoding.UTF8.GetBytes("int ma\\\nin = 1 +\\\n2;\n");
+
+        var tokens = ClangAst.RawTokens(source, 0).Select(t => Encoding.UTF8.GetString(source[t.Start..t.End])).ToList();
+        CollectionAssert.AreEqual(new[] { "int", "ma\\\nin", "=", "1", "+", "2", ";" }, tokens);
+    }
+
+    [TestMethod]
+    public void LiteralChecker_RejectsAWrongValue()
+    {
+        Clang.RequireClang();
+        var source = Encoding.UTF8.GetBytes("auto a = 42; auto b = \"x\\n\"; auto c = 'c'; auto d = 1.5;\n");
+        var unit = CppParser.Parse(Encoding.UTF8.GetString(source));
+        var nodes = ClangAst.Read(Clang.DumpAst(source, []).Output).Nodes(source, 0);
+
+        Assert.IsNull(CppLiteralChecker.Check(unit, nodes));
+
+        foreach (var (kind, wrong) in new (string, JsonNode)[] { ("IntegerLiteral", "43"), ("StringLiteral", "\"x\""), ("CharacterLiteral", 100L), ("FloatingLiteral", "2.5") })
+        {
+            var changed = nodes.Select(n => n.Kind == kind ? n with { Value = wrong } : n).ToList();
+            StringAssert.StartsWith(CppLiteralChecker.Check(unit, changed), "LiteralExpression", kind);
+        }
+    }
+
+    [TestMethod]
+    public void LiteralChecker_WritesStringsLikeClang()
+    {
+        Clang.RequireClang();
+        var source = "auto a = \"tab\\there\\0end\\x7f\"; auto b = u8\"\\xE9é\"; auto c = u\"a\\U0001F600\"; auto d = L\"w\\u00e9\\x100\"; auto e = U\"\\x{41}\" \"z\";\n";
+        CppTestHelper.AssertOracle(source);
+    }
+
+    [TestMethod]
     public void SpanChecker_RejectsANodeOfTheWrongKind()
     {
         Clang.RequireClang();
@@ -80,10 +115,10 @@ public class ClangOracleTests
         var ast = ClangAst.Read(Clang.DumpAst(source, []).Output);
         var tokens = ClangAst.RawTokens(source, 0);
 
-        Assert.IsNull(CppSpanChecker.Check(source, unit, ast.Nodes(0), tokens));
+        Assert.IsNull(CppSpanChecker.Check(source, unit, ast.Nodes(source, 0), tokens));
 
         // As if clang had read 'a * 2' as a declaration
-        var wrong = ast.Nodes(0).Select(n => n.Kind == "BinaryOperator" ? n with { Kind = "VarDecl" } : n).ToList();
+        var wrong = ast.Nodes(source, 0).Select(n => n.Kind == "BinaryOperator" ? n with { Kind = "VarDecl" } : n).ToList();
         var problem = CppSpanChecker.Check(source, unit, wrong, tokens);
         StringAssert.StartsWith(problem, "BinaryExpression");
         StringAssert.Contains(problem, "(found VarDecl)");

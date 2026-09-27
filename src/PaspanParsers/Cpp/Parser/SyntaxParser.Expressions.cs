@@ -243,23 +243,29 @@ internal ref partial struct SyntaxParser
         {
             case TokenKind.NumericLiteral:
                 EatToken();
-                Lexer.ScanNumber(_source[token.Start..token.End], out var isFloating);
-                return Finish(new LiteralExpression(isFloating ? LiteralKind.Floating : LiteralKind.Integer, token.Text), start);
+                return Finish(Literals.Number(token.Text), start);
 
             case TokenKind.CharacterLiteral:
                 EatToken();
-                return Finish(new LiteralExpression(LiteralKind.Character, token.Text), start);
+                return Finish(Literals.Character(token.Text), start);
 
             case TokenKind.StringLiteral:
             {
                 // Adjacent string literals are one literal
-                var text = EatToken().Text;
-                while (Current.Kind == TokenKind.StringLiteral)
+                var first = Finish(Literals.String(EatToken().Text), start);
+                if (Current.Kind != TokenKind.StringLiteral)
                 {
-                    text += " " + EatToken().Text;
+                    return first;
                 }
 
-                return Finish(new LiteralExpression(LiteralKind.String, text), start);
+                var parts = new List<LiteralExpression> { first };
+                while (Current.Kind == TokenKind.StringLiteral)
+                {
+                    var partStart = NodeStart;
+                    parts.Add(Finish(Literals.String(EatToken().Text), partStart));
+                }
+
+                return Finish(Literals.Concatenate(parts), start);
             }
 
             case TokenKind.Identifier:
@@ -272,7 +278,7 @@ internal ref partial struct SyntaxParser
                     case "true":
                     case "false":
                         EatToken();
-                        return Finish(new LiteralExpression(LiteralKind.Boolean, token.Text), start);
+                        return Finish(new LiteralExpression(LiteralKind.Boolean, token.Text, token.Text == "true"), start);
                     case "nullptr":
                         EatToken();
                         return Finish(new LiteralExpression(LiteralKind.Nullptr, token.Text), start);

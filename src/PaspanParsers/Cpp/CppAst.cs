@@ -230,12 +230,72 @@ public enum LiteralKind
 }
 
 /// <summary>
-/// A literal as written in the source: <see cref="Text"/> is its text, including prefixes and suffixes.
+/// The encoding prefix of a character or string literal: none, <c>u8</c>, <c>u</c>, <c>U</c> or <c>L</c>.
 /// </summary>
-public sealed class LiteralExpression(LiteralKind kind, string text) : Expression
+public enum CharacterEncoding
+{
+    Ordinary,
+    Utf8,
+    Utf16,
+    Utf32,
+    Wide,
+}
+
+/// <summary>
+/// A literal as written in the source: <see cref="Text"/> is its text, including prefixes and suffixes
+/// (without line splices, except in raw strings).
+/// </summary>
+/// <remarks>
+/// <see cref="Value"/> is the value of the literal without its user-defined suffix, or null when it cannot
+/// be computed:
+/// <list type="bullet">
+/// <item>integers: <see cref="ulong"/>, null when the value does not fit in 64 bits;</item>
+/// <item>floating literals: <see cref="double"/>;</item>
+/// <item>characters: the value of the code unit as a <see cref="long"/>, without sign extension
+/// (<c>'\xFF'</c> is 255); a multicharacter literal (<c>'ab'</c>) is the <c>int</c> value
+/// <c>('a' &lt;&lt; 8) | 'b'</c>, like GCC and clang compute it;</item>
+/// <item>ordinary and <c>u8</c> strings: the UTF-8 code units as a <see cref="byte"/> array, without the
+/// terminating zero; <c>u</c>, <c>U</c> and <c>L</c> strings: a <see cref="string"/>;</item>
+/// <item><c>true</c> and <c>false</c>: <see cref="bool"/>; <c>nullptr</c>: null.</item>
+/// </list>
+/// Characters named with <c>\N{...}</c> are not decoded: .NET has no table of Unicode character names, so
+/// literals with them have no value.
+/// </remarks>
+public sealed class LiteralExpression(LiteralKind kind, string text, object value = null) : Expression
 {
     public LiteralKind Kind { get; } = kind;
     public string Text { get; } = text;
+    public object Value { get; } = value;
+
+    /// <summary>The encoding prefix of a character or string literal.</summary>
+    public CharacterEncoding Encoding { get; init; }
+
+    /// <summary>A raw string literal: <c>R"delimiter(...)delimiter"</c>.</summary>
+    public bool IsRaw { get; init; }
+
+    /// <summary>The suffix of a number that is part of the language, like <c>ull</c> or <c>f</c>, or null.</summary>
+    public string Suffix { get; init; }
+
+    /// <summary>The suffix of a user-defined literal, like <c>_km</c>, or null.</summary>
+    public string UserDefinedSuffix { get; init; }
+}
+
+/// <summary>
+/// Adjacent string literals, which are one literal: <c>"a" "b"</c>. The parts are decoded in the encoding
+/// of the concatenation, the prefix of the parts that have one. A single string literal is a
+/// <see cref="LiteralExpression"/>.
+/// </summary>
+public sealed class ConcatenatedStringExpression(IReadOnlyList<LiteralExpression> parts, object value = null) : Expression
+{
+    public IReadOnlyList<LiteralExpression> Parts { get; } = parts ?? [];
+
+    /// <summary>The value of the whole string, like <see cref="LiteralExpression.Value"/> of a string.</summary>
+    public object Value { get; } = value;
+
+    public CharacterEncoding Encoding { get; init; }
+
+    /// <summary>The suffix of a user-defined literal, which the parts share, or null.</summary>
+    public string UserDefinedSuffix { get; init; }
 }
 
 /// <summary>

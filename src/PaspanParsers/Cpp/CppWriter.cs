@@ -368,6 +368,18 @@ public sealed class CppWriter
             case LiteralExpression literal:
                 Token(literal.Text);
                 break;
+            case ConcatenatedStringExpression concatenation:
+                for (var i = 0; i < concatenation.Parts.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        Space();
+                    }
+
+                    Token(concatenation.Parts[i].Text);
+                }
+
+                break;
             case NameExpression name:
                 Token(name.Name);
                 break;

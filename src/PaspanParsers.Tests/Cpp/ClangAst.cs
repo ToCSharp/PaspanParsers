@@ -9,9 +9,10 @@ namespace PaspanParsers.Tests.Cpp;
 /// A node of clang's AST in the main file: its kind, its source range and, for declarations, the
 /// location of the declared name. Offsets are bytes of the parsed input without the byte order mark.
 /// <see cref="FromMacro"/> is set when the range comes from a macro expansion: it is then the range of
-/// the macro use in the source.
+/// the macro use in the source. <see cref="Value"/> is the <c>value</c> of a literal and
+/// <see cref="Type"/> the type of an expression, as clang writes them.
 /// </summary>
-public sealed record ClangNode(string Kind, TextSpan Span, int NameOffset, bool FromMacro);
+public sealed record ClangNode(string Kind, TextSpan Span, int NameOffset, bool FromMacro, JsonNode Value = null, string Type = null);
 
 /// <summary>
 /// Reads clang's JSON AST dump (<c>-Xclang -ast-dump=json</c>): the top-level declarations of the main
@@ -259,10 +260,11 @@ public sealed partial class ClangAst
     // ========================================
 
     /// <summary>
-    /// Every node of the main file's declarations that has a source range. <paramref name="bomLength"/>
-    /// is the length of the byte order mark clang's offsets count and ours do not.
+    /// Every node of the main file's declarations that has a source range. <paramref name="source"/> is the
+    /// parsed input and <paramref name="bomLength"/> the length of its byte order mark, which clang's offsets
+    /// count and ours do not.
     /// </summary>
-    public List<ClangNode> Nodes(int bomLength)
+    public List<ClangNode> Nodes(byte[] source, int bomLength)
     {
         var nodes = new List<ClangNode>();
         var stack = new Stack<JsonNode>(Declarations);
@@ -275,9 +277,10 @@ public sealed partial class ClangAst
                         && TryGetOffset(range["begin"], out var begin, out var beginFromMacro)
                         && TryGetOffset(range["end"], out var end, out var endFromMacro))
                     {
-                        var name = TryGetOffset(obj["loc"], out var nameLocation, out _) ? nameLocation.Offset - bomLength : -1;
-                        var span = new TextSpan(begin.Offset - bomLength, end.Offset + end.TokenLength - bomLength);
-                        nodes.Add(new ClangNode(kind.GetValue<string>(), span, name, beginFromMacro || endFromMacro));
+                        var name = TryGetOffset(obj["loc"], out var nameLocation, out _) ? SkipSplices(source, nameLocation.Offset) - bomLength : -1;
+                        var span = new TextSpan(SkipSplices(source, begin.Offset) - bomLength, end.Offset + end.TokenLength - bomLength);
+                        var type = obj["type"]?["qualType"]?.GetValue<string>();
+                        nodes.Add(new ClangNode(kind.GetValue<string>(), span, name, beginFromMacro || endFromMacro, obj["value"], type));
                     }
 
                     foreach (var (_, value) in obj)
@@ -301,6 +304,37 @@ public sealed partial class ClangAst
         }
 
         return nodes;
+    }
+
+    /// <summary>
+    /// The offset after the line splices at <paramref name="offset"/>. Clang's lexer starts a token at a
+    /// splice right before it (<c>+\⏎2</c>: the token <c>2</c> starts at the backslash); our tokens start at
+    /// their first character, and splices are trivia.
+    /// </summary>
+    private static int SkipSplices(byte[] source, int offset)
+    {
+        while (offset < source.Length && source[offset] == '\\')
+        {
+            var next = offset + 1;
+            if (next < source.Length && source[next] == '\r')
+            {
+                next++;
+            }
+
+            if (next < source.Length && source[next] == '\n')
+            {
+                next++;
+            }
+
+            if (next == offset + 1)
+            {
+                break;
+            }
+
+            offset = next;
+        }
+
+        return offset;
     }
 
     /// <summary>
@@ -370,15 +404,18 @@ public sealed partial class ClangAst
                 continue;
             }
 
+            // A token with line splices has its spelling without them and a flag with the source text
             var start = lineStarts[line - 1] + column - 1;
-            var length = Encoding.UTF8.GetByteCount(match.Groups["spelling"].Value);
-            tokens.Add(new TextSpan(start - bomLength, start + length - bomLength));
+            var unclean = match.Groups["unclean"];
+            var end = start + Encoding.UTF8.GetByteCount(unclean.Success ? unclean.Value : match.Groups["spelling"].Value);
+            tokens.Add(new TextSpan(SkipSplices(source, start) - bomLength, end - bomLength));
         }
 
         return tokens;
     }
 
-    // raw_identifier 'int'	 [StartOfLine]	Loc=<<stdin>:1:1>; the spelling of a raw string literal spans lines
-    [GeneratedRegex(@"^(?<kind>\w+) '(?<spelling>.*?)'\t(?: \[[^\]\n]*\])*\tLoc=<(?<file>[^\n]*?):(?<line>\d+):(?<column>\d+)>\r?$", RegexOptions.Multiline | RegexOptions.Singleline)]
+    // raw_identifier 'int'	 [StartOfLine]	Loc=<<stdin>:1:1>; the spelling of a raw string literal spans lines,
+    // and so does the flag [UnClean='ma\⏎in'] of a token with line splices
+    [GeneratedRegex(@"^(?<kind>\w+) '(?<spelling>.*?)'\t(?: \[(?:UnClean='(?<unclean>.*?)'|[^\]\n]*)\])*\tLoc=<(?<file>[^\n]*?):(?<line>\d+):(?<column>\d+)>\r?$", RegexOptions.Multiline | RegexOptions.Singleline)]
     private static partial Regex RawToken();
 }

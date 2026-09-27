@@ -56,7 +56,7 @@ public static class CppSpanChecker
                 return Describe($"outside its parent {parent.GetType().Name} {parent.Span}", node, parent, utf8);
             }
 
-            var rule = CppKindMap.RuleFor(node);
+            var rule = CppKindMap.RuleFor(node, parent);
             var problem = rule switch
             {
                 null => $"no rule in {nameof(CppKindMap)} for {node.GetType().Name}",

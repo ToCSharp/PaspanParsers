@@ -201,7 +201,9 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// Scans the token at <paramref name="start"/>, after the trivia.
+    /// Scans the token at <paramref name="start"/>, after the trivia. A token interrupted by a line splice
+    /// (<c>ma\⏎in</c>) is scanned again on the logical line without splices: its span covers the source
+    /// bytes, its text is the logical text. Splices in raw strings are not removed ([lex.pptoken]).
     /// </summary>
     private SyntaxToken ScanTokenAt(int start)
     {
@@ -211,55 +213,77 @@ internal ref partial struct SyntaxParser
         }
 
         var s = _source[start..];
-
+        var kind = ScanTokenIn(s, out var length, out var text, out var isRaw);
+        if (!isRaw && kind != TokenKind.Bad && (Lexer.SpliceLength(s, length) > 0 || Lexer.ContainsSplice(s[..length])))
         {
-            var length = Lexer.ScanQuotedLiteral(s, out var isString);
-            if (length > 0)
-            {
-                var kind = isString ? TokenKind.StringLiteral : TokenKind.CharacterLiteral;
-                return new SyntaxToken(kind, start, start + length, Encoding.UTF8.GetString(s[..length]));
-            }
+            var (logical, positions) = Lexer.RemoveSplices(s);
+            kind = ScanTokenIn(logical, out var logicalLength, out text, out _);
+            length = positions[logicalLength - 1] + 1;
         }
 
+        return new SyntaxToken(kind, start, start + length, text);
+    }
+
+    /// <summary>
+    /// Scans the token that starts <paramref name="s"/>: its kind, length and text.
+    /// </summary>
+    private TokenKind ScanTokenIn(ReadOnlySpan<byte> s, out int length, out string text, out bool isRawString)
+    {
+        isRawString = false;
+
+        length = Lexer.ScanQuotedLiteral(s, out var isString);
+        if (length > 0)
         {
-            var length = Lexer.ScanNumber(s, out _);
-            if (length > 0)
-            {
-                return new SyntaxToken(TokenKind.NumericLiteral, start, start + length, Encoding.UTF8.GetString(s[..length]));
-            }
+            Lexer.ScanLiteralPrefix(s, out isRawString);
+            text = Encoding.UTF8.GetString(s[..length]);
+            return isString ? TokenKind.StringLiteral : TokenKind.CharacterLiteral;
         }
 
+        length = Lexer.ScanNumber(s, out _);
+        if (length > 0)
         {
-            var length = Lexer.ScanIdentifier(s);
-            if (length > 0)
-            {
-                var value = _cache.Intern(s[..length]);
-                if (Lexer.AlternativeTokens.TryGetValue(value, out var @operator))
-                {
-                    return new SyntaxToken(TokenKind.Punctuator, start, start + length, @operator);
-                }
+            text = Encoding.UTF8.GetString(s[..length]);
+            return TokenKind.NumericLiteral;
+        }
 
-                var kind = Lexer.Keywords.Contains(value) ? TokenKind.Keyword : TokenKind.Identifier;
-                return new SyntaxToken(kind, start, start + length, value);
+        length = Lexer.ScanIdentifier(s);
+        if (length > 0)
+        {
+            var identifier = s[..length];
+            text = identifier.IndexOfAnyExceptInRange((byte)0, (byte)0x7F) < 0 && identifier.IndexOf((byte)'\\') < 0
+                ? _cache.Intern(identifier)
+                : Lexer.IdentifierValue(identifier);
+
+            if (Lexer.AlternativeTokens.TryGetValue(text, out var @operator))
+            {
+                text = @operator;
+                return TokenKind.Punctuator;
             }
+
+            return Lexer.Keywords.Contains(text) ? TokenKind.Keyword : TokenKind.Identifier;
         }
 
         // '<::' not followed by ':' or '>' is '<' and '::' ([lex.pptoken])
         if (s.StartsWith("<::"u8) && (s.Length == 3 || s[3] is not ((byte)':' or (byte)'>')))
         {
-            return new SyntaxToken(TokenKind.Punctuator, start, start + 1, "<");
+            length = 1;
+            text = "<";
+            return TokenKind.Punctuator;
         }
 
         for (var i = 0; i < PunctuatorBytes.Length; i++)
         {
             if (s.StartsWith(PunctuatorBytes[i]))
             {
-                var text = Digraphs.GetValueOrDefault(Punctuators[i], Punctuators[i]);
-                return new SyntaxToken(TokenKind.Punctuator, start, start + PunctuatorBytes[i].Length, text);
+                length = PunctuatorBytes[i].Length;
+                text = Digraphs.GetValueOrDefault(Punctuators[i], Punctuators[i]);
+                return TokenKind.Punctuator;
             }
         }
 
-        return new SyntaxToken(TokenKind.Bad, start, start + 1, "");
+        length = 1;
+        text = "";
+        return TokenKind.Bad;
     }
 
     // ========================================
