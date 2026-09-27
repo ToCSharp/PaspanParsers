@@ -1,414 +1,167 @@
-# C# Parser - Grammar Specification and AST
+# C# Parser
 
-This folder contains the C# language grammar specification and Abstract Syntax Tree (AST) implementation for building a C# parser.
+`CSharpParser` parses C# source code (C# 1–14) into a semantic AST (`CSharpAst.cs`), and `CSharpWriter`
+prints an AST back as C#. Every node knows its position in the input.
 
-## Files
+**Scope:** valid code. Any file that Roslyn parses without syntax errors is expected to parse, and the
+tree is expected to match Roslyn's. There is no error recovery: invalid input makes `TryParse` return
+`false` with a `ParseError` at the token where parsing stopped (`Unexpected ';'`, with line and column).
 
-### 📄 CSharpGrammarSpecification.txt
-Complete C# language grammar in BNF/EBNF notation based on:
-- **ECMA-334**: C# Language Specification
-- **ISO/IEC 23270**: Information technology — Programming languages — C#
-- **Microsoft C# Language Specification**
+## How it is verified
 
-**Covers:**
-- Compilation units and namespaces
-- Type declarations (classes, structs, interfaces, enums, delegates, records)
-- Members (fields, properties, methods, events, indexers, operators, constructors)
-- Generics and type parameters with constraints
-- Statements (if, switch, loops, try-catch, using, lock, etc.)
-- Expressions (arithmetic, logical, lambda, LINQ, pattern matching)
-- Attributes
-- Modern C# features (C# 1.0 through C# 12.0)
+The parser is checked against Roslyn (`src/PaspanParsers.Tests/CSharp/RoslynOracle.cs`). For each valid file:
 
-### 📄 CSharpAst.cs
-Complete AST node definitions for representing C# code structure.
+1. `CSharpParser.TryParse` must succeed.
+2. `CSharpWriter` prints the AST, Roslyn parses the printed code, and the result must be equivalent to
+   Roslyn's tree of the original file (trivia ignored). The writer prints the tree literally, keeping
+   parentheses, trailing commas and modifier order, so this compares the structure of the whole tree.
+3. The span of every node must be the span of a Roslyn node or token (`SpanChecker.cs`), apart from the
+   few places where the AST has nodes Roslyn does not.
 
-**Key Components:**
+| Corpus | Files | Result |
+|---|---|---|
+| Built-in: `src/**` of this repository and `CSharp/Corpus/*.cs` (one file per feature area) | 182 | 182 pass |
+| Every statement of every method body of the built-in corpus, checked on its own | 8 587 | 8 587 pass |
+| Roslyn compiler sources (`src/Compilers/{CSharp,Core}/Portable`, `src/Workspaces/CSharp/Portable`) | 2 176 | 2 176 pass |
+| dotnet/runtime libraries (`System.Private.CoreLib`, `System.Linq`, `System.Collections`, `System.Text.Json`, `System.Net.Http`, …) | 2 488 | 2 488 pass (also with `NET;NETCOREAPP;DEBUG;TARGET_64BIT;TARGET_WINDOWS`) |
+| ASP.NET Core (`src/Http`, `Mvc.Core`, `Kestrel/Core`, `Components`, `SignalR/server/Core`) | 2 015 | 2 015 pass |
 
-#### Type Declarations
-- `ClassDeclaration` - Classes with inheritance and members
-- `StructDeclaration` - Value types
-- `InterfaceDeclaration` - Interface types with variance support
-- `EnumDeclaration` - Enumerations
-- `DelegateDeclaration` - Delegate types
-- `RecordDeclaration` - Record types (C# 9+)
+Files Roslyn rejects (for example an `#error` in an active branch) are skipped.
 
-#### Members
-- `FieldDeclaration` - Fields with modifiers
-- `MethodDeclaration` - Methods with type parameters and constraints
-- `PropertyDeclaration` - Properties with accessors (get, set, init)
-- `IndexerDeclaration` - Indexers
-- `EventDeclaration` - Events
-- `ConstructorDeclaration` - Constructors with initializers
-
-#### Statements
-- Control flow: `IfStatement`, `SwitchStatement`, `WhileStatement`, `DoStatement`, `ForStatement`, `ForEachStatement`
-- Exception handling: `TryStatement` with catch clauses and filters
-- Resource management: `UsingStatement`, `LockStatement`
-- Jump statements: `BreakStatement`, `ContinueStatement`, `ReturnStatement`, `ThrowStatement`
-- Iterators: `YieldReturnStatement`, `YieldBreakStatement`
-
-#### Expressions
-- Literals: `LiteralExpression`
-- Operators: `BinaryExpression`, `UnaryExpression`, `ConditionalExpression`
-- Object creation: `ObjectCreationExpression`, `ArrayCreationExpression`
-- Type operations: `CastExpression`, `IsExpression`, `AsExpression`
-- Lambdas: `LambdaExpression` with expression and block bodies
-- LINQ: `QueryExpression` with from, where, select, join, group by
-- Modern features: `SwitchExpression`, `RangeExpression`, `WithExpression`
-
-#### Patterns (C# 7+)
-- `TypePattern` - Type patterns
-- `ConstantPattern` - Constant patterns
-- `DeclarationPattern` - Declaration patterns with variables
-- `RecursivePattern` - Positional and property patterns
-- `RelationalPattern` - Relational patterns (>, <, >=, <=)
-- `LogicalPattern` - Logical patterns (and, or, not)
-
-#### Type System
-- `NamedTypeReference` - Named types with generic arguments
-- `PredefinedTypeReference` - Built-in types (int, string, bool, etc.)
-- `ArrayTypeReference` - Array types with rank
-- `TupleTypeReference` - Tuple types (C# 7+)
-- Type parameters with variance (in, out) and constraints
-
-### 📄 CSharpExamples.cs
-Comprehensive examples of C# language features:
-- Basic syntax (classes, structs, interfaces, enums)
-- Modern features (records, pattern matching, nullable reference types)
-- Generics with constraints
-- Properties, indexers, and operators
-- Async/await and iterators
-- LINQ query and method syntax
-- Lambda expressions
-- Attributes
-
-## C# Language Features Coverage
-
-### Core Features (C# 1.0 - 2.0)
-- ✅ Classes, structs, interfaces, enums, delegates
-- ✅ Properties, indexers, events
-- ✅ Generics with constraints
-- ✅ Partial types
-- ✅ Anonymous methods
-- ✅ Nullable value types
-- ✅ Iterators (yield)
-
-### Modern Features (C# 3.0 - 7.3)
-- ✅ Auto-properties
-- ✅ Object and collection initializers
-- ✅ Anonymous types
-- ✅ Extension methods
-- ✅ Lambda expressions
-- ✅ LINQ query expressions
-- ✅ Expression-bodied members
-- ✅ Tuples and deconstruction
-- ✅ Pattern matching
-- ✅ Local functions
-- ✅ Ref returns and locals
-- ✅ Discards
-
-### Latest Features (C# 8.0 - 12.0)
-- ✅ Nullable reference types
-- ✅ Async streams (IAsyncEnumerable)
-- ✅ Ranges and indices
-- ✅ Default interface methods
-- ✅ Switch expressions
-- ✅ Property patterns
-- ✅ Records (C# 9)
-- ✅ Init-only setters
-- ✅ Top-level statements support
-- ✅ Global using directives
-- ✅ File-scoped namespaces
-- ✅ Record structs
-- ✅ Required members
-- ✅ List patterns
-- ✅ Raw string literals support
-- ✅ Primary constructors
-
-## Parser Implementation
-
-### 📄 CSharpParser.cs
-A working C# parser implementation using Paspan parsing combinators.
-
-**Features:**
-- ✅ Full expression parsing with operator precedence
-- ✅ Type declarations (class, struct, interface, enum)
-- ✅ Member declarations (fields, properties, methods, constructors)
-- ✅ Statements (if, while, do, for, return, break, continue, throw)
-- ✅ Block statements
-- ✅ Using directives (namespace, alias, static)
-- ✅ Namespace declarations
-- ✅ Modifiers (public, private, static, etc.)
-- ✅ Type references (predefined types, named types, arrays, nullable)
-- ✅ Comments (single-line // and multi-line /* */)
-- ✅ **Generics support** (type parameters, type arguments, constraints)
-- ✅ **Attributes support** (class, method, property, field, enum member, global attributes)
-- ✅ **Lambda expressions** (expression and block bodies, async lambdas, explicit/implicit parameters)
-- ✅ **LINQ query expressions** (from, where, select, let, orderby, join, group by, into)
-- ✅ **Pattern matching** (is-expressions, switch expressions, type/constant/var/discard/declaration/recursive patterns)
-
-**Limitations:**
-- ⚠️ Simplified implementation for educational purposes
-- ⚠️ Some edge cases with lambda expressions, LINQ queries, and pattern matching may not parse correctly
-- ⚠️ No preprocessor directives
-- ⚠️ Limited error recovery
-
-**For production C# parsing, use [Roslyn](https://github.com/dotnet/roslyn).**
-
-### 📄 CSharpParserTests.cs
-Comprehensive test suite with 55+ test cases covering:
-- Type declarations
-- Member declarations
-- Statements
-- Expressions
-- Modifiers
-- Type references
-- Attributes (class, method, property, field, enum, global)
-- Lambda expressions (simple, multiple parameters, async, block body)
-- LINQ query expressions (from, where, select, let, orderby, join, group by)
-- Pattern matching (is-expressions, switch expressions, various pattern types)
-
-## Usage Examples
-
-### Parsing C# Code
+## Usage
 
 ```csharp
-using Paspan.Tests.CSharp;
+using PaspanParsers.CSharp;
 
-// Parse a simple class
-var code = @"
-    public class Person
+var code = """
+    #if DEBUG
+    using System.Diagnostics;
+    #endif
+
+    namespace Demo;
+
+    public record Point(int X, int Y)
     {
-        public string Name { get; set; }
-        public int Age { get; set; }
+        public double Length => Math.Sqrt(X * X + Y * Y);
     }
-";
+    """;
 
-var compilationUnit = CSharpParser.Parse(code);
+// Preprocessor symbols decide which #if branches are parsed
+var options = new CSharpParseOptions(CSharpLanguageVersion.CSharp14, preprocessorSymbols: ["DEBUG"]);
 
-if (compilationUnit != null)
+if (CSharpParser.TryParse(code, options, out var unit, out var error))
 {
-    var classDecl = (ClassDeclaration)compilationUnit.Members[0];
-    Console.WriteLine($"Class: {classDecl.Name}");
-    Console.WriteLine($"Properties: {classDecl.Members.Count}");
-}
+    var ns = (NamespaceDeclaration)unit.Members[0];
+    var point = (RecordDeclaration)ns.Members[0];
+    Console.WriteLine(point.Name);                               // Point
+    Console.WriteLine(point.PrimaryConstructorParameters.Count); // 2
 
-// Parse with error handling
-if (CSharpParser.TryParse(code, out var result, out var error))
-{
-    Console.WriteLine("Parsing succeeded!");
+    // Print the tree back as C#
+    var writer = new CSharpWriter();
+    writer.WriteCompilationUnit(unit);
+    Console.WriteLine(writer.GetResult());
 }
 else
 {
-    Console.WriteLine($"Parse error: {error}");
+    Console.WriteLine($"({error.Line},{error.Column}): {error.Message}");
 }
+
+// Without options: C# 14, no preprocessor symbols; null when the input does not parse
+var simple = CSharpParser.Parse("class C { }");
 ```
 
-### Building AST Manually
+`CSharpParseOptions.LanguageVersion` is informational: the parser accepts the syntax of all versions up to C# 14.
+
+### Positions
+
+Every node implements `ICSharpNode.Span`: a `TextSpan` from the first token of the node to the end of its
+last token, without the whitespace and comments around them (like `SyntaxNode.Span` in Roslyn). The compilation
+unit spans the whole input, and a `#nullable` directive spans its line.
+
+Offsets are in **UTF-8 bytes** of the input without its byte order mark: the parser reads UTF-8.
+`CSharpParser.GetUtf8Source(string)` returns these bytes, and `TextSpan.GetText` returns the text of a span.
 
 ```csharp
-using Paspan.Tests.CSharp;
+var source = "class C { int M() => a + b * c; }";
+var unit = CSharpParser.Parse(source);
+var method = (MethodDeclaration)((ClassDeclaration)unit.Members[0]).Members[0];
+var sum = ((ExpressionMethodBody)method.Body).Expression;
 
-// Build a simple class
-var classDecl = new ClassDeclaration(
-    name: "Person",
-    modifiers: Modifiers.Public,
-    members: new[]
-    {
-        new PropertyDeclaration(
-            type: new PredefinedTypeReference(PredefinedType.String),
-            name: "Name",
-            modifiers: Modifiers.Public,
-            accessors: new[]
-            {
-                new Accessor(AccessorKind.Get),
-                new Accessor(AccessorKind.Set)
-            }
-        ),
-        new PropertyDeclaration(
-            type: new PredefinedTypeReference(PredefinedType.Int),
-            name: "Age",
-            modifiers: Modifiers.Public,
-            accessors: new[]
-            {
-                new Accessor(AccessorKind.Get),
-                new Accessor(AccessorKind.Set)
-            }
-        )
-    }
-);
+Console.WriteLine(sum.Span);                   // [21..30)
+Console.WriteLine(sum.Span.GetText(source));   // a + b * c
 
-// Build a method with expression body
-var method = new MethodDeclaration(
-    returnType: new PredefinedTypeReference(PredefinedType.String),
-    name: "GetInfo",
-    modifiers: Modifiers.Public,
-    body: new ExpressionMethodBody(
-        new BinaryExpression(
-            left: new LiteralExpression("Name: ", LiteralKind.String),
-            op: BinaryOperator.Add,
-            right: new NameExpression(new[] { "Name" })
-        )
-    )
-);
+// For many spans of one input, encode it once
+var utf8 = CSharpParser.GetUtf8Source(source);
+Console.WriteLine(method.Span.GetText(utf8));  // int M() => a + b * c;
 ```
 
-### Parsing Complex Structures
+Nodes built in code have an empty span at 0; `Span` has a setter for tools that build trees.
 
-```csharp
-// Parse namespace with using directives
-var code = @"
-    using System;
-    using System.Collections.Generic;
-    
-    namespace MyApp.Domain
-    {
-        public class Calculator
-        {
-            public int Add(int a, int b)
-            {
-                return a + b;
-            }
-            
-            public int Multiply(int a, int b) => a * b;
-        }
-    }
-";
+## What is supported
 
-var cu = CSharpParser.Parse(code);
+| Area | Support |
+|---|---|
+| Lexical | Unicode identifiers and escapes (`A`), `@` identifiers, contextual keywords as identifiers (`var select = 1;`), all numeric literal forms (hex, binary, `_`, suffixes), character escapes including `\e`, verbatim, raw (`"""`), interpolated (`$"…"`, `$@"…"`, `$$"""…"""`) and UTF-8 (`"…"u8`) strings |
+| Preprocessor | `#if`/`#elif`/`#else`/`#endif` with expressions, `#define`/`#undef`, disabled text; `#nullable` is kept in the AST (it changes the meaning of the code), other directives (`#region`, `#pragma`, `#line`, `#error`, `#warning`, `#!`, `#:`) are skipped |
+| Compilation unit | `extern alias`, `global using`, `using static`, `using unsafe`, aliases to any type, global attributes, block and file-scoped namespaces, top-level statements |
+| Types | classes, structs (`ref`, `readonly`), interfaces, enums, delegates, records (`record class`, `record struct`), primary constructors, nested types, variance, all constraints including `allows ref struct` |
+| Members | fields (`fixed` buffers, `ref` fields), constants, methods, properties (accessors with modifiers and bodies, initializers, `field`), indexers, events, constructors with initializers, destructors, operators (`checked`, `>>>`, C# 14 compound assignment and `++`), conversion operators, explicit interface implementations, C# 14 extension blocks, partial members |
+| Statements | all statements: local declarations (`const`, `ref`, `scoped`, `using`, `await using`), local functions, `if`, `switch`, loops including `await foreach` and deconstruction, `try`/`catch`/`finally` with filters, `goto case`, `yield`, `checked`, `unsafe`, `fixed`, `lock` |
+| Expressions | all operators with Roslyn's precedence, `?.`/`?[]`, null-conditional assignment, `!`, ranges, `switch` and `with` expressions, object, collection and array creation with every initializer form, collection expressions with spreads, `stackalloc`, lambdas (attributes, `static`, `async`, explicit return types, default parameter values), anonymous methods, LINQ queries with `into` continuations, tuples and deconstruction, declaration expressions, `typeof`/`sizeof`/`nameof`/`default`, `__arglist` and friends |
+| Patterns | constant, type, declaration, `var`, discard, positional, property (extended `A.B:`), list and slice, relational, parenthesized, `not`/`and`/`or` |
+| Types in code | predefined, generic, qualified (`A<B>.C<D>`), alias-qualified, nullable, arrays, pointers, function pointers, tuples, `ref`/`ref readonly`, `scoped` |
 
-// Access parsed elements
-var usings = cu.Usings; // Using directives
-var ns = (NamespaceDeclaration)cu.Members[0]; // Namespace
-var cls = (ClassDeclaration)ns.Members[0]; // Class
-var methods = cls.Members; // Methods
+**Limitations**
+
+- No error recovery: the parser is meant for code that compiles.
+- Trivia is not kept: comments, whitespace and directives other than `#nullable` are not in the AST, so
+  `CSharpWriter` output is formatted by the writer, not like the input.
+- Preview features after C# 14 are not a target (only the `safe` modifier is parsed).
+
+## Performance
+
+Measured with `CSharpPerformanceTests.Benchmark_Corpus` (Release build, one thread, best of three runs,
+4-core Xeon 2.8 GHz). Roslyn is `CSharpSyntaxTree.ParseText(...).GetRoot()` on the same files.
+
+| Corpus | Size | PaspanParsers | Roslyn |
+|---|---|---|---|
+| Roslyn compiler sources | 34.0 MB | 23.8 MB/s, 14.3 bytes allocated per source byte | 20.1 MB/s, 4.8 bytes per byte |
+| dotnet/runtime libraries | 37.2 MB | 31.6 MB/s, 10.9 bytes per byte | 16.9 MB/s, 7.3 bytes per byte |
+| ASP.NET Core | 14.9 MB | 18.6 MB/s, 19.9 bytes per byte | 19.5 MB/s, 6.8 bytes per byte |
+
+Parsing time is linear in the input, also for deeply nested code: 8 000 nested parentheses parse in about
+40 ms, a chain of 50 000 `a + a + …` in about 35 ms. Input nested deeper than the caller's stack allows
+(about 500 levels of nested blocks and lambdas, or 600 nested parentheses, on a 1 MB stack) is parsed again on a thread with a
+256 MB stack instead of overflowing the stack; `CSharpWriter` does the same for deep trees.
+
+## Files
+
+| File | Contents |
+|---|---|
+| `CSharpParser.cs` | Entry points: `Parse`, `TryParse`, `GetUtf8Source`, `CompilationUnitParser` |
+| `CSharpParseOptions.cs`, `CSharpParseContext.cs` | Options (language version, preprocessor symbols) and per-parse state |
+| `CSharpAst.cs` | AST nodes, `TextSpan` |
+| `CSharpWriter.cs` | Prints an AST as C# (see `CSharpWriter.README.md`) |
+| `Parser/Lexer.cs`, `Parser/Tokens.cs` | Tokens: identifiers, keywords, literals, interpolated strings |
+| `Parser/Preprocessor.cs` | Trivia: whitespace, comments and preprocessor directives |
+| `Parser/SyntaxParser*.cs` | Hand-written recursive descent parser: types, expressions, patterns, statements, declarations, compilation unit |
+| `CSharpGrammarSpecification.txt` | The C# grammar in EBNF, for reference |
+
+The parser is a hand-written recursive descent parser (`SyntaxParser`) that follows Roslyn's disambiguation
+rules (generic names, casts, lambdas, declarations versus expressions); it runs as a Paspan parser through
+`CSharpParser.CompilationUnitParser`. Tokens are scanned lazily and cached by position. The plan and the
+history of the work are in `docs/csharp-parser-roslyn-level-plan.md`.
+
+## Tests
+
+```bash
+dotnet run --project src/PaspanParsers.Tests -- --filter "FullyQualifiedName~PaspanParsers.Tests.CSharp"
 ```
 
-## AST Structure Overview
-
-```
-CompilationUnit
-├── ExternAliasDirectives
-├── UsingDirectives
-│   ├── UsingNamespaceDirective
-│   ├── UsingAliasDirective
-│   └── UsingStaticDirective
-├── GlobalAttributes
-└── Members
-    ├── NamespaceDeclaration
-    └── TypeDeclarations
-        ├── ClassDeclaration
-        ├── StructDeclaration
-        ├── InterfaceDeclaration
-        ├── EnumDeclaration
-        ├── DelegateDeclaration
-        └── RecordDeclaration
-
-Type Members
-├── FieldDeclaration
-├── MethodDeclaration
-├── PropertyDeclaration
-├── IndexerDeclaration
-├── EventDeclaration
-├── OperatorDeclaration
-└── ConstructorDeclaration
-
-Statements
-├── BlockStatement
-├── ExpressionStatement
-├── LocalDeclarationStatement
-├── IfStatement
-├── SwitchStatement
-├── WhileStatement / DoStatement
-├── ForStatement / ForEachStatement
-├── TryStatement
-├── UsingStatement
-└── YieldStatement
-
-Expressions
-├── LiteralExpression
-├── NameExpression
-├── BinaryExpression / UnaryExpression
-├── InvocationExpression
-├── MemberAccessExpression
-├── ObjectCreationExpression
-├── LambdaExpression
-├── QueryExpression (LINQ)
-└── Pattern matching expressions
-```
-
-## Implementation Notes
-
-### Modifiers
-The `Modifiers` enum uses flags to support multiple modifiers:
-```csharp
-var modifiers = Modifiers.Public | Modifiers.Static | Modifiers.Readonly;
-```
-
-### Type References
-Type references support:
-- Predefined types (int, string, bool, etc.)
-- Named types with generic arguments
-- Arrays with multi-dimensional support
-- Tuples with named elements
-- Nullable annotations
-
-### Method Bodies
-Methods can have three types of bodies:
-- `BlockMethodBody` - Traditional block with statements
-- `ExpressionMethodBody` - Expression-bodied member (=>)
-- `null` - Abstract/interface methods
-
-### Patterns
-Full support for C# pattern matching:
-- Type patterns with variables
-- Property patterns with nested patterns
-- Relational patterns for comparisons
-- Logical patterns (and, or, not)
-- List patterns (C# 11+)
-
-## Comparison with SQL AST
-
-| Feature | SQL AST | C# AST |
-|---------|---------|--------|
-| **Purpose** | Query language parsing | Programming language parsing |
-| **Complexity** | Moderate (focused on data queries) | High (full programming language) |
-| **Type System** | Limited (data types) | Rich (classes, generics, constraints) |
-| **Expressions** | SQL-specific (aggregates, joins) | General-purpose (OOP, functional) |
-| **Statements** | DML/DDL operations | Control flow, declarations, expressions |
-| **Modern Features** | CTEs, window functions | Pattern matching, async/await, LINQ |
-
-## Future Enhancements
-
-Potential additions:
-- [ ] Preprocessor directives (#if, #define, etc.)
-- [ ] XML documentation comments
-- [ ] Unsafe code blocks with pointers
-- [ ] Fixed-size buffers
-- [ ] Extern alias advanced scenarios
-- [ ] Assembly-level attributes
-- [ ] Module-level attributes
-- [ ] Detailed trivia (whitespace, comments)
-- [ ] Source code location information (line, column)
-
-## References
-
-### Official Specifications
-- [ECMA-334 C# Language Specification](https://ecma-international.org/publications-and-standards/standards/ecma-334/)
-- [Microsoft C# Language Specification](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/specifications/)
-- [C# Language Design](https://github.com/dotnet/csharplang)
-
-### Implementation References
-- [Roslyn Compiler](https://github.com/dotnet/roslyn) - Official C# compiler source code
-- [C# Documentation](https://learn.microsoft.com/en-us/dotnet/csharp/)
-- [C# Language Reference](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/)
-
-## License
-
-This specification and AST implementation are provided for educational and development purposes as part of the Paspan parser project.
-
----
-
-**Note**: This implementation covers the vast majority of C# language features through C# 12.0. For production parser implementation, refer to the official [Roslyn](https://github.com/dotnet/roslyn) compiler for complete semantic analysis and advanced scenarios.
-
+- `LexicalTests`, `TypeTests`, `ExpressionTests`, `PatternTests`, `StatementTests`, `DeclarationTests`,
+  `PreprocessorTests`, `SpanTests`: unit tests by area, most also checked against Roslyn.
+- `CSharpCorpusTests`: the oracle on the built-in corpus. Set `CSHARP_CORPUS_DIR` to a directory of `.cs` files
+  to measure an external corpus (and `CSHARP_CORPUS_SYMBOLS`, for example `NET;DEBUG`, for preprocessor symbols).
+- `CSharpPerformanceTests`: deep nesting, and a benchmark against Roslyn when `CSHARP_CORPUS_DIR` is set
+  (run it with `-c Release`).
+- `CSharpParserTests`, `CSharpWriterTests`: the original tests of the parser and the writer.

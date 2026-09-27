@@ -21,7 +21,7 @@ This repository contains improved Paspan core library and a collection of produc
 
 | Parser | Status | Description |
 |--------|--------|-------------|
-| **C#** | ✅ Complete | Full C# parser (C# 1.0 - 12.0) with AST and code generator |
+| **C#** | ✅ Complete | C# 1–14 parser for valid code, checked against Roslyn; AST with positions and code writer |
 | **Python** | ✅ Complete | Python 3.6-3.12 parser with pattern matching, async/await, type hints |
 | **Java** | ✅ Complete | Java parser with AST and code generator |
 | **JSON** | ✅ Complete | Fast JSON parser with Region-based zero-copy support |
@@ -31,11 +31,11 @@ This repository contains improved Paspan core library and a collection of produc
 ### Key Features by Parser
 
 #### C# Parser
-- Full language support: classes, structs, interfaces, enums, delegates, records
-- Generics with constraints
-- Modern features: pattern matching, nullable reference types, records, primary constructors
-- LINQ, lambda expressions, async/await
-- Complete AST with code writer
+- C# 1–14: every file Roslyn parses without syntax errors is expected to parse to an equivalent tree
+- Checked against Roslyn on its own compiler sources, dotnet/runtime and ASP.NET Core libraries (6 600+ files, 100%)
+- Preprocessor (`#if` with symbols from `CSharpParseOptions`), `#nullable` kept in the AST
+- Node positions (`Span`), as fast as Roslyn's parser, linear time on deeply nested code
+- Code writer that prints the AST back; see [src/PaspanParsers/CSharp/README.md](src/PaspanParsers/CSharp/README.md)
 
 #### Python Parser
 - Python 3.6-3.12 syntax
@@ -67,12 +67,12 @@ This repository contains improved Paspan core library and a collection of produc
 using PaspanParsers.CSharp;
 
 var code = "public class Hello { }";
-var ast = CSharpParser.Parse(code);
+var options = new CSharpParseOptions(CSharpLanguageVersion.CSharp14, preprocessorSymbols: ["DEBUG"]);
 
 // Access parsed elements
-if (ast != null && ast.Members[0] is ClassDeclaration cls)
+if (CSharpParser.TryParse(code, options, out var ast, out var error) && ast.Members[0] is ClassDeclaration cls)
 {
-    Console.WriteLine($"Class: {cls.Name}");
+    Console.WriteLine($"Class: {cls.Name} at {cls.Span}");
 }
 ```
 
@@ -94,13 +94,13 @@ var result = expression.Parse("10 + 20"); // 30
 
 All parsers include comprehensive test suites:
 - Unit tests in `src/PaspanParsers.Tests`
-- 100+ tests for C# parser
+- 400+ tests for the C# parser, plus a Roslyn oracle over a corpus of C# files
 - 50+ tests for Python parser
 - Real-world code examples
 
-Run tests:
+Run tests (the test project uses Microsoft.Testing.Platform, so use `dotnet run` rather than `dotnet test`):
 ```bash
-dotnet test src/PaspanParsers.Tests
+dotnet run --project src/PaspanParsers.Tests
 ```
 
 ## 🏗️ Project Structure

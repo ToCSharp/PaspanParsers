@@ -529,6 +529,7 @@ public ref partial struct SpanReader
                 {
                     case (byte)'0':
                     case BackSlash:
+                    case (byte)'a':
                     case (byte)'b':
                     case (byte)'f':
                     case (byte)'n':

@@ -437,4 +437,12 @@ public class CoreRegressionTests
         Assert.IsTrue(Separated(Terms.Char(','), Terms.Integer()).TryParse("1, 2", out var items));
         Assert.HasCount(2, items);
     }
+
+    [TestMethod]
+    public void StringLiteralShouldAcceptAlertEscape()
+    {
+        // The decoder handled \a but the validator rejected it
+        Assert.IsTrue(Terms.String().TryParse("\"bell\\a\"", out var value));
+        Assert.AreEqual("bell\a", value);
+    }
 }

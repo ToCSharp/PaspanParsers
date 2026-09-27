@@ -255,13 +255,21 @@ var writer = new CSharpWriter(indentString: "\t");
 var writer = new CSharpWriter(indentString: "  ");
 ```
 
+### Round trips
+
+For trees built by `CSharpParser` the writer prints the code literally: parentheses, trailing commas,
+modifier order, literal spellings (`0x1F`, `@"..."`, raw strings) and `#nullable` directives are kept, so
+Roslyn parses the output to a tree equivalent to the original. Whitespace and comments are not in the AST,
+so the output is formatted by the writer.
+
+Deeply nested trees do not overflow the stack: when the caller's stack runs out, `WriteCompilationUnit`
+writes the tree again on a thread with a large stack.
+
 ## Testing
 
-The implementation includes comprehensive unit tests in:
-- `CSharpWriterTests.cs`: 17 tests covering all major features
-- `CSharpWriterExampleTest.cs`: 3 tests demonstrating real-world usage
-
-All tests pass successfully.
+- `CSharpWriterTests.cs` and `CSharpWriterExampleTest.cs`: trees built in code.
+- The Roslyn oracle (`CSharpCorpusTests`, and most C# parser tests through `AssertOracle`): parse, write,
+  and compare the written code with the original using Roslyn.
 
 ## Implementation Details
 
@@ -296,12 +304,7 @@ See `CSharpWriterExample.cs` for complete working examples:
 
 Potential improvements:
 - Configurable formatting options (brace style, spacing rules, etc.)
-- XML documentation comment support
-- Preprocessor directive support (#if, #define, etc.)
-- Raw string literals (C# 11+)
-- List patterns (C# 11+)
-- Required members (C# 11+)
-- File-scoped types (C# 11+)
+- Comments and XML documentation comments (they are not in the AST)
 
 ## Related Files
 
