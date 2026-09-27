@@ -249,7 +249,7 @@ Intel Xeon 2,1 ГГц (4 ядра, облачная машина), один по
 ### Проверка
 
 - Все тесты C#, оракул по встроенному корпусу (194 файла) и его 8 982 операторам — для обоих парсеров; `BuiltInCorpus_SameAstAsRecursiveDescent`.
-- `Declarations_ParseTheSameWithBothParsers`: 48 входов, корректных и нет (контекстные модификаторы, `record(`, `extension`,
+- `Declarations_ParseTheSameWithBothParsers`: 47 входов, корректных и нет (контекстные модификаторы, `record(`, `extension`,
   составные операторы `>>>=`, явные интерфейсы у событий и полей, пустые и битые `using`, file-scoped внутри пространства имён,
   битые глобальные атрибуты, ограничения, `#nullable` в объявлениях, `delegate` в корне файла).
 - `BuiltInCorpus_BrokenDeclarations_SameResult`: 25 686 объявлений корпуса с удалённым токеном (первым, последним и тремя между ними);
