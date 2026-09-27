@@ -331,7 +331,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// 'scoped' is a parameter modifier when a modifier or a type and a parameter name follow it.
     /// </summary>
-    private bool IsScopedModifier()
+    internal bool IsScopedModifier()
     {
         var next = Peek(1);
         if (next.IsKeyword("ref") || next.IsKeyword("in") || next.IsKeyword("out"))

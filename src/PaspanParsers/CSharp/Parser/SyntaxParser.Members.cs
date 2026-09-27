@@ -159,7 +159,7 @@ internal ref partial struct SyntaxParser
     // Modifiers
     // ========================================
 
-    private static Modifiers Combine(List<Modifiers> modifiers)
+    internal static Modifiers Combine(List<Modifiers> modifiers)
     {
         var result = Modifiers.None;
         foreach (var modifier in modifiers)
@@ -239,7 +239,7 @@ internal ref partial struct SyntaxParser
     /// a type and a member name follow it (<c>async Task Run()</c>), and not when it is itself a type
     /// (<c>async x;</c>) or a name.
     /// </summary>
-    private bool IsContextualModifier()
+    internal bool IsContextualModifier()
     {
         var next = Peek(1);
         switch (next.Kind)
@@ -276,7 +276,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// 'record' starts a record declaration when a name or 'class'/'struct' and a name follow it.
     /// </summary>
-    private bool IsRecordDeclarationStart()
+    internal bool IsRecordDeclarationStart()
     {
         var next = Peek(1);
         if (next.IsIdentifier)
@@ -697,7 +697,7 @@ internal ref partial struct SyntaxParser
     /// <c>IEquatable&lt;T&gt;.</c> in <c>bool IEquatable&lt;T&gt;.Equals(T other)</c>. Returns null
     /// and consumes nothing when the member name is not qualified.
     /// </summary>
-    private TypeReference ParseExplicitInterfaceSpecifier()
+    internal TypeReference ParseExplicitInterfaceSpecifier()
     {
         var start = _position;
         var spanStart = NodeStart;

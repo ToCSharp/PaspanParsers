@@ -14,7 +14,15 @@ internal static class SyntaxRules
     /// Sets the span of the node <paramref name="parser"/> returns, like <c>SyntaxParser.Finish</c>: from the
     /// start of the first token to the end of the last consumed token.
     /// </summary>
-    public static Parser<T> Node<T>(Parser<T> parser) where T : CSharpNode => new NodeParser<T>(parser);
+    public static Parser<T> Node<T>(Parser<T> parser) where T : CSharpNode => new NodeParser<T>(parser, null);
+
+    /// <summary>
+    /// Like <see cref="Node{T}(Parser{T})"/>, and hands the <c>#nullable</c> directives before the first token to
+    /// <paramref name="nullableDirectives"/> when there are any, like the hand-written parser does for the nodes
+    /// that can start a line.
+    /// </summary>
+    public static Parser<T> Node<T>(Parser<T> parser, Action<T, IReadOnlyList<NullableDirective>> nullableDirectives) where T : CSharpNode =>
+        new NodeParser<T>(parser, nullableDirectives);
 
     /// <summary>
     /// A statement: its span like <see cref="Node{T}(Parser{T})"/>, and the <c>#nullable</c> directives before its
@@ -38,11 +46,12 @@ internal static class SyntaxRules
     /// </summary>
     public static Parser<T> BlockScope<T>(Parser<T> parser) => new BlockScopeParser<T>(parser);
 
-    private sealed class NodeParser<T>(Parser<T> parser) : Parser<T> where T : CSharpNode
+    private sealed class NodeParser<T>(Parser<T> parser, Action<T, IReadOnlyList<NullableDirective>> nullableDirectives) : Parser<T> where T : CSharpNode
     {
         public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
         {
-            var start = SyntaxParser.At(ref reader, context).Current.Start;
+            var first = SyntaxParser.At(ref reader, context).Current;
+            var start = first.Start;
             if (!parser.Parse(ref reader, context, ref result))
             {
                 return false;
@@ -51,6 +60,11 @@ internal static class SyntaxRules
             // A node without tokens is empty at its start
             var end = Math.Max(start, reader.GetCurrentPosition());
             result.Value.Span = new TextSpan(start, end);
+            if (nullableDirectives != null && first.NullableDirectives != null)
+            {
+                nullableDirectives(result.Value, first.NullableDirectives);
+            }
+
             result.Set(start, end, result.Value);
             return true;
         }

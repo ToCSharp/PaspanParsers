@@ -72,7 +72,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// A return type or the type of a local: <c>ref</c> and <c>ref readonly</c> are allowed.
     /// </summary>
-    private TypeReference ParseReturnType()
+    internal TypeReference ParseReturnType()
     {
         var start = _position;
         var spanStart = NodeStart;

@@ -13,13 +13,12 @@ namespace PaspanParsers.CSharp;
 /// The two styles call each other: the grammar runs hand-written rules through <see cref="SyntaxRuleParser{T}"/>,
 /// and the hand-written parser runs the grammar wherever it parses a block or a statement
 /// (<see cref="CSharpParseContext.Grammar"/>). Both read the same cached tokens (<see cref="TokenParsers"/>).
-/// So far (stage H2 of the plan) the grammar covers blocks and statements; declarations and the compilation
-/// unit are still hand-written.
+/// The grammar covers the compilation unit, declarations, blocks and statements (stage H3 of the plan).
 /// </remarks>
 public static class CSharpHybridParser
 {
     public static readonly Parser<CompilationUnit> CompilationUnitParser =
-        CSharpParser.WithTrivia(new SyntaxRuleParser<CompilationUnit>(SyntaxParser.ParseCompilationUnitRule));
+        CSharpParser.WithTrivia(HybridGrammar.Instance.CompilationUnit);
 
     public static CompilationUnit Parse(string input, CSharpParseOptions options = null)
     {

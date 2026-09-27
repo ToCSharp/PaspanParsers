@@ -8,8 +8,8 @@ namespace PaspanParsers.Tests.CSharp;
 
 /// <summary>
 /// The building blocks of the hybrid parser (<see cref="CSharpHybridParser"/>): token parsers, the choice by
-/// the next token, the bridges between the combinator grammar and the hand-written parser, and the check that
-/// the hybrid parser gives the same ASTs as the recursive descent parser on the whole built-in corpus.
+/// the next token, the bridges between the combinator grammar and the hand-written parser, declarations, and the
+/// check that the hybrid parser gives the same ASTs as the recursive descent parser on the whole built-in corpus.
 /// </summary>
 [TestClass]
 public class HybridParserTests
@@ -132,9 +132,9 @@ public class HybridParserTests
     // ========================================
 
     /// <summary>
-    /// The hand-written parser runs the combinator grammar for every block and statement it meets: member
-    /// bodies, lambdas, anonymous methods and top-level statements. Inside the grammar, blocks and statements
-    /// are the grammar's own rules.
+    /// The hand-written parser runs the combinator grammar for every block it meets: lambdas and anonymous
+    /// methods. Member bodies and top-level statements are parts of the grammar, which uses its own rules
+    /// for blocks and statements.
     /// </summary>
     [TestMethod]
     public void BlocksAndStatements_AreParsedByTheGrammar()
@@ -148,9 +148,9 @@ public class HybridParserTests
 
         Assert.IsTrue(CSharpParser.TryParse(source, null, CSharpHybridParser.CompilationUnitParser, grammar, out var unit, out _));
 
-        // M's body, the two lambdas, the anonymous method and the getter; the top-level statement
-        Assert.AreEqual(5, blocks);
-        Assert.AreEqual(1, statements);
+        // The two lambdas and the anonymous method
+        Assert.AreEqual(3, blocks);
+        Assert.AreEqual(0, statements);
         Assert.IsNull(ParserVariants.Compare(CSharpParser.Parse(source), unit));
     }
 
@@ -174,6 +174,67 @@ public class HybridParserTests
     public void BlocksInExpressions_ParseTheSameWithBothParsers(string statements)
     {
         ParserVariants.Parse(SyntaxTestHelper.InMethod(statements));
+    }
+
+    // ========================================
+    // Declarations
+    // ========================================
+
+    /// <summary>
+    /// Declarations and the compilation unit are parsed by the grammar. Both parsers must agree on each input,
+    /// valid or not: the grammar commits to a declaration where the hand-written parser does.
+    /// </summary>
+    [TestMethod]
+    [DataRow("partial class C { partial void M(); async Task F() { } required int P { get; init; } file class D { } }")]
+    [DataRow("class C { async x; partial p; required r; }")]
+    [DataRow("class C { partial C(int x); public partial C(int x) { } }")]
+    [DataRow("record R(int X) : B(X), I; record struct S; record class K { } class C { record(int x) { } }")]
+    [DataRow("static class E { extension(string s) { void F() { } } extension<T>(List<T>) where T : class { } }")]
+    [DataRow("class C { public static C operator >>>(C a, int b) => a; public static C operator >>=(C a, int b) => a; public static C operator >>>=(C a, int b) => a; }")]
+    [DataRow("class C { public static C operator checked +(C a, C b) => a; public static explicit operator checked int(C c) => 0; bool I.operator ==(C a, C b) => true; }")]
+    [DataRow("class C { public static bool operator true(C c) => true; public void operator ++() { } public void operator +=(C c) { } }")]
+    [DataRow("class C : I { event EventHandler I.E { add { } remove => F(); } event EventHandler A, B = null; }")]
+    [DataRow("class C : I { event EventHandler I.E; }")]
+    [DataRow("class C { event EventHandler E { add; } }")]
+    [DataRow("global using static System.Math; using unsafe P = int*; using A = (int, int); extern alias X; using N = A::B.C<int>;")]
+    [DataRow("using static; using X = ; global using; using List<int>;")]
+    [DataRow("namespace A.B { namespace C { } }; namespace D { extern alias E; using F; }")]
+    [DataRow("namespace A; class C { }")]
+    [DataRow("namespace A; namespace B;")]
+    [DataRow("namespace A { namespace B; }")]
+    [DataRow("[assembly: X] [module: Y(1, Name = 2), Z] class C { }")]
+    [DataRow("[assembly: ] class C { }")]
+    [DataRow("[assembly: X(] class C { }")]
+    [DataRow("[type: A, B,] [return: C] [foo: D] class C { }")]
+    [DataRow("[A::B.C<int>(x: 1, Y = 2)] class C { }")]
+    [DataRow("class C<[A] in T, out U> where T : class?, new() where U : unmanaged, notnull, allows ref struct, I<T> { }")]
+    [DataRow("class C<T> where T : { }")]
+    [DataRow("class C<T> where T : unmanaged.X, notnull<int>, allows { }")]
+    [DataRow("class C { int this[int i, params int[] a] { get => 0; set { } } int this[] => 0; unsafe fixed int b[4], c[2]; }")]
+    [DataRow("enum E : byte { A = 1, [X] B, C, } enum F { } enum G { A };")]
+    [DataRow("enum E { , }")]
+    [DataRow("enum E { A,, }")]
+    [DataRow("delegate ref readonly int D<T>(scoped ref T x, this int y = 1, __arglist) where T : struct;")]
+    [DataRow("class C { ~C() { } C() : base(1) { } C(int x) : this() => F(); C(string s) : { } }")]
+    [DataRow("#nullable enable\nclass C {\n#nullable disable\n int x;\n#nullable restore\n}\n#nullable enable\n")]
+    [DataRow("class C\n#nullable enable\n{\n int P\n#nullable disable\n { get; }\n}")]
+    [DataRow("int x = 1; static void F() { } Console.WriteLine(x); class C { }")]
+    [DataRow("delegate { }; delegate*<int, void> p; public int x;")]
+    [DataRow("delegate (int a, int b) D(); namespace N { delegate (int a, int b) D(); }")]
+    [DataRow("class C { public int P { get; } = 1; public int Q => 1; int I.R { get; } int I.S; }")]
+    [DataRow("class C { void M<T>(T x) where T : new() { } int M2() => 0 }")]
+    [DataRow("class C { int; }")]
+    [DataRow("class C { void M() }")]
+    [DataRow("class C { public }")]
+    [DataRow("class { }")]
+    [DataRow("interface I(int x) { }")]
+    [DataRow("public namespace N { }")]
+    [DataRow("class C { namespace N { } }")]
+    [DataRow("class C { ref int F() => ref x; ref struct S { } readonly ref partial struct T { } }")]
+    [DataRow("class C { void F(scoped ref int x, scoped Span<int> y, scoped) { } }")]
+    public void Declarations_ParseTheSameWithBothParsers(string source)
+    {
+        ParserVariants.Parse(source);
     }
 
     // ========================================
@@ -244,6 +305,45 @@ public class HybridParserTests
         }
 
         TestContext.WriteLine($"Compared {variants} broken statements");
+        Assert.IsEmpty(differences, "The hybrid parser differs from the recursive descent parser:\n" + string.Join("\n", differences.Take(50)));
+    }
+
+    /// <summary>
+    /// Like <see cref="BuiltInCorpus_BrokenStatements_SameResult"/> for declarations: every type and member
+    /// declaration of the built-in corpus with one token removed (the first, the last, and three in between)
+    /// is rejected by both parsers, or parsed by both to the same AST. Members of types are parsed in a class.
+    /// </summary>
+    [TestMethod]
+    public void BuiltInCorpus_BrokenDeclarations_SameResult()
+    {
+        var options = new Microsoft.CodeAnalysis.CSharp.CSharpParseOptions(LanguageVersion.CSharp14);
+        var differences = new List<string>();
+        var variants = 0;
+
+        foreach (var (name, path) in CSharpCorpusTests.BuiltInCorpus())
+        {
+            var declarations = CSharpSyntaxTree.ParseText(File.ReadAllText(path), options).GetRoot().DescendantNodes()
+                .OfType<MemberDeclarationSyntax>()
+                .Where(member => member is not GlobalStatementSyntax);
+
+            foreach (var declaration in declarations)
+            {
+                var text = declaration.ToString();
+                var tokens = declaration.DescendantTokens().Where(t => t.Span.Length != 0).ToList();
+                var inType = declaration.Parent is TypeDeclarationSyntax;
+                var line = declaration.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+                foreach (var index in new[] { 0, tokens.Count / 4, tokens.Count / 2, tokens.Count * 3 / 4, tokens.Count - 1 }.Distinct())
+                {
+                    var removed = tokens[index].Span.Start - declaration.SpanStart;
+                    var broken = text.Remove(removed, tokens[index].Span.Length);
+                    variants++;
+                    Compare($"{name}:{line} without '{tokens[index].Text}'", inType ? $"class C\n{{\n{broken}\n}}\n" : broken, differences);
+                }
+            }
+        }
+
+        TestContext.WriteLine($"Compared {variants} broken declarations");
         Assert.IsEmpty(differences, "The hybrid parser differs from the recursive descent parser:\n" + string.Join("\n", differences.Take(50)));
     }
 

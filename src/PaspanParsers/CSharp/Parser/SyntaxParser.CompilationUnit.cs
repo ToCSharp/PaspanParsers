@@ -51,7 +51,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// '[' (assembly | module) ':'
     /// </summary>
-    private bool IsGlobalAttributeSectionStart()
+    internal bool IsGlobalAttributeSectionStart()
     {
         var target = Peek(1);
         return IsPunctuator("[") && (target.IsContextual("assembly") || target.IsContextual("module")) && Peek(2).IsPunctuator(":");
@@ -141,7 +141,7 @@ internal ref partial struct SyntaxParser
     /// The type as a <see cref="NameExpression"/> when it is a (possibly alias-qualified) name with
     /// type arguments only on its last part; otherwise null.
     /// </summary>
-    private static NameExpression AsName(TypeReference type)
+    internal static NameExpression AsName(TypeReference type)
     {
         return type is NamedTypeReference { Qualifier: null, IsNullable: false } named
             ? Finish(new NameExpression(named.Name.Parts, named.TypeArguments, named.Alias) { CloseAngleNullableDirectives = named.CloseAngleNullableDirectives }, named.Span.Start, named.Span.End)

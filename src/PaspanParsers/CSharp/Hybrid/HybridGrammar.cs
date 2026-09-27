@@ -6,16 +6,17 @@ using static PaspanParsers.CSharp.TokenParsers;
 namespace PaspanParsers.CSharp;
 
 /// <summary>
-/// The combinator grammar of <see cref="CSharpHybridParser"/>: blocks and statements.
+/// The combinator grammar of <see cref="CSharpHybridParser"/>: the compilation unit, declarations, blocks and statements.
 /// </summary>
 /// <remarks>
-/// It builds the same nodes as the hand-written <c>SyntaxParser.Statements.cs</c>, with the same spans and
-/// <c>#nullable</c> directives, and accepts the same inputs. Expressions, types, patterns, attributes,
-/// parameters and constraints are hand-written rules (<see cref="SyntaxRules.Rule{T}"/>). The hand-written
-/// parser runs <see cref="Block"/> and <see cref="Statement"/> wherever it parses a block or a statement
-/// (<see cref="CSharpParseContext.Grammar"/>): member bodies, local functions, lambdas, top-level statements.
+/// It builds the same nodes as the hand-written <c>SyntaxParser.Statements.cs</c>, <c>SyntaxParser.Members.cs</c>,
+/// <c>SyntaxParser.Declarations.cs</c> and <c>SyntaxParser.CompilationUnit.cs</c>, with the same spans and
+/// <c>#nullable</c> directives, and accepts the same inputs. Expressions, types, patterns and the lookahead-heavy
+/// choices (explicit interfaces, contextual modifiers, local declarations) are hand-written rules
+/// (<see cref="SyntaxRules.Rule{T}"/>). The hand-written parser runs <see cref="Block"/> and <see cref="Statement"/>
+/// wherever it parses a block or a statement (<see cref="CSharpParseContext.Grammar"/>): lambdas and anonymous methods.
 /// </remarks>
-internal sealed class HybridGrammar
+internal sealed partial class HybridGrammar
 {
     public static HybridGrammar Instance { get; } = new();
 
@@ -39,10 +40,13 @@ internal sealed class HybridGrammar
         var variableInitializer = Rule(SyntaxParser.ParseVariableInitializerRule);
         var variableDeclaration = Rule(SyntaxParser.ParseVariableDeclarationRule);
         var pattern = Rule(SyntaxParser.ParsePatternRule);
-        var attributeSections = Rule(SyntaxParser.ParseAttributeSectionsRule);
-        var typeParameterList = Rule(SyntaxParser.ParseTypeParameterListRule);
-        var parameterList = Rule(SyntaxParser.ParseParameterListRule);
-        var constraintClauses = Rule(SyntaxParser.ParseConstraintClausesRule);
+
+        // Attributes, modifiers, parameters and constraints, shared with the declarations
+        var parts = new DeclarationParts(nestedExpression, type);
+        var attributeSections = parts.AttributeSections;
+        var typeParameterList = parts.TypeParameterList;
+        var parameterList = parts.ParameterList;
+        var constraintClauses = parts.ConstraintClauses;
 
         var identifier = TokenParsers.Identifier;
         var semicolon = Punctuator(";");
@@ -267,19 +271,22 @@ internal sealed class HybridGrammar
 
         Block = block;
         Statement = statement;
+        CompilationUnit = CreateCompilationUnit(parts, block, statement, declarators);
     }
 
-    private HybridGrammar(Parser<BlockStatement> block, Parser<Statement> statement)
+    private HybridGrammar(Parser<BlockStatement> block, Parser<Statement> statement, Parser<CompilationUnit> compilationUnit)
     {
         Block = block;
         Statement = statement;
+        CompilationUnit = compilationUnit;
     }
 
     /// <summary>
-    /// The grammar with other entry points for the hand-written parser, for tests that observe them.
+    /// The grammar with other entry points for the hand-written parser, for tests that observe them. The
+    /// compilation unit and the declarations keep using the grammar's own blocks and statements.
     /// </summary>
     internal HybridGrammar WithEntryPoints(Func<Parser<BlockStatement>, Parser<BlockStatement>> block, Func<Parser<Statement>, Parser<Statement>> statement) =>
-        new(block(Block), statement(Statement));
+        new(block(Block), statement(Statement), CompilationUnit);
 
     /// <summary>
     /// The part of a local function after its return type.

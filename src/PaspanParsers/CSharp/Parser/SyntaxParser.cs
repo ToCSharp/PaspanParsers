@@ -445,13 +445,24 @@ internal ref partial struct SyntaxParser
 
     public static Pattern ParsePatternRule(ref SyntaxParser parser) => parser.ParsePattern();
 
-    public static List<AttributeSection> ParseAttributeSectionsRule(ref SyntaxParser parser) => parser.ParseAttributeSections();
+    public static TypeReference ParseReturnTypeRule(ref SyntaxParser parser) => parser.ParseReturnType();
 
-    public static List<TypeParameter> ParseTypeParameterListRule(ref SyntaxParser parser) => parser.ParseTypeParameterList();
+    /// <summary>
+    /// The interface of an explicit implementation; fails when the member name is not qualified.
+    /// </summary>
+    public static TypeReference ParseExplicitInterfaceSpecifierRule(ref SyntaxParser parser) => parser.ParseExplicitInterfaceSpecifier();
 
-    public static List<Parameter> ParseParameterListRule(ref SyntaxParser parser) => parser.ParseParameterList(allowImplicitTypes: false);
+    public static List<Argument> ParseArgumentListRule(ref SyntaxParser parser) => parser.ParseArgumentList("(", ")");
 
-    public static List<TypeParameterConstraint> ParseConstraintClausesRule(ref SyntaxParser parser) => parser.ParseConstraintClauses();
+    public static List<Argument> ParseBracketedArgumentListRule(ref SyntaxParser parser) => parser.ParseArgumentList("[", "]");
+
+    public static Argument ParseArgumentRule(ref SyntaxParser parser) => parser.ParseArgument();
+
+    public static TypeArgumentList ParseTypeArgumentListRule(ref SyntaxParser parser)
+    {
+        var types = parser.ParseTypeArgumentList(out var closeDirectives);
+        return types == null ? null : new TypeArgumentList(types, closeDirectives);
+    }
 
     /// <summary>
     /// The expressions in the holes of interpolated strings, which are scanned by <see cref="InterpolatedStringToken"/>.
@@ -537,6 +548,11 @@ internal ref partial struct SyntaxParser
 /// The context-dependent state of <see cref="SyntaxParser"/>, handed over when it calls a combinator parser.
 /// </summary>
 internal readonly record struct SyntaxState(int QueryDepth, bool NoLambdaArrow, bool AllowOmittedTypeArguments);
+
+/// <summary>
+/// A type argument list and the <c>#nullable</c> directives before its '&gt;'.
+/// </summary>
+internal sealed record TypeArgumentList(List<TypeReference> Types, IReadOnlyList<NullableDirective> CloseDirectives);
 
 /// <summary>
 /// Token and lookahead caches shared by all <see cref="SyntaxParser"/> runs over the same input,
