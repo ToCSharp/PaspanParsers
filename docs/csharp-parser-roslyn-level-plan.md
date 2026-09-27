@@ -40,7 +40,8 @@
 ## Архитектура
 
 `CSharpParser` разбивается на partial-файлы в `src/PaspanParsers/CSharp/Parser/`
-(после этапов 2–5 типы, выражения, паттерны и операторы живут в `SyntaxParser*.cs`, см. ниже):
+(после этапов 2–5 типы, выражения, паттерны и операторы живут в `SyntaxParser*.cs`, см. ниже;
+после этапов 6–7 вся грамматика — в `SyntaxParser*.cs`, а trivia и директивы — в `Preprocessor.cs`):
 - `Lexical.cs`, `Trivia.cs`, `Preprocessor.cs`
 - `Names.cs`, `Types.cs`
 - `Expressions.cs`, `Patterns.cs`, `Statements.cs`
@@ -235,6 +236,30 @@
   - `checked`/`unchecked` блоки, `lock`, `using` (выражение и объявление), `fixed`, `unsafe`.
 
 ### Этап 6. Объявления и единица компиляции (`Declarations.cs`, `CompilationUnit.cs`)
+
+> **Статус: выполнен** (`Parser/SyntaxParser.Members.cs`, `Parser/SyntaxParser.CompilationUnit.cs`).
+> - **Отклонение от плана:** объявления тоже разбирает рукописный `SyntaxParser`, а не комбинаторы.
+>   Верхний уровень файла смешивает объявления и операторы, а объявлениям нужны те же типы, параметры и блоки.
+>   Комбинаторная грамматика (`Lexical.cs`, `Names.cs`, `Types.cs`, `Declarations.cs`, `CompilationUnit.cs`)
+>   и неиспользуемые токен-парсеры удалены. `CSharpParser.CompilationUnitParser` — это `SyntaxRuleParser` с пропуском trivia вокруг.
+> - Атрибуты и модификаторы разбираются один раз, дальше диспетчер по токену. Контекстные модификаторы
+>   (`partial`, `async`, `required`, `file`, `safe`) считаются модификаторами, только если за ними идёт объявление
+>   (`async Task Run()`), а не когда они сами тип (`async x;`).
+> - Все объявления из списка ниже, включая `record class`, primary constructors у class/struct с аргументами базового типа,
+>   тела `;` (`class C;`), `;` после `}`, явную реализацию интерфейсов (`bool IEquatable<T>.Equals`, `I.this[...]`, `I.operator +`),
+>   fixed-буферы, `ref`-поля, операторы C# 14 (`void operator +=`, `operator ++()`), extension-блоки, партиальные конструкторы.
+> - Верхний уровень: всё, что не тип и не namespace, — `GlobalStatement` с оператором внутри. Как в Roslyn, методы и
+>   переменные там — локальные функции и локальные объявления. `using` после начала операторов — оператор.
+> - AST: `TypeDeclaration` (общая база class/struct/interface/enum/record), `DestructorDeclaration`, `OperatorDeclaration`,
+>   `ConversionOperatorDeclaration`, `ExtensionBlockDeclaration`, `GlobalStatement`; `MemberDeclaration.ModifierList`
+>   (модификаторы в порядке исходника), `ExplicitInterface`, `UsingDirective.IsGlobal`/`IsUnsafe`, псевдонимы на любой тип,
+>   `VariableDeclarator.BracketedArguments`, `EnumDeclaration.HasTrailingComma`, `HasBody`/`HasTrailingSemicolon`.
+>   Новые свойства необязательные (`init`, для `#nullable` — `set`), старые конструкторы и тесты не менялись.
+> - Внешний корпус нашёл ошибки прежних этапов, они исправлены: `(a * b)` и `(A<T>.B * c)` — умножение, а не объявление указателя;
+>   `c ? () => a : b` — условное выражение, а не лямбда с типом `c?`; `x is int.MaxValue`; `new byte[]?[n]`;
+>   константы в паттернах вне `is` до уровня `??` (`case 'a' ^ 'b':`, `(A | B, 1)`); `nameof(...)` в паттерне — константа;
+>   `switch ((a, b))` сохраняет скобки; `'\uD800'` (одиночный суррогат) больше не бросает исключение.
+> - Новые файлы корпуса: `21-Declarations.cs`, `22-PreprocessorAndNullable.cs`. Юнит-тесты: `DeclarationTests.cs`.
 - **Общий префикс парсится один раз:** атрибуты + модификаторы (включая `file`, `required`, `scoped`, `partial` в любой позиции), затем диспетчер по ключевому слову или форме. Сейчас атрибуты и модификаторы переразбираются в каждой альтернативе `Or`.
 - **Типы:**
   - class/struct/interface/enum/delegate;
@@ -259,6 +284,30 @@
   - top-level statements (`GlobalStatement`), смешанные с типами в порядке, который допускает Roslyn.
 
 ### Этап 7. Препроцессор (`Preprocessor.cs`, подключается как trivia)
+
+> **Статус: выполнен** (`Parser/Preprocessor.cs`).
+> - Директивы — часть trivia между токенами: `SyntaxParser` и `TriviaParser` сканируют trivia через `Preprocessor`.
+> - Сканирование trivia в позиции не зависит от предыдущих сканов (токены сканируются лениво и не по порядку при просмотре вперёд):
+>   `#define`/`#undef` допустимы только до первого токена, поэтому начальная trivia файла сканируется по порядку от символов
+>   из `CSharpParseOptions`, а итоговые символы действуют дальше (и попадают в `CSharpParseContext.DefinedSymbols`).
+>   `#elif`/`#else`, встреченные в активном коде, закрывают взятую ветку — скан пропускает всё до парного `#endif`.
+> - `#if`/`#elif` вычисляются (`!`, `&&`, `||`, `==`, `!=`, скобки, `true`/`false`, комментарий в конце). Неактивные ветки
+>   пропускаются по строкам с учётом вложенных `#if`. `#` — директива, только если перед ним на строке одни пробелы,
+>   поэтому `#` в строках и комментариях не директива.
+> - **Отклонение от плана:** `#nullable` сохраняется в AST. `SyntaxFactory.AreEquivalent` сравнивает `#nullable` в trivia токенов
+>   (проверено: `#pragma`, `#region`, `#define`, `#if` не влияют), и директива меняет смысл кода.
+>   `NullableDirective` хранится в `NullableDirectives` узлов, с которых может начинаться строка: объявления, `using`, операторы,
+>   параметры, `where`, аксессоры, метки `case`, глобальные атрибуты. Для открывающих и закрывающих скобок есть
+>   `OpenBraceNullableDirectives`/`CloseBraceNullableDirectives`, для конца файла — `CompilationUnit.EndNullableDirectives`.
+>   Остальные директивы в AST не попадают.
+> - `Oracle_BuiltInCorpus_Statements` больше не пропускает операторы с директивами.
+>   `CSHARP_CORPUS_SYMBOLS` задаёт символы для внешнего корпуса. Юнит-тесты: `PreprocessorTests.cs`.
+> - **Оракул по файлам:** встроенный корпус 179/179 (было 19/177).
+>   Внешние корпуса: исходники Roslyn (`src/Compilers/{CSharp,Core}/Portable`, `src/Workspaces/CSharp/Portable`, 2176 файлов, 777 тыс. строк) — 2176/2176;
+>   dotnet/runtime (`System.Private.CoreLib`, `System.Linq`, `System.Collections`, `System.Text.Json`, `System.Net.Http` и др., 2814 файлов, 875 тыс. строк) — 2812/2814,
+>   то же с символами `NET;NETCOREAPP;DEBUG;TARGET_64BIT;TARGET_WINDOWS`.
+>   Два расхождения — `#nullable` внутри списка аргументов типа (`IEnumerable<` `#nullable disable` `TResult` `#nullable restore` `>`):
+>   к типам директивы не привязываются.
 - Директивы допустимы только в начале строки после пробелов; позиция «начало строки» проверяется явно.
 - Поддерживаемые директивы:
   - `#define`/`#undef`;
@@ -298,6 +347,7 @@
   - тематический файл корпуса;
   - прогон оракула.
 - Метрика прогресса: процент файлов корпуса, прошедших оракул; фиксируется в README.
+  После этапа 7 встроенный корпус проходит полностью; дальнейшая метрика — внешние корпуса.
 
 ## Проверка
 

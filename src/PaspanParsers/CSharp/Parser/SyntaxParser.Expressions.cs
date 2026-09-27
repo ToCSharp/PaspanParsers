@@ -820,8 +820,9 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
+        // 'a * b' and 'A<T>.B * c' are multiplications, not declarations of pointers
         var type = ParseLocalType();
-        if (type != null && Current.IsIdentifier && !IsQueryKeyword(Current))
+        if (type != null && Current.IsIdentifier && !IsQueryKeyword(Current) && type is not PointerTypeReference { ElementType: NamedTypeReference { IsNullable: false } })
         {
             var designation = ParseSingleDesignation();
             if (IsDeclarationExpressionFollow())
@@ -1226,6 +1227,20 @@ internal ref partial struct SyntaxParser
         if (type == null)
         {
             return null;
+        }
+
+        // Arrays of nullable arrays: new byte[]?[4]
+        while (IsRankSpecifierAhead())
+        {
+            var beforeRank = _position;
+            var rank = ParseRankSpecifier();
+            if (rank == 0 || !TryEatPunctuator("?"))
+            {
+                _position = beforeRank;
+                break;
+            }
+
+            type = new NullableTypeReference(new ArrayTypeReference(type, rank));
         }
 
         if (IsPunctuator("["))
@@ -1743,9 +1758,10 @@ internal ref partial struct SyntaxParser
             return end >= 0 && TokenAt(end).IsPunctuator("=>") && (!_noLambdaArrow || hasPrefix);
         }
 
-        // Explicit return type: int (string s) => s.Length
+        // Explicit return type: int (string s) => s.Length. A nullable name reads as a conditional:
+        // c ? () => a : b
         var returnType = ParseReturnType();
-        if (returnType != null && IsPunctuator("("))
+        if (returnType != null && IsPunctuator("(") && returnType is not NamedTypeReference { IsNullable: true, TypeArguments: null, Qualifier: null, Alias: null })
         {
             var end = SkipBalanced(_position);
             return end >= 0 && TokenAt(end).IsPunctuator("=>") && (!_noLambdaArrow || hasPrefix);

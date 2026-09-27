@@ -143,7 +143,8 @@ internal ref partial struct SyntaxParser
             return new DiscardPattern();
         }
 
-        if (token.IsIdentifier || IsPredefinedTypeKeyword(token))
+        // nameof(...) is always a constant, never a positional pattern
+        if ((token.IsIdentifier || IsPredefinedTypeKeyword(token)) && !(token.IsContextual("nameof") && Peek(1).IsPunctuator("(")))
         {
             var start = _position;
             var type = ParseType(TypeMode.Expression);
@@ -164,7 +165,8 @@ internal ref partial struct SyntaxParser
                     return new DeclarationPattern(type, EatToken().Text);
                 }
 
-                if (isAfterIs || !IsSimpleName(type))
+                // int.MaxValue is a constant
+                if ((isAfterIs || !IsSimpleName(type)) && !IsPunctuator("."))
                 {
                     return new TypePattern(type);
                 }
@@ -173,7 +175,9 @@ internal ref partial struct SyntaxParser
             _position = start;
         }
 
-        var expression = ParseSubExpression(Precedence.Shift);
+        // After 'is' a constant stops before relational operators (x is A | B is (x is A) | B); in case labels,
+        // switch arms and subpatterns it runs up to '??' like in Roslyn: case 'a' ^ 'b':
+        var expression = ParseSubExpression(isAfterIs ? Precedence.Shift : Precedence.Coalescing);
         return expression == null ? null : new ConstantPattern(expression);
     }
 

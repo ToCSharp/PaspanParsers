@@ -579,7 +579,16 @@ internal static class Lexer
                     return 0;
                 }
 
-                value.Append(char.ConvertFromUtf32(code));
+                // A \u escape is a UTF-16 code unit and may be a lone surrogate: '\uD800'
+                if (code <= 0xFFFF)
+                {
+                    value.Append((char)code);
+                }
+                else
+                {
+                    value.Append(char.ConvertFromUtf32(code));
+                }
+
                 return 2 + digits;
             }
             default:

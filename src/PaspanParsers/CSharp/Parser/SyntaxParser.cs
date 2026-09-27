@@ -6,13 +6,15 @@ using Paspan.Fluent;
 namespace PaspanParsers.CSharp;
 
 /// <summary>
-/// Hand-written recursive descent parser for C# names, types, expressions, patterns and statements.
+/// Hand-written recursive descent parser for C#: names, types, expressions, patterns, statements,
+/// declarations and the compilation unit.
 /// </summary>
 /// <remarks>
 /// These parts of the grammar are mutually recursive (lambdas hold blocks, patterns hold types and
-/// expressions) and need Roslyn's disambiguation rules (generic names, casts, lambdas, declarations),
-/// which rely on looking ahead over whole types. They are parsed here on top of <see cref="Lexer"/>
-/// and exposed to the combinator grammar through <see cref="SyntaxRuleParser{T}"/>.
+/// expressions, the top level mixes declarations and statements) and need Roslyn's disambiguation rules
+/// (generic names, casts, lambdas, declarations), which rely on looking ahead over whole types. They are
+/// parsed here on top of <see cref="Lexer"/> and <see cref="Preprocessor"/>, and run as a combinator
+/// parser through <see cref="SyntaxRuleParser{T}"/>.
 /// <para>
 /// Parse methods return null when the input does not match; the position is then unspecified and
 /// callers that try alternatives restore it. Tokens are scanned lazily and cached by position.
@@ -228,7 +230,16 @@ internal ref partial struct SyntaxParser
 
     private SyntaxToken ScanToken(int position)
     {
-        var start = position + Lexer.ScanTrivia(_source[position..]);
+        var start = position + _cache.Preprocessor.ScanTrivia(_source, position, out var nullableDirectives);
+        var token = ScanTokenAt(start);
+        return nullableDirectives == null ? token : token.WithNullableDirectives(nullableDirectives);
+    }
+
+    /// <summary>
+    /// Scans the token at <paramref name="start"/>, after the trivia.
+    /// </summary>
+    private SyntaxToken ScanTokenAt(int start)
+    {
         if (start >= _source.Length)
         {
             return new SyntaxToken(TokenKind.EndOfFile, _source.Length, _source.Length, "");
@@ -323,49 +334,36 @@ internal ref partial struct SyntaxParser
     private static readonly InterpolatedStringToken InterpolatedStringParser = new(new SyntaxRuleParser<Expression>(ParseExpressionRule));
 
     // ========================================
-    // Entry points used by the combinator grammar
+    // Entry points run as combinator parsers
     // ========================================
 
     public delegate T Rule<T>(ref SyntaxParser parser);
 
-    public static Expression ParseExpressionRule(ref SyntaxParser parser) => parser.ParseExpression();
-
-    public static TypeReference ParseTypeRule(ref SyntaxParser parser) => parser.ParseType(TypeMode.Normal);
+    public static CompilationUnit ParseCompilationUnitRule(ref SyntaxParser parser) => parser.ParseCompilationUnit();
 
     /// <summary>
-    /// A return type: a type or a by-reference type (<c>ref int</c>, <c>ref readonly int</c>).
+    /// The expressions in the holes of interpolated strings, which are scanned by <see cref="InterpolatedStringToken"/>.
     /// </summary>
-    public static TypeReference ParseReturnTypeRule(ref SyntaxParser parser) => parser.ParseReturnType();
-
-    public static BlockStatement ParseBlockRule(ref SyntaxParser parser) => parser.ParseBlock();
-
-    public static List<AttributeSection> ParseAttributesRule(ref SyntaxParser parser) => parser.ParseAttributeSections();
-
-    public static List<AttributeNode> ParseAttributeListRule(ref SyntaxParser parser) => parser.ParseAttributeList();
-
-    public static List<Parameter> ParseParametersRule(ref SyntaxParser parser) => parser.ParseParameters(")");
-
-    public static List<TypeParameter> ParseTypeParameterListRule(ref SyntaxParser parser) => parser.ParseTypeParameterList();
-
-    public static List<TypeParameterConstraint> ParseConstraintClausesRule(ref SyntaxParser parser) => parser.ParseConstraintClauses();
-
-    public static List<VariableDeclarator> ParseVariableDeclaratorsRule(ref SyntaxParser parser) => parser.ParseVariableDeclarators();
+    public static Expression ParseExpressionRule(ref SyntaxParser parser) => parser.ParseExpression();
 }
 
 /// <summary>
-/// Token and lookahead caches shared by all <see cref="SyntaxParser"/> runs over the same input.
+/// Token and lookahead caches shared by all <see cref="SyntaxParser"/> runs over the same input,
+/// and the preprocessor that scans the trivia between tokens.
 /// </summary>
-internal sealed class SyntaxCache
+internal sealed class SyntaxCache(HashSet<string> preprocessorSymbols)
 {
     public Dictionary<int, SyntaxToken> Tokens { get; } = [];
 
     public Dictionary<int, int> BalancedEnds { get; } = [];
 
+    public Preprocessor Preprocessor { get; } = new(preprocessorSymbols);
+
     public static SyntaxCache For(ParseContext context)
     {
         // A CSharpParseContext is created for one input; any other context may be reused
         // for different inputs, so its runs do not share caches.
-        return context is CSharpParseContext csharp ? csharp.SyntaxCache : new SyntaxCache();
+        return context is CSharpParseContext csharp ? csharp.SyntaxCache : new SyntaxCache(new HashSet<string>(StringComparer.Ordinal));
     }
 }
 

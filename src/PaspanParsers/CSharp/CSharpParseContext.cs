@@ -10,12 +10,15 @@ public sealed class CSharpParseContext(CSharpParseOptions options) : ParseContex
     public CSharpParseOptions Options { get; } = options ?? CSharpParseOptions.Default;
 
     /// <summary>
-    /// Preprocessor symbols currently defined; <c>#define</c>/<c>#undef</c> update this set.
+    /// Preprocessor symbols currently defined: the symbols of the options, updated by the
+    /// <c>#define</c>/<c>#undef</c> directives at the start of the input once it is scanned.
     /// </summary>
     public HashSet<string> DefinedSymbols { get; } = new(options?.PreprocessorSymbols ?? [], StringComparer.Ordinal);
 
     /// <summary>
     /// Tokens and lookahead results of the input being parsed, by position.
     /// </summary>
-    internal SyntaxCache SyntaxCache { get; } = new();
+    internal SyntaxCache SyntaxCache => _syntaxCache ??= new SyntaxCache(DefinedSymbols);
+
+    private SyntaxCache _syntaxCache;
 }

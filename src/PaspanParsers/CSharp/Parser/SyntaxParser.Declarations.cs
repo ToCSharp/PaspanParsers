@@ -238,8 +238,21 @@ internal ref partial struct SyntaxParser
 
     /// <summary>
     /// [attributes] modifier* Type identifier ['=' default], or modifier* identifier for implicitly typed lambda parameters.
+    /// With <paramref name="allowMissingName"/> the identifier may be missing before ')'.
     /// </summary>
-    private Parameter ParseParameter(bool allowImplicitTypes)
+    private Parameter ParseParameter(bool allowImplicitTypes, bool allowMissingName = false)
+    {
+        var nullableDirectives = Current.NullableDirectives;
+        var parameter = ParseParameterCore(allowImplicitTypes, allowMissingName);
+        if (parameter != null)
+        {
+            parameter.NullableDirectives = nullableDirectives;
+        }
+
+        return parameter;
+    }
+
+    private Parameter ParseParameterCore(bool allowImplicitTypes, bool allowMissingName)
     {
         var attributes = ParseAttributeSections();
 
@@ -295,7 +308,8 @@ internal ref partial struct SyntaxParser
         var name = TryEatIdentifier();
         if (name == null)
         {
-            return null;
+            // The receiver of an extension block may have no name: extension(string) { }
+            return allowMissingName && IsPunctuator(")") ? new Parameter(type, null, primary, null, attributeList, modifiers) : null;
         }
 
         Expression defaultValue = null;
@@ -384,7 +398,7 @@ internal ref partial struct SyntaxParser
         var clauses = new List<TypeParameterConstraint>();
         while (IsContextual("where") && Peek(1).IsIdentifier && Peek(2).IsPunctuator(":"))
         {
-            EatToken();
+            var nullableDirectives = EatToken().NullableDirectives;
             var name = EatToken().Text;
             EatToken();
 
@@ -405,7 +419,7 @@ internal ref partial struct SyntaxParser
                 }
             }
 
-            clauses.Add(new TypeParameterConstraint(name, constraints));
+            clauses.Add(new TypeParameterConstraint(name, constraints) { NullableDirectives = nullableDirectives });
         }
 
         return clauses;

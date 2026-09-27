@@ -25,6 +25,41 @@ public sealed class CompilationUnit(
     public IReadOnlyList<UsingDirective> Usings { get; } = usings;
     public IReadOnlyList<AttributeSection> GlobalAttributes { get; } = globalAttributes;
     public IReadOnlyList<MemberDeclaration> Members { get; } = members;
+
+    /// <summary><c>#nullable</c> directives after the last member.</summary>
+    public IReadOnlyList<NullableDirective> EndNullableDirectives { get; init; }
+}
+
+// ========================================
+// Preprocessor directives
+// ========================================
+
+/// <summary>
+/// <c>#nullable enable|disable|restore [warnings|annotations]</c>.
+/// </summary>
+/// <remarks>
+/// Directives are trivia: the parser evaluates <c>#if</c> and skips the others. <c>#nullable</c> is kept
+/// because it changes the meaning of the code. Nodes that can start a line hold the directives in the
+/// trivia before their first token (<c>NullableDirectives</c>, set by the parser after the node is built);
+/// nodes with braces also hold the directives before the closing brace (<c>CloseBraceNullableDirectives</c>).
+/// </remarks>
+public sealed class NullableDirective(NullableSetting setting, NullableTarget? target = null) : ICSharpNode
+{
+    public NullableSetting Setting { get; } = setting;
+    public NullableTarget? Target { get; } = target;
+}
+
+public enum NullableSetting
+{
+    Enable,
+    Disable,
+    Restore
+}
+
+public enum NullableTarget
+{
+    Warnings,
+    Annotations
 }
 
 // ========================================
@@ -33,6 +68,14 @@ public sealed class CompilationUnit(
 
 public abstract class UsingDirective : ICSharpNode
 {
+    /// <summary><c>global using</c> (C# 10).</summary>
+    public bool IsGlobal { get; init; }
+
+    /// <summary><c>using unsafe X = int*;</c> (C# 12).</summary>
+    public bool IsUnsafe { get; init; }
+
+    /// <summary><c>#nullable</c> directives before the directive.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 public sealed class UsingNamespaceDirective(NameExpression namespaceName) : UsingDirective
@@ -40,20 +83,33 @@ public sealed class UsingNamespaceDirective(NameExpression namespaceName) : Usin
     public NameExpression Namespace { get; } = namespaceName;
 }
 
-public sealed class UsingAliasDirective(string alias, NameExpression target) : UsingDirective
+/// <summary>
+/// <c>using Alias = Target;</c>. Since C# 12 the target may be any type; <see cref="Target"/> is set when
+/// the type is a name, otherwise it is null and <see cref="TargetType"/> holds the type.
+/// </summary>
+public sealed class UsingAliasDirective(string alias, NameExpression target, TypeReference targetType = null) : UsingDirective
 {
     public string Alias { get; } = alias;
     public NameExpression Target { get; } = target;
+    public TypeReference TargetType { get; } = targetType;
 }
 
-public sealed class UsingStaticDirective(NameExpression type) : UsingDirective
+/// <summary>
+/// <c>using static Type;</c>. <see cref="Type"/> is set when the type is a name with type arguments only on
+/// its last part, otherwise it is null and <see cref="TargetType"/> holds the type.
+/// </summary>
+public sealed class UsingStaticDirective(NameExpression type, TypeReference targetType = null) : UsingDirective
 {
     public NameExpression Type { get; } = type;
+    public TypeReference TargetType { get; } = targetType;
 }
 
 public sealed class ExternAliasDirective(string identifier) : ICSharpNode
 {
     public string Identifier { get; } = identifier;
+
+    /// <summary><c>#nullable</c> directives before the directive.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 // ========================================
@@ -64,6 +120,15 @@ public abstract class MemberDeclaration(IReadOnlyList<AttributeSection> attribut
 {
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public Modifiers Modifiers { get; } = modifiers;
+
+    /// <summary>
+    /// The modifiers in source order. The parser sets it; when it is null, <see cref="CSharpWriter"/>
+    /// writes <see cref="Modifiers"/> in a canonical order.
+    /// </summary>
+    public IReadOnlyList<Modifiers> ModifierList { get; init; }
+
+    /// <summary><c>#nullable</c> directives before the declaration.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 [Flags]
@@ -90,6 +155,10 @@ public enum Modifiers
     Required = 1 << 17,
     File = 1 << 18,
     Ref = 1 << 19,
+    /// <summary>A fixed-size buffer: <c>fixed int buffer[16];</c></summary>
+    Fixed = 1 << 20,
+    /// <summary>The <c>safe</c> modifier of the unsafe code evolution (C# 15 preview).</summary>
+    Safe = 1 << 21,
 }
 
 // ========================================
@@ -108,11 +177,52 @@ public sealed class NamespaceDeclaration(
     public IReadOnlyList<UsingDirective> Usings { get; } = usings;
     public IReadOnlyList<MemberDeclaration> Members { get; } = members;
     public bool IsFileScopedNamespace { get; } = isFileScopedNamespace;
+
+    /// <summary>A ';' follows the closing brace: <c>namespace N { };</c></summary>
+    public bool HasTrailingSemicolon { get; init; }
+
+    /// <summary><c>#nullable</c> directives before the closing brace.</summary>
+    public IReadOnlyList<NullableDirective> CloseBraceNullableDirectives { get; init; }
 }
 
 // ========================================
 // Type Declarations
 // ========================================
+
+/// <summary>
+/// A class, struct, interface, enum or record declaration.
+/// </summary>
+public abstract class TypeDeclaration(
+    IReadOnlyList<AttributeSection> attributes,
+    Modifiers modifiers,
+    IReadOnlyList<Parameter> primaryConstructorParameters = null) : MemberDeclaration(attributes, modifiers)
+{
+    /// <summary>
+    /// The parameters of a primary constructor (<c>class C(int x)</c>, C# 12 for classes and structs);
+    /// null without a parameter list, empty for <c>()</c>.
+    /// </summary>
+    public IReadOnlyList<Parameter> PrimaryConstructorParameters { get; } = primaryConstructorParameters;
+
+    /// <summary>
+    /// The arguments passed to the base class of a primary constructor: <c>record B(int X) : A(X);</c>
+    /// </summary>
+    public IReadOnlyList<Argument> BaseArguments { get; init; }
+
+    /// <summary>
+    /// True for a body in braces, false for a ';' instead of the body (<c>class C;</c>, <c>record R(int X);</c>).
+    /// Null lets <see cref="CSharpWriter"/> choose: braces, or ';' for a record without members.
+    /// </summary>
+    public bool? HasBody { get; init; }
+
+    /// <summary>A ';' follows the closing brace: <c>class C { };</c></summary>
+    public bool HasTrailingSemicolon { get; init; }
+
+    /// <summary><c>#nullable</c> directives before the opening brace.</summary>
+    public IReadOnlyList<NullableDirective> OpenBraceNullableDirectives { get; init; }
+
+    /// <summary><c>#nullable</c> directives before the closing brace.</summary>
+    public IReadOnlyList<NullableDirective> CloseBraceNullableDirectives { get; init; }
+}
 
 public sealed class ClassDeclaration(
     string name,
@@ -121,7 +231,8 @@ public sealed class ClassDeclaration(
     IReadOnlyList<TypeParameter> typeParameters = null,
     IReadOnlyList<TypeReference> baseTypes = null,
     IReadOnlyList<TypeParameterConstraint> constraints = null,
-    IReadOnlyList<MemberDeclaration> members = null) : MemberDeclaration(attributes, modifiers)
+    IReadOnlyList<MemberDeclaration> members = null,
+    IReadOnlyList<Parameter> primaryConstructorParameters = null) : TypeDeclaration(attributes, modifiers, primaryConstructorParameters)
 {
     public string Name { get; } = name;
     public IReadOnlyList<TypeParameter> TypeParameters { get; } = typeParameters;
@@ -137,7 +248,8 @@ public sealed class StructDeclaration(
     IReadOnlyList<TypeParameter> typeParameters = null,
     IReadOnlyList<TypeReference> interfaces = null,
     IReadOnlyList<TypeParameterConstraint> constraints = null,
-    IReadOnlyList<MemberDeclaration> members = null) : MemberDeclaration(attributes, modifiers)
+    IReadOnlyList<MemberDeclaration> members = null,
+    IReadOnlyList<Parameter> primaryConstructorParameters = null) : TypeDeclaration(attributes, modifiers, primaryConstructorParameters)
 {
     public string Name { get; } = name;
     public IReadOnlyList<TypeParameter> TypeParameters { get; } = typeParameters;
@@ -153,7 +265,7 @@ public sealed class InterfaceDeclaration(
     IReadOnlyList<TypeParameter> typeParameters = null,
     IReadOnlyList<TypeReference> baseInterfaces = null,
     IReadOnlyList<TypeParameterConstraint> constraints = null,
-    IReadOnlyList<MemberDeclaration> members = null) : MemberDeclaration(attributes, modifiers)
+    IReadOnlyList<MemberDeclaration> members = null) : TypeDeclaration(attributes, modifiers)
 {
     public string Name { get; } = name;
     public IReadOnlyList<TypeParameter> TypeParameters { get; } = typeParameters;
@@ -167,11 +279,14 @@ public sealed class EnumDeclaration(
     IReadOnlyList<AttributeSection> attributes = null,
     Modifiers modifiers = Modifiers.None,
     TypeReference baseType = null,
-    IReadOnlyList<EnumMember> members = null) : MemberDeclaration(attributes, modifiers)
+    IReadOnlyList<EnumMember> members = null) : TypeDeclaration(attributes, modifiers)
 {
     public string Name { get; } = name;
     public TypeReference BaseType { get; } = baseType;
     public IReadOnlyList<EnumMember> Members { get; } = members;
+
+    /// <summary>A ',' follows the last member.</summary>
+    public bool HasTrailingComma { get; init; }
 }
 
 public sealed class EnumMember(string name, Expression value = null, IReadOnlyList<AttributeSection> attributes = null) : ICSharpNode
@@ -206,12 +321,15 @@ public sealed class RecordDeclaration(
     IReadOnlyList<Parameter> primaryConstructorParameters = null,
     IReadOnlyList<TypeReference> baseTypes = null,
     IReadOnlyList<TypeParameterConstraint> constraints = null,
-    IReadOnlyList<MemberDeclaration> members = null) : MemberDeclaration(attributes, modifiers)
+    IReadOnlyList<MemberDeclaration> members = null) : TypeDeclaration(attributes, modifiers, primaryConstructorParameters)
 {
     public string Name { get; } = name;
     public bool IsRecordStruct { get; } = isRecordStruct;
+
+    /// <summary>Written as <c>record class</c>.</summary>
+    public bool HasClassKeyword { get; init; }
+
     public IReadOnlyList<TypeParameter> TypeParameters { get; } = typeParameters;
-    public IReadOnlyList<Parameter> PrimaryConstructorParameters { get; } = primaryConstructorParameters;
     public IReadOnlyList<TypeReference> BaseTypes { get; } = baseTypes;
     public IReadOnlyList<TypeParameterConstraint> Constraints { get; } = constraints;
     public IReadOnlyList<MemberDeclaration> Members { get; } = members;
@@ -238,6 +356,9 @@ public sealed class TypeParameterConstraint(string typeParameterName, IReadOnlyL
 {
     public string TypeParameterName { get; } = typeParameterName;
     public IReadOnlyList<TypeConstraint> Constraints { get; } = constraints;
+
+    /// <summary><c>#nullable</c> directives before the clause.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 public abstract class TypeConstraint : ICSharpNode
@@ -302,6 +423,9 @@ public sealed class VariableDeclarator(string name, Expression initializer = nul
 {
     public string Name { get; } = name;
     public Expression Initializer { get; } = initializer;
+
+    /// <summary>The size of a fixed-size buffer: <c>buffer[16]</c>; null otherwise.</summary>
+    public IReadOnlyList<Argument> BracketedArguments { get; init; }
 }
 
 // ========================================
@@ -324,6 +448,9 @@ public sealed class MethodDeclaration(
     public IReadOnlyList<Parameter> Parameters { get; } = parameters;
     public IReadOnlyList<TypeParameterConstraint> Constraints { get; } = constraints;
     public MethodBody Body { get; } = body;
+
+    /// <summary>The interface of an explicit implementation: <c>IEquatable&lt;T&gt;</c> in <c>bool IEquatable&lt;T&gt;.Equals(T other)</c>.</summary>
+    public TypeReference ExplicitInterface { get; init; }
 }
 
 public abstract class MethodBody : ICSharpNode
@@ -359,6 +486,9 @@ public sealed class Parameter(
     public TypeReference Type { get; } = type;
     public string Name { get; } = name;
     public Expression DefaultValue { get; } = defaultValue;
+
+    /// <summary><c>#nullable</c> directives before the parameter.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 public enum ParameterModifier
@@ -391,6 +521,12 @@ public sealed class PropertyDeclaration(
     public IReadOnlyList<Accessor> Accessors { get; } = accessors;
     public Expression ExpressionBody { get; } = expressionBody;
     public Expression Initializer { get; } = initializer;
+
+    /// <summary>The interface of an explicit implementation.</summary>
+    public TypeReference ExplicitInterface { get; init; }
+
+    /// <summary><c>#nullable</c> directives before the brace of the accessor list.</summary>
+    public IReadOnlyList<NullableDirective> OpenBraceNullableDirectives { get; init; }
 }
 
 public sealed class Accessor(
@@ -402,7 +538,15 @@ public sealed class Accessor(
     public AccessorKind Kind { get; } = kind;
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public Modifiers Modifiers { get; } = modifiers;
+
+    /// <summary>The modifiers in source order; see <see cref="MemberDeclaration.ModifierList"/>.</summary>
+    public IReadOnlyList<Modifiers> ModifierList { get; init; }
+
+    /// <summary>The body, or null for <c>get;</c>.</summary>
     public MethodBody Body { get; } = body;
+
+    /// <summary><c>#nullable</c> directives before the accessor.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 public enum AccessorKind
@@ -425,7 +569,18 @@ public sealed class IndexerDeclaration(
 {
     public TypeReference Type { get; } = type;
     public IReadOnlyList<Parameter> Parameters { get; } = parameters;
+
+    /// <summary>The accessors, or null for an expression-bodied indexer.</summary>
     public IReadOnlyList<Accessor> Accessors { get; } = accessors;
+
+    /// <summary>The body of <c>this[int i] =&gt; expression;</c></summary>
+    public Expression ExpressionBody { get; init; }
+
+    /// <summary>The interface of an explicit implementation.</summary>
+    public TypeReference ExplicitInterface { get; init; }
+
+    /// <summary><c>#nullable</c> directives before the brace of the accessor list.</summary>
+    public IReadOnlyList<NullableDirective> OpenBraceNullableDirectives { get; init; }
 }
 
 // ========================================
@@ -440,15 +595,24 @@ public sealed class EventDeclaration(
     IReadOnlyList<EventAccessor> accessors = null) : MemberDeclaration(attributes, modifiers)
 {
     public TypeReference Type { get; } = type;
+
+    /// <summary>The events of a field-like declaration, or the single event with <see cref="Accessors"/>.</summary>
     public IReadOnlyList<VariableDeclarator> Variables { get; } = variables;
     public IReadOnlyList<EventAccessor> Accessors { get; } = accessors;
+
+    /// <summary>The interface of an explicit implementation.</summary>
+    public TypeReference ExplicitInterface { get; init; }
 }
 
+/// <summary>
+/// An <c>add</c> or <c>remove</c> accessor with a <see cref="Block"/> or an <see cref="ExpressionBody"/>.
+/// </summary>
 public sealed class EventAccessor(EventAccessorKind kind, BlockStatement block, IReadOnlyList<AttributeSection> attributes = null) : ICSharpNode
 {
     public EventAccessorKind Kind { get; } = kind;
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public BlockStatement Block { get; } = block;
+    public Expression ExpressionBody { get; init; }
 }
 
 public enum EventAccessorKind
@@ -479,6 +643,101 @@ public sealed class ConstructorInitializer(bool isBase, IReadOnlyList<Argument> 
 {
     public bool IsBase { get; } = isBase;
     public IReadOnlyList<Argument> Arguments { get; } = arguments;
+}
+
+// ========================================
+// Destructor, operators, extension blocks, global statements
+// ========================================
+
+/// <summary>
+/// <c>~Name() { }</c>
+/// </summary>
+public sealed class DestructorDeclaration(
+    string name,
+    IReadOnlyList<AttributeSection> attributes = null,
+    Modifiers modifiers = Modifiers.None,
+    MethodBody body = null) : MemberDeclaration(attributes, modifiers)
+{
+    public string Name { get; } = name;
+
+    /// <summary>The body, or null for <c>extern ~C();</c>.</summary>
+    public MethodBody Body { get; } = body;
+}
+
+/// <summary>
+/// A user-defined operator: <c>public static C operator +(C a, C b)</c>, <c>operator checked -(C c)</c>,
+/// <c>void operator +=(C other)</c> (C# 14). <see cref="Operator"/> is the operator token text
+/// (<c>+</c>, <c>&gt;&gt;&gt;</c>, <c>true</c>).
+/// </summary>
+public sealed class OperatorDeclaration(
+    TypeReference returnType,
+    string op,
+    IReadOnlyList<Parameter> parameters,
+    MethodBody body = null,
+    IReadOnlyList<AttributeSection> attributes = null,
+    Modifiers modifiers = Modifiers.None,
+    bool isChecked = false) : MemberDeclaration(attributes, modifiers)
+{
+    public TypeReference ReturnType { get; } = returnType;
+    public string Operator { get; } = op;
+    public bool IsChecked { get; } = isChecked;
+    public IReadOnlyList<Parameter> Parameters { get; } = parameters;
+    public MethodBody Body { get; } = body;
+
+    /// <summary>The interface of an explicit implementation.</summary>
+    public TypeReference ExplicitInterface { get; init; }
+}
+
+/// <summary>
+/// A conversion operator: <c>public static implicit operator int(C c)</c>, <c>explicit operator checked int(C c)</c>.
+/// </summary>
+public sealed class ConversionOperatorDeclaration(
+    bool isImplicit,
+    TypeReference type,
+    IReadOnlyList<Parameter> parameters,
+    MethodBody body = null,
+    IReadOnlyList<AttributeSection> attributes = null,
+    Modifiers modifiers = Modifiers.None,
+    bool isChecked = false) : MemberDeclaration(attributes, modifiers)
+{
+    public bool IsImplicit { get; } = isImplicit;
+    public bool IsChecked { get; } = isChecked;
+    public TypeReference Type { get; } = type;
+    public IReadOnlyList<Parameter> Parameters { get; } = parameters;
+    public MethodBody Body { get; } = body;
+
+    /// <summary>The interface of an explicit implementation.</summary>
+    public TypeReference ExplicitInterface { get; init; }
+}
+
+/// <summary>
+/// A C# 14 extension block: <c>extension&lt;T&gt;(List&lt;T&gt; list) where T : class { members }</c>.
+/// The receiver parameter may have no name (<see cref="Parameter.Name"/> is null).
+/// </summary>
+public sealed class ExtensionBlockDeclaration(
+    Parameter receiver,
+    IReadOnlyList<MemberDeclaration> members = null,
+    IReadOnlyList<TypeParameter> typeParameters = null,
+    IReadOnlyList<TypeParameterConstraint> constraints = null,
+    IReadOnlyList<AttributeSection> attributes = null,
+    Modifiers modifiers = Modifiers.None) : MemberDeclaration(attributes, modifiers)
+{
+    public IReadOnlyList<TypeParameter> TypeParameters { get; } = typeParameters;
+    public Parameter Receiver { get; } = receiver;
+    public IReadOnlyList<TypeParameterConstraint> Constraints { get; } = constraints;
+    public IReadOnlyList<MemberDeclaration> Members { get; } = members;
+
+    /// <summary><c>#nullable</c> directives before the closing brace.</summary>
+    public IReadOnlyList<NullableDirective> CloseBraceNullableDirectives { get; init; }
+}
+
+/// <summary>
+/// A top-level statement (C# 9) among the members of the compilation unit. Methods and variables at
+/// the top level are local functions and local declarations, like in Roslyn.
+/// </summary>
+public sealed class GlobalStatement(Statement statement) : MemberDeclaration(null, Modifiers.None)
+{
+    public Statement Statement { get; } = statement;
 }
 
 // ========================================
@@ -622,11 +881,16 @@ public sealed class TupleElement(TypeReference type, string name = null) : ICSha
 
 public abstract class Statement : ICSharpNode
 {
+    /// <summary><c>#nullable</c> directives before the statement.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 public sealed class BlockStatement(IReadOnlyList<Statement> statements = null) : Statement
 {
     public IReadOnlyList<Statement> Statements { get; } = statements;
+
+    /// <summary><c>#nullable</c> directives before the closing brace.</summary>
+    public IReadOnlyList<NullableDirective> CloseBraceNullableDirectives { get; init; }
 }
 
 public sealed class ExpressionStatement(Expression expression) : Statement
@@ -666,6 +930,12 @@ public sealed class IfStatement(Expression condition, Statement thenStatement, S
 
 public sealed class SwitchStatement(Expression expression, IReadOnlyList<SwitchSection> sections = null) : Statement
 {
+    /// <summary>
+    /// The expression is in the statement's own parentheses. False for a tuple written as <c>switch (a, b)</c>,
+    /// true for <c>switch ((a, b))</c>; null lets <see cref="CSharpWriter"/> choose (no parentheses around a tuple).
+    /// </summary>
+    public bool? HasParentheses { get; init; }
+
     public Expression Expression { get; } = expression;
     public IReadOnlyList<SwitchSection> Sections { get; } = sections;
 }
@@ -678,6 +948,8 @@ public sealed class SwitchSection(IReadOnlyList<SwitchLabel> labels, IReadOnlyLi
 
 public abstract class SwitchLabel : ICSharpNode
 {
+    /// <summary><c>#nullable</c> directives before the label.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 public sealed class CaseSwitchLabel(Pattern pattern, Expression guard = null) : SwitchLabel
@@ -1644,6 +1916,12 @@ public sealed class AttributeSection(IReadOnlyList<AttributeNode> attributes, At
 {
     public AttributeTarget? Target { get; } = target;
     public IReadOnlyList<AttributeNode> Attributes { get; } = attributes;
+
+    /// <summary>
+    /// <c>#nullable</c> directives before a global attribute section. Directives before the attributes of
+    /// a declaration belong to the declaration.
+    /// </summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 public enum AttributeTarget

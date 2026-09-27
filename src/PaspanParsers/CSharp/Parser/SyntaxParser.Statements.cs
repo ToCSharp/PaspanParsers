@@ -5,6 +5,7 @@ internal ref partial struct SyntaxParser
 {
     public BlockStatement ParseBlock()
     {
+        var nullableDirectives = Current.NullableDirectives;
         if (!TryEatPunctuator("{"))
         {
             return null;
@@ -28,8 +29,12 @@ internal ref partial struct SyntaxParser
                 statements.Add(statement);
             }
 
-            EatToken();
-            return new BlockStatement(statements.Count != 0 ? statements : null);
+            var closeBraceDirectives = EatToken().NullableDirectives;
+            return new BlockStatement(statements.Count != 0 ? statements : null)
+            {
+                NullableDirectives = nullableDirectives,
+                CloseBraceNullableDirectives = closeBraceDirectives,
+            };
         }
         finally
         {
@@ -39,6 +44,19 @@ internal ref partial struct SyntaxParser
     }
 
     public Statement ParseStatement()
+    {
+        // A block keeps the directives before its brace itself, also as the body of a member
+        var nullableDirectives = Current.NullableDirectives;
+        var statement = ParseStatementCore();
+        if (statement != null && nullableDirectives != null)
+        {
+            statement.NullableDirectives ??= nullableDirectives;
+        }
+
+        return statement;
+    }
+
+    private Statement ParseStatementCore()
     {
         if (!HasSufficientStack())
         {
@@ -718,6 +736,7 @@ internal ref partial struct SyntaxParser
 
         var start = _position;
         Expression governing = null;
+        var hasParentheses = true;
         if (TryEatPunctuator("("))
         {
             governing = ParseExpressionInNestedContext();
@@ -730,6 +749,7 @@ internal ref partial struct SyntaxParser
         if (governing == null)
         {
             // A tuple without extra parentheses: switch (a, b)
+            hasParentheses = false;
             _position = start;
             governing = ParseExpressionInNestedContext();
             if (governing is not TupleExpression)
@@ -749,6 +769,7 @@ internal ref partial struct SyntaxParser
             var labels = new List<SwitchLabel>();
             while (true)
             {
+                var nullableDirectives = Current.NullableDirectives;
                 if (TryEatKeyword("case"))
                 {
                     var pattern = ParsePattern();
@@ -772,13 +793,13 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    labels.Add(new CaseSwitchLabel(pattern, guard));
+                    labels.Add(new CaseSwitchLabel(pattern, guard) { NullableDirectives = nullableDirectives });
                 }
                 else if (IsKeyword("default") && Peek(1).IsPunctuator(":"))
                 {
                     EatToken();
                     EatToken();
-                    labels.Add(new DefaultSwitchLabel());
+                    labels.Add(new DefaultSwitchLabel { NullableDirectives = nullableDirectives });
                 }
                 else
                 {
@@ -807,7 +828,7 @@ internal ref partial struct SyntaxParser
         }
 
         EatToken();
-        return new SwitchStatement(governing, sections.Count != 0 ? sections : null);
+        return new SwitchStatement(governing, sections.Count != 0 ? sections : null) { HasParentheses = hasParentheses };
     }
 
     // ========================================

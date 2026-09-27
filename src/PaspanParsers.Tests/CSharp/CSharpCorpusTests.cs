@@ -13,7 +13,8 @@ namespace PaspanParsers.Tests.CSharp;
 /// thematic files in <c>CSharp/Corpus</c>. Files known to pass are listed in
 /// <c>CSharp/Corpus/oracle-baseline.txt</c>; a listed file that stops passing fails the run.
 /// Set <c>UPDATE_ORACLE_BASELINE=1</c> to rewrite the baseline from the current results.
-/// Set <c>CSHARP_CORPUS_DIR</c> to additionally measure an external corpus.
+/// Set <c>CSHARP_CORPUS_DIR</c> to additionally measure an external corpus, and
+/// <c>CSHARP_CORPUS_SYMBOLS</c> (for example <c>NET;DEBUG</c>) to parse it with preprocessor symbols.
 /// </remarks>
 [TestClass]
 public class CSharpCorpusTests
@@ -72,8 +73,7 @@ public class CSharpCorpusTests
     /// <summary>
     /// Every statement of every method and accessor body in the built-in corpus, on its own in a
     /// method, must pass the oracle. This measures types, expressions, patterns and statements
-    /// independently of the declarations around them. Statements with preprocessor directives are
-    /// skipped until directives are supported.
+    /// independently of the declarations around them.
     /// </summary>
     [TestMethod]
     public void Oracle_BuiltInCorpus_Statements()
@@ -90,11 +90,6 @@ public class CSharpCorpusTests
 
             foreach (var statement in bodies.SelectMany(body => body.Statements))
             {
-                if (statement.ContainsDirectives || statement.GetLeadingTrivia().Any(trivia => trivia.IsDirective))
-                {
-                    continue;
-                }
-
                 var result = RoslynOracle.Check(SyntaxTestHelper.InMethod(statement.ToString()));
                 if (result.Status == OracleStatus.Invalid)
                 {
@@ -127,14 +122,18 @@ public class CSharpCorpusTests
         var files = Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories)
             .Select(path => (Path.GetRelativePath(directory, path).Replace('\\', '/'), path));
 
-        var report = Report($"External corpus {directory}", Run(files));
+        var symbols = (Environment.GetEnvironmentVariable("CSHARP_CORPUS_SYMBOLS") ?? "")
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var title = symbols.Length == 0 ? $"External corpus {directory}" : $"External corpus {directory} with {string.Join(";", symbols)}";
+
+        var report = Report(title, Run(files, symbols));
         TestContext.WriteLine(report);
         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "oracle-external-report.txt"), report);
     }
 
     private sealed record FileResult(string Name, OracleResult Result);
 
-    private static List<FileResult> Run(IEnumerable<(string Name, string Path)> files)
+    private static List<FileResult> Run(IEnumerable<(string Name, string Path)> files, string[] preprocessorSymbols = null)
     {
         var results = new List<FileResult>();
 
@@ -143,7 +142,7 @@ public class CSharpCorpusTests
             var source = File.ReadAllText(path);
 
             // A pathological input must not hang the whole run
-            var check = Task.Run(() => RoslynOracle.Check(source));
+            var check = Task.Run(() => RoslynOracle.Check(source, preprocessorSymbols));
             var result = check.Wait(FileTimeout)
                 ? check.Result
                 : new OracleResult(OracleStatus.ParseFailed, $"timed out after {FileTimeout.TotalSeconds}s");

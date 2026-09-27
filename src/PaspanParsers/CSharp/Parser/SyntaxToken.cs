@@ -25,6 +25,12 @@ internal enum TokenKind : byte
 /// </remarks>
 internal readonly struct SyntaxToken(TokenKind kind, int start, int end, string text, Expression literal = null, bool isVerbatim = false)
 {
+    private SyntaxToken(SyntaxToken token, IReadOnlyList<NullableDirective> nullableDirectives)
+        : this(token.Kind, token.Start, token.End, token.Text, token.Literal, token.IsVerbatim)
+    {
+        NullableDirectives = nullableDirectives;
+    }
+
     public TokenKind Kind { get; } = kind;
     public int Start { get; } = start;
     public int End { get; } = end;
@@ -35,6 +41,13 @@ internal readonly struct SyntaxToken(TokenKind kind, int start, int end, string 
     /// The identifier was written with '@' or with a Unicode escape, so it is never a contextual keyword.
     /// </summary>
     public bool IsVerbatim { get; } = isVerbatim;
+
+    /// <summary>
+    /// The <c>#nullable</c> directives in the trivia before the token, or null.
+    /// </summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; }
+
+    public SyntaxToken WithNullableDirectives(IReadOnlyList<NullableDirective> nullableDirectives) => new(this, nullableDirectives);
 
     public bool IsIdentifier => Kind == TokenKind.Identifier;
 

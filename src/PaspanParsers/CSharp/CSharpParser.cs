@@ -1,37 +1,16 @@
 using Paspan;
 using Paspan.Fluent;
-using static Paspan.Fluent.Parsers;
 
 namespace PaspanParsers.CSharp;
 
 /// <summary>
-/// C# parser. Declarations and the compilation unit are built from Paspan combinators in the
-/// partial files under <c>CSharp/Parser/</c>; names, types, expressions, patterns and statements
-/// are parsed by the hand-written <see cref="SyntaxParser"/>, wired in here as combinator parsers.
+/// C# parser. The hand-written <see cref="SyntaxParser"/> (partial files under <c>CSharp/Parser/</c>) parses
+/// the compilation unit; it is wired in here as a combinator parser that also skips the trivia around it.
 /// </summary>
 public partial class CSharpParser
 {
-    public static readonly Parser<CompilationUnit> CompilationUnitParser;
-
-    // Grammar parts implemented by SyntaxParser
-    private static readonly Parser<Expression> expression = new SyntaxRuleParser<Expression>(SyntaxParser.ParseExpressionRule);
-    private static readonly Parser<BlockStatement> block = new SyntaxRuleParser<BlockStatement>(SyntaxParser.ParseBlockRule);
-    private static readonly Parser<TypeReference> typeReference = new SyntaxRuleParser<TypeReference>(SyntaxParser.ParseTypeRule);
-    private static readonly Parser<TypeReference> returnType = new SyntaxRuleParser<TypeReference>(SyntaxParser.ParseReturnTypeRule);
-
-    private static readonly Deferred<MemberDeclaration> memberDeclaration = Deferred<MemberDeclaration>();
-
-    static CSharpParser()
-    {
-        InitializeLexical();
-        InitializeNames();
-        InitializeTypes();
-        InitializeAttributesAndModifiers();
-        InitializeParameters();
-        InitializeDeclarations();
-
-        CompilationUnitParser = WithTrivia(InitializeCompilationUnit());
-    }
+    public static readonly Parser<CompilationUnit> CompilationUnitParser =
+        WithTrivia(new SyntaxRuleParser<CompilationUnit>(SyntaxParser.ParseCompilationUnitRule));
 
     public static CompilationUnit Parse(string input, CSharpParseOptions options = null)
     {

@@ -4,127 +4,27 @@ using Paspan.Fluent;
 
 namespace PaspanParsers.CSharp;
 
-// Token parsers of the combinator grammar. They read one C# token at the current position and
-// do not skip trivia themselves: CSharpParser wraps them with Parsers.SkipWhiteSpace.
-// SyntaxParser scans the tokens of types, expressions and statements itself.
+// Combinator parsers used around SyntaxParser, which scans the tokens themselves.
 
 /// <summary>
-/// White space, new lines and comments between tokens.
+/// Trivia between tokens: white space, new lines, comments and preprocessor directives
+/// with the disabled text they skip (see <see cref="Preprocessor"/>).
 /// </summary>
 internal sealed class TriviaParser : Parser<Region>
 {
     public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<Region> result)
     {
         var start = reader.GetCurrentPosition();
-        var length = Lexer.ScanTrivia(reader.GetRemaining());
+
+        reader.RollBackState(0);
+        var source = reader.GetRemaining();
+        reader.RollBackState(start);
+
+        var length = SyntaxCache.For(context).Preprocessor.ScanTrivia(source, start);
         reader.Read(length);
         result.Set(start, start + length, new Region(start, length));
         return true;
     }
-}
-
-/// <summary>
-/// An identifier: any identifier-or-keyword token except a reserved keyword without '@'.
-/// The value has the '@' removed and escapes decoded.
-/// </summary>
-internal sealed class IdentifierToken : Parser<string>
-{
-    public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<string> result)
-    {
-        var s = reader.GetRemaining();
-        var length = Lexer.ScanIdentifierOrKeyword(s, out var isVerbatim, out var hasEscape);
-        if (length == 0)
-        {
-            return false;
-        }
-
-        var value = Lexer.IdentifierValue(s[..length], isVerbatim, hasEscape);
-        if (!isVerbatim && !hasEscape && Lexer.ReservedKeywords.Contains(value))
-        {
-            return false;
-        }
-
-        var start = reader.GetCurrentPosition();
-        reader.Read(length);
-        result.Set(start, start + length, value);
-        return true;
-    }
-}
-
-/// <summary>
-/// A keyword, reserved or contextual: the exact word, not followed by an identifier character.
-/// </summary>
-internal sealed class KeywordToken(string keyword) : Parser<string>
-{
-    private readonly byte[] _bytes = Encoding.UTF8.GetBytes(keyword);
-
-    public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<string> result)
-    {
-        var s = reader.GetRemaining();
-        if (!s.StartsWith(_bytes) || Lexer.IsIdentifierPartAt(s, _bytes.Length))
-        {
-            return false;
-        }
-
-        var start = reader.GetCurrentPosition();
-        reader.Read(_bytes.Length);
-        result.Set(start, start + _bytes.Length, keyword);
-        return true;
-    }
-
-    public override string ToString() => $"Keyword '{keyword}'";
-}
-
-/// <summary>
-/// An operator or punctuator. With maximal munch the token must not be the prefix of a longer
-/// one at this position ('&lt;' does not match "&lt;="). Closing '&gt;' of type argument lists is
-/// matched without maximal munch, so "List&lt;List&lt;int&gt;&gt;" works like in Roslyn.
-/// </summary>
-internal sealed class PunctuatorToken : Parser<string>
-{
-    private static readonly string[] Punctuators =
-    [
-        "{", "}", "[", "]", "(", ")", ".", ",", ":", ";", "+", "-", "*", "/", "%", "&", "|", "^", "!", "~",
-        "=", "<", ">", "?", "??", "::", "++", "--", "&&", "||", "->", "==", "!=", "<=", ">=", "+=", "-=",
-        "*=", "/=", "%=", "&=", "|=", "^=", "<<", "<<=", ">>", ">>=", ">>>", ">>>=", "=>", "??=", "..",
-    ];
-
-    private readonly string _text;
-    private readonly byte[] _bytes;
-    private readonly byte[][] _longer;
-
-    public PunctuatorToken(string text, bool maximalMunch = true)
-    {
-        _text = text;
-        _bytes = Encoding.UTF8.GetBytes(text);
-        _longer = maximalMunch
-            ? Punctuators.Where(p => p.Length > text.Length && p.StartsWith(text, StringComparison.Ordinal)).Select(Encoding.UTF8.GetBytes).ToArray()
-            : [];
-    }
-
-    public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<string> result)
-    {
-        var s = reader.GetRemaining();
-        if (!s.StartsWith(_bytes))
-        {
-            return false;
-        }
-
-        foreach (var longer in _longer)
-        {
-            if (s.StartsWith(longer))
-            {
-                return false;
-            }
-        }
-
-        var start = reader.GetCurrentPosition();
-        reader.Read(_bytes.Length);
-        result.Set(start, start + _bytes.Length, _text);
-        return true;
-    }
-
-    public override string ToString() => $"'{_text}'";
 }
 
 /// <summary>
