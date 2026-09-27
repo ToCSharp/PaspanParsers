@@ -62,6 +62,13 @@
 ## Этапы
 
 ### Этап 0. Каркас и измерение базы
+
+> **Статус: выполнен.** Грамматика разбита на partial-файлы в `src/PaspanParsers/CSharp/Parser/`.
+> Добавлены `CSharpParseOptions` и `CSharpParseContext`, а также оракул Roslyn (`RoslynOracle.cs`, Roslyn 5.9.0 только в тестах).
+> Прогон корпуса с ratchet-базой: `CSharpCorpusTests.cs` и `Corpus/oracle-baseline.txt`.
+> Добавлены 17 тематических файлов корпуса `Corpus/00…16`. `input.Trim()` заменён на честный пропуск trivia в конце и BOM.
+> **База:** 1/160 валидных файлов проходит оракул (только `Corpus/00-Basics.cs`).
+> 8 тестов C#-парсера (6 LINQ, 2 lambda) падали и до этапа 0: поведение грамматики не менялось.
 - Разбить `CSharpParser.cs` на partial-файлы без изменения поведения; все 68 текущих тестов должны остаться зелёными.
 - Добавить `CSharpParseOptions`, `CSharpParseContext` и оракул; прогнать корпуса и зафиксировать базовый процент.
 - Убрать `input.Trim()` из `TryParse`, пропускать BOM.

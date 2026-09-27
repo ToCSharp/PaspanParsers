@@ -13,6 +13,9 @@
 	<ItemGroup>
 	  <Compile Include="CSharp\CSharpExamples.xcs" />
 	  <Compile Include="CSharp\CSharpExamples2.xcs" />
+	  <!-- Corpus files are test input for the Roslyn oracle, not part of the test assembly -->
+	  <Compile Remove="CSharp\Corpus\**" />
+	  <None Remove="CSharp\Corpus\**" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -22,6 +25,7 @@
 	<ItemGroup>
 		<PackageReference Update="Microsoft.NET.Test.Sdk" Version="18.0.1" />
 		<PackageReference Include="MSTest" Version="4.0.2" />
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
 	</ItemGroup>
 
 	<ItemGroup>
