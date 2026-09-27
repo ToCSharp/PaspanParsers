@@ -11,7 +11,7 @@ public class PreprocessorTests
 {
     private static CompilationUnit Unit(string code, params string[] symbols)
     {
-        var unit = CSharpParser.Parse(code, new CSharpParseOptions(preprocessorSymbols: symbols));
+        var unit = ParserVariants.Parse(code, new CSharpParseOptions(preprocessorSymbols: symbols));
         Assert.IsNotNull(unit, "failed to parse: " + code);
         return unit;
     }

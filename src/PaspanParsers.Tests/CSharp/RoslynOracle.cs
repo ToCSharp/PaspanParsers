@@ -23,14 +23,18 @@ public enum OracleStatus
 public sealed record OracleResult(OracleStatus Status, string Detail = null);
 
 /// <summary>
-/// Uses Roslyn as the reference parser: valid C# must parse with <see cref="CSharpParser"/>,
-/// the AST printed back by <see cref="CSharpWriter"/> must be equivalent to the original
-/// according to Roslyn (trivia is ignored), and the spans of the nodes must match Roslyn's
+/// Uses Roslyn as the reference parser: valid C# must parse with every variant of our parser
+/// (<see cref="ParserVariants"/>), the AST printed back by <see cref="CSharpWriter"/> must be equivalent
+/// to the original according to Roslyn (trivia is ignored), and the spans of the nodes must match Roslyn's
 /// (<see cref="SpanChecker"/>).
 /// </summary>
 public static class RoslynOracle
 {
-    public static OracleResult Check(string source, IEnumerable<string> preprocessorSymbols = null)
+    /// <summary>
+    /// Checks <paramref name="source"/> with <paramref name="variant"/>, or with every variant when it is null:
+    /// the result is then the first failure, its detail naming the variant.
+    /// </summary>
+    public static OracleResult Check(string source, IEnumerable<string> preprocessorSymbols = null, CSharpParserVariant? variant = null)
     {
         var symbols = preprocessorSymbols?.ToArray() ?? [];
         var roslynOptions = new RoslynParseOptions(LanguageVersion.CSharp14, preprocessorSymbols: symbols);
@@ -42,8 +46,24 @@ public static class RoslynOracle
             return new OracleResult(OracleStatus.Invalid, Describe(errors[0]));
         }
 
+        var passed = new OracleResult(OracleStatus.Passed);
+        var variants = variant is { } single ? new[] { single } : ParserVariants.All;
+        foreach (var checkedVariant in variants)
+        {
+            var result = Check(source, symbols, roslynOptions, original, checkedVariant);
+            if (result.Status != OracleStatus.Passed)
+            {
+                return variant == null ? result with { Detail = $"[{checkedVariant}] {result.Detail}" } : result;
+            }
+        }
+
+        return passed;
+    }
+
+    private static OracleResult Check(string source, string[] symbols, RoslynParseOptions roslynOptions, SyntaxTree original, CSharpParserVariant variant)
+    {
         var options = new PaspanParsers.CSharp.CSharpParseOptions(CSharpLanguageVersion.CSharp14, symbols);
-        if (!CSharpParser.TryParse(source, options, out var unit, out var error))
+        if (!ParserVariants.TryParse(variant, source, options, out var unit, out var error))
         {
             var detail = error != null ? $"({error.Line},{error.Column}): {error.Message}" : null;
             return new OracleResult(OracleStatus.ParseFailed, detail);

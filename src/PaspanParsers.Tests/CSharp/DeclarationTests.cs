@@ -11,7 +11,7 @@ public class DeclarationTests
 {
     private static CompilationUnit Unit(string code)
     {
-        var unit = CSharpParser.Parse(code);
+        var unit = ParserVariants.Parse(code);
         Assert.IsNotNull(unit, "failed to parse: " + code);
         return unit;
     }

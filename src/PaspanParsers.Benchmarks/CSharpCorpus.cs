@@ -83,6 +83,12 @@ internal sealed class CSharpCorpus
                 continue;
             }
 
+            if (CSharpHybridParser.Parse(source) == null)
+            {
+                skipped.Add(relative + ": " + nameof(CSharpHybridParser) + " fails");
+                continue;
+            }
+
             sources.Add(source);
         }
 

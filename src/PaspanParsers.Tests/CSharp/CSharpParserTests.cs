@@ -16,7 +16,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsNotNull(result.Members);
@@ -39,7 +39,7 @@ public class CSharpParserTests
             using static System.Math;
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsNotNull(result.Usings);
@@ -63,7 +63,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -89,7 +89,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -112,7 +112,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -145,7 +145,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -180,7 +180,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -218,7 +218,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -255,7 +255,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -288,7 +288,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<InterfaceDeclaration>(result.Members![0]);
@@ -312,7 +312,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<EnumDeclaration>(result.Members![0]);
@@ -338,7 +338,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<EnumDeclaration>(result.Members![0]);
@@ -366,7 +366,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<StructDeclaration>(result.Members![0]);
@@ -388,7 +388,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<NamespaceDeclaration>(result.Members![0]);
@@ -410,7 +410,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -438,7 +438,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -474,7 +474,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -508,7 +508,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -536,7 +536,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -567,7 +567,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -598,7 +598,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -632,7 +632,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -653,7 +653,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -689,7 +689,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -711,7 +711,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -735,7 +735,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -764,7 +764,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -789,7 +789,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -817,7 +817,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -850,7 +850,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<InterfaceDeclaration>(result.Members![0]);
@@ -875,7 +875,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<StructDeclaration>(result.Members![0]);
@@ -900,7 +900,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsInstanceOfType<ClassDeclaration>(result.Members![0]);
@@ -928,7 +928,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -953,7 +953,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -985,7 +985,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1008,7 +1008,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1033,7 +1033,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1054,7 +1054,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1080,7 +1080,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.IsNotNull(result.GlobalAttributes);
@@ -1108,7 +1108,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var enumDecl = (EnumDeclaration)result.Members![0];
@@ -1138,7 +1138,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1160,7 +1160,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1183,7 +1183,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1206,7 +1206,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1227,7 +1227,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1249,7 +1249,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1269,7 +1269,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1291,7 +1291,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1316,7 +1316,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1341,7 +1341,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1366,7 +1366,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1390,7 +1390,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1417,7 +1417,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1451,7 +1451,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1479,7 +1479,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1508,7 +1508,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1535,7 +1535,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1564,7 +1564,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1590,7 +1590,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1615,7 +1615,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];
@@ -1643,7 +1643,7 @@ public class CSharpParserTests
             }
         ";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         var classDecl = (ClassDeclaration)result.Members![0];

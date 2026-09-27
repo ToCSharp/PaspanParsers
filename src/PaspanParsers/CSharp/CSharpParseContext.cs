@@ -23,6 +23,17 @@ public sealed class CSharpParseContext(CSharpParseOptions options) : ParseContex
     private SyntaxCache _syntaxCache;
 
     /// <summary>
+    /// The combinator parser of the blocks of lambdas and anonymous methods, set by the hybrid parser
+    /// (<see cref="CSharpHybridParser"/>); null for the hand-written parser.
+    /// </summary>
+    internal Parser<BlockStatement> BlockParser { get; init; }
+
+    /// <summary>
+    /// The state of the innermost hand-written parser that called a combinator parser.
+    /// </summary>
+    internal SyntaxState SyntaxState { get; set; }
+
+    /// <summary>
     /// Lets the next parse reuse the caches; the context must not be used to parse again.
     /// </summary>
     internal void ReleaseCaches()

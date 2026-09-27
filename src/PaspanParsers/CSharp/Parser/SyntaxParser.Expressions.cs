@@ -1941,7 +1941,7 @@ internal ref partial struct SyntaxParser
         var start = NodeStart;
         if (IsPunctuator("{"))
         {
-            var block = ParseBlock();
+            var block = ParseEmbeddedBlock();
             return block == null ? null : Finish(new BlockLambdaBody(block), start);
         }
 
@@ -1972,7 +1972,7 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        var block = ParseBlock();
+        var block = ParseEmbeddedBlock();
         return block == null ? null : Finish(new AnonymousMethodExpression(block, parameters, modifiers), start);
     }
 

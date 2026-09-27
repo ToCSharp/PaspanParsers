@@ -175,7 +175,7 @@ public class CSharpCorpusTests
         return builder.ToString();
     }
 
-    private static IEnumerable<(string Name, string Path)> BuiltInCorpus()
+    internal static IEnumerable<(string Name, string Path)> BuiltInCorpus()
     {
         var sources = Path.Combine(RepositoryRoot, "src");
 

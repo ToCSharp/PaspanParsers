@@ -59,8 +59,9 @@ public class CSharpPerformanceTests
     }
 
     [TestMethod]
-    [DataRow(1000)]
-    public void NestedBlocksAndLambdas_Parse(int depth)
+    [DataRow(1000, CSharpParserVariant.RecursiveDescent)]
+    [DataRow(1000, CSharpParserVariant.Hybrid)]
+    public void NestedBlocksAndLambdas_Parse(int depth, CSharpParserVariant variant)
     {
         var blocks = new StringBuilder();
         for (var i = 0; i < depth; i++)
@@ -73,7 +74,7 @@ public class CSharpPerformanceTests
             blocks.Append(i % 2 == 0 ? "} " : "}); ");
         }
 
-        var unit = ParseDeep($"class C {{ void M() {blocks} }}");
+        var unit = ParseDeep($"class C {{ void M() {blocks} }}", variant);
         Assert.Contains("F(() =>", WriteDeep(unit));
     }
 
@@ -81,10 +82,10 @@ public class CSharpPerformanceTests
     /// Parses on a thread with a 1 MB stack, like thread pool threads, within a time limit. Input nested
     /// deeper than the stack allows is parsed again on a larger stack by <see cref="CSharpParser"/>.
     /// </summary>
-    private static CompilationUnit ParseDeep(string source)
+    private static CompilationUnit ParseDeep(string source, CSharpParserVariant variant = CSharpParserVariant.RecursiveDescent)
     {
         CompilationUnit unit = null;
-        var thread = new Thread(() => unit = CSharpParser.Parse(source), 1024 * 1024);
+        var thread = new Thread(() => ParserVariants.TryParse(variant, source, null, out unit, out _), 1024 * 1024);
         var stopwatch = Stopwatch.StartNew();
         thread.Start();
         Assert.IsTrue(thread.Join(DeepInputTimeout), $"did not finish in {DeepInputTimeout.TotalSeconds}s");

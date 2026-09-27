@@ -10,7 +10,7 @@ public class LexicalTests
 {
     private static ClassDeclaration ParseClass(string code)
     {
-        var unit = CSharpParser.Parse(code);
+        var unit = ParserVariants.Parse(code);
         Assert.IsNotNull(unit, "failed to parse: " + code);
         return (ClassDeclaration)unit.Members[0];
     }
@@ -58,7 +58,7 @@ public class LexicalTests
     [TestMethod]
     public void Trivia_UnterminatedCommentIsRejected()
     {
-        Assert.IsNull(CSharpParser.Parse("class C { } /* unterminated"));
+        Assert.IsNull(ParserVariants.Parse("class C { } /* unterminated"));
     }
 
     // ========================================
@@ -114,13 +114,13 @@ public class LexicalTests
     [DataRow("__arglist")]
     public void Identifier_ReservedKeywordIsNotIdentifier(string name)
     {
-        Assert.IsNull(CSharpParser.Parse($"class C {{ int {name}; }}"));
+        Assert.IsNull(ParserVariants.Parse($"class C {{ int {name}; }}"));
     }
 
     [TestMethod]
     public void Identifier_DollarIsNotAnIdentifierCharacter()
     {
-        Assert.IsNull(CSharpParser.Parse("class C { int $x; }"));
+        Assert.IsNull(ParserVariants.Parse("class C { int $x; }"));
     }
 
     [TestMethod]
@@ -163,7 +163,7 @@ public class LexicalTests
     public void Operator_ShiftIsNotSplitByTrivia()
     {
         // '> >' is two tokens, not a shift
-        Assert.IsNull(CSharpParser.Parse("class C { object x = a > > b; }"));
+        Assert.IsNull(ParserVariants.Parse("class C { object x = a > > b; }"));
     }
 
     [TestMethod]
@@ -236,7 +236,7 @@ public class LexicalTests
         Assert.AreEqual(1, ((LiteralExpression)negative.Operand).Value);
 
         // '1.' is not a real literal
-        Assert.IsNull(CSharpParser.Parse("class C { object x = 1.; }"));
+        Assert.IsNull(ParserVariants.Parse("class C { object x = 1.; }"));
     }
 
     [TestMethod]
@@ -285,7 +285,7 @@ public class LexicalTests
     [TestMethod]
     public void String_RegularCannotSpanLines()
     {
-        Assert.IsNull(CSharpParser.Parse("class C { object x = \"a\nb\"; }"));
+        Assert.IsNull(ParserVariants.Parse("class C { object x = \"a\nb\"; }"));
     }
 
     [TestMethod]
@@ -425,7 +425,7 @@ public class LexicalTests
         {
             var code = $"class C {{ object x = {text}; }}";
             var writer = new CSharpWriter();
-            writer.WriteCompilationUnit(CSharpParser.Parse(code));
+            writer.WriteCompilationUnit(ParserVariants.Parse(code));
 
             Assert.Contains(text, writer.GetResult());
         }

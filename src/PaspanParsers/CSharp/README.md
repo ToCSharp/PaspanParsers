@@ -148,6 +148,7 @@ Parsing time is linear in the input, also for deeply nested code: 8 000 nested p
 | `Parser/Lexer.cs`, `Parser/Tokens.cs` | Tokens: identifiers, keywords, literals, interpolated strings |
 | `Parser/Preprocessor.cs` | Trivia: whitespace, comments and preprocessor directives |
 | `Parser/SyntaxParser*.cs` | Hand-written recursive descent parser: types, expressions, patterns, statements, declarations, compilation unit |
+| `Hybrid/*.cs` | `CSharpHybridParser`: the same parser with part of the grammar in Paspan combinators, kept to compare speed (`docs/csharp-hybrid-parser-plan.md`) |
 | `CSharpGrammarSpecification.txt` | The C# grammar in EBNF, for reference |
 
 The parser is a hand-written recursive descent parser (`SyntaxParser`) that follows Roslyn's disambiguation

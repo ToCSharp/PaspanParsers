@@ -43,6 +43,12 @@ internal ref partial struct SyntaxParser
         _context = context;
         _cache = SyntaxCache.For(context);
 
+        // A rule run from a combinator parser continues the state of the hand-written parser that called it
+        if (context is CSharpParseContext csharp)
+        {
+            (_queryDepth, _noLambdaArrow, _allowOmittedTypeArguments) = csharp.SyntaxState;
+        }
+
         // About one token per ten bytes of source code; sizing the cache up front avoids rehashing it
         if (_cache.Tokens.Count == 0)
         {
@@ -54,6 +60,21 @@ internal ref partial struct SyntaxParser
     /// The end of the last consumed token.
     /// </summary>
     public readonly int Position => _position;
+
+    /// <summary>
+    /// A parser over the input of <paramref name="reader"/> at its position, for the combinator parsers
+    /// that read tokens (see <see cref="TokenParsers"/>). All of them share the token cache of the context.
+    /// </summary>
+    public static SyntaxParser At(ref SpanReader reader, ParseContext context)
+    {
+        var position = reader.GetCurrentPosition();
+
+        reader.RollBackState(0);
+        var source = reader.GetRemaining();
+        reader.RollBackState(position);
+
+        return new SyntaxParser(source, position, context);
+    }
 
     // ========================================
     // Tokens
@@ -71,9 +92,9 @@ internal ref partial struct SyntaxParser
         return token;
     }
 
-    private SyntaxToken Current => TokenAt(_position);
+    internal SyntaxToken Current => TokenAt(_position);
 
-    private SyntaxToken Peek(int offset)
+    internal SyntaxToken Peek(int offset)
     {
         var token = TokenAt(_position);
         for (var i = 0; i < offset; i++)
@@ -84,7 +105,7 @@ internal ref partial struct SyntaxParser
         return token;
     }
 
-    private SyntaxToken EatToken()
+    internal SyntaxToken EatToken()
     {
         var token = TokenAt(_position);
         _position = token.End;
@@ -191,7 +212,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// True when <paramref name="second"/> directly follows <paramref name="first"/> without trivia.
     /// </summary>
-    private static bool AreAdjacent(SyntaxToken first, SyntaxToken second) => first.End == second.Start;
+    internal static bool AreAdjacent(SyntaxToken first, SyntaxToken second) => first.End == second.Start;
 
     /// <summary>
     /// Guards the recursion of nested constructs against stack overflow: throws
@@ -407,9 +428,58 @@ internal ref partial struct SyntaxParser
     public static CompilationUnit ParseCompilationUnitRule(ref SyntaxParser parser) => parser.ParseCompilationUnit();
 
     /// <summary>
+    /// A statement, for the combinator grammar of the hybrid parser (<see cref="CSharpHybridParser"/>).
+    /// </summary>
+    public static Statement ParseStatementRule(ref SyntaxParser parser) => parser.ParseStatement();
+
+    /// <summary>
     /// The expressions in the holes of interpolated strings, which are scanned by <see cref="InterpolatedStringToken"/>.
     /// </summary>
     public static Expression ParseExpressionRule(ref SyntaxParser parser) => parser.ParseExpression();
+
+    // ========================================
+    // Combinator parsers run from the hand-written parser
+    // ========================================
+
+    /// <summary>
+    /// The block of a lambda or an anonymous method. The hybrid parser (<see cref="CSharpHybridParser"/>)
+    /// parses it with its combinator grammar; otherwise it is <see cref="ParseBlock"/>.
+    /// </summary>
+    private BlockStatement ParseEmbeddedBlock()
+    {
+        return _context is CSharpParseContext { BlockParser: { } blockParser } csharp
+            ? RunCombinator(blockParser, csharp)
+            : ParseBlock();
+    }
+
+    /// <summary>
+    /// Runs a combinator parser at the current position and moves past what it consumed. The state of this
+    /// parser is handed over through the context, so that rules the combinator parser runs through
+    /// <see cref="SyntaxRuleParser{T}"/> continue it.
+    /// </summary>
+    private T RunCombinator<T>(Parser<T> parser, CSharpParseContext context) where T : class
+    {
+        var callerState = context.SyntaxState;
+        context.SyntaxState = new SyntaxState(_queryDepth, _noLambdaArrow, _allowOmittedTypeArguments);
+        try
+        {
+            var reader = new SpanReader(_source);
+            reader.RollBackState(_position);
+
+            var result = new ParseResult<T>();
+            if (!parser.Parse(ref reader, context, ref result))
+            {
+                return null;
+            }
+
+            _position = reader.GetCurrentPosition();
+            return result.Value;
+        }
+        finally
+        {
+            context.SyntaxState = callerState;
+        }
+    }
 
     /// <summary>
     /// Scans the tokens of <paramref name="source"/> one after another, with the trivia before each of them,
@@ -451,6 +521,11 @@ internal ref partial struct SyntaxParser
         return error;
     }
 }
+
+/// <summary>
+/// The context-dependent state of <see cref="SyntaxParser"/>, handed over when it calls a combinator parser.
+/// </summary>
+internal readonly record struct SyntaxState(int QueryDepth, bool NoLambdaArrow, bool AllowOmittedTypeArguments);
 
 /// <summary>
 /// Token and lookahead caches shared by all <see cref="SyntaxParser"/> runs over the same input,

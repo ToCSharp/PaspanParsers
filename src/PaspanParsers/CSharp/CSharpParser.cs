@@ -33,10 +33,26 @@ public partial class CSharpParser
     /// </summary>
     public static bool TryParse(string input, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
     {
+        return TryParse(input, options, CompilationUnitParser, blockParser: null, out result, out error);
+    }
+
+    /// <summary>
+    /// Parses <paramref name="input"/> with <paramref name="parser"/>; <paramref name="blockParser"/> parses the
+    /// blocks of lambdas and anonymous methods (see <see cref="CSharpParseContext.BlockParser"/>). Shared with
+    /// <see cref="CSharpHybridParser"/>.
+    /// </summary>
+    internal static bool TryParse(
+        string input,
+        CSharpParseOptions options,
+        Parser<CompilationUnit> parser,
+        Parser<BlockStatement> blockParser,
+        out CompilationUnit result,
+        out ParseError error)
+    {
         var source = GetUtf8Source(input);
         try
         {
-            return TryParse(source, options, out result, out error);
+            return TryParse(source, options, parser, blockParser, out result, out error);
         }
         catch (InsufficientExecutionStackException)
         {
@@ -51,7 +67,7 @@ public partial class CSharpParser
             {
                 try
                 {
-                    success = TryParse(source, options, out largeStackResult, out largeStackError);
+                    success = TryParse(source, options, parser, blockParser, out largeStackResult, out largeStackError);
                 }
                 catch (InsufficientExecutionStackException)
                 {
@@ -67,13 +83,19 @@ public partial class CSharpParser
         return success;
     }
 
-    private static bool TryParse(byte[] source, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
+    private static bool TryParse(
+        byte[] source,
+        CSharpParseOptions options,
+        Parser<CompilationUnit> parser,
+        Parser<BlockStatement> blockParser,
+        out CompilationUnit result,
+        out ParseError error)
     {
         var reader = new SpanReader(source);
-        var context = new CSharpParseContext(options);
+        var context = new CSharpParseContext(options) { BlockParser = blockParser };
         try
         {
-            if (CompilationUnitParser.TryParse(ref reader, context, out result, out error))
+            if (parser.TryParse(ref reader, context, out result, out error))
             {
                 return true;
             }

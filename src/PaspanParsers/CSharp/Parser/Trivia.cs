@@ -10,7 +10,7 @@ public partial class CSharpParser
     /// Makes <paramref name="parser"/> skip C# trivia before every token and consume
     /// trailing trivia before the end of the input.
     /// </summary>
-    private static Parser<T> WithTrivia<T>(Parser<T> parser)
+    internal static Parser<T> WithTrivia<T>(Parser<T> parser)
     {
         return new EndOfInput<T>(parser).WithWhiteSpaceParser(new TriviaParser());
     }

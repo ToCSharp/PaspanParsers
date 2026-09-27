@@ -5,8 +5,9 @@ using PaspanParsers.CSharp;
 namespace PaspanParsers.Benchmarks;
 
 /// <summary>
-/// Parses every file of a corpus. <see cref="RecursiveDescent"/> is the current C# parser; <see cref="Scanner"/>
-/// is the part every variant of the parser shares, so the syntactic layer costs the difference between them.
+/// Parses every file of a corpus. <see cref="RecursiveDescent"/> is the hand-written C# parser and <see cref="Hybrid"/>
+/// the hybrid one; <see cref="Scanner"/> is the part every variant of the parser shares, so the syntactic layer
+/// costs the difference between a parser and it.
 /// </summary>
 [Config(typeof(CorpusConfig))]
 public class CSharpParserBenchmarks
@@ -57,6 +58,22 @@ public class CSharpParserBenchmarks
         foreach (var source in _sources)
         {
             var unit = CSharpParser.Parse(source) ?? throw new InvalidOperationException("The corpus holds a file the parser rejects.");
+            length += unit.Span.Length;
+        }
+
+        return length;
+    }
+
+    /// <summary>
+    /// The hybrid parser (<see cref="CSharpHybridParser"/>): combinator grammar on top of hand-written rules.
+    /// </summary>
+    [Benchmark]
+    public int Hybrid()
+    {
+        var length = 0;
+        foreach (var source in _sources)
+        {
+            var unit = CSharpHybridParser.Parse(source) ?? throw new InvalidOperationException("The corpus holds a file the parser rejects.");
             length += unit.Span.Length;
         }
 

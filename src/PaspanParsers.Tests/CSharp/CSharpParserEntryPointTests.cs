@@ -8,7 +8,7 @@ public class CSharpParserEntryPointTests
     [TestMethod]
     public void Parse_SkipsByteOrderMark()
     {
-        var result = CSharpParser.Parse("﻿class A { }");
+        var result = ParserVariants.Parse("﻿class A { }");
 
         Assert.IsNotNull(result);
         Assert.HasCount(1, result.Members);
@@ -19,7 +19,7 @@ public class CSharpParserEntryPointTests
     {
         var code = "\n  // leading comment\n  class A { }\n  /* trailing */ // comment\n\n";
 
-        var result = CSharpParser.Parse(code);
+        var result = ParserVariants.Parse(code);
 
         Assert.IsNotNull(result);
         Assert.HasCount(1, result.Members);
@@ -28,7 +28,7 @@ public class CSharpParserEntryPointTests
     [TestMethod]
     public void Parse_EmptyInput_ReturnsEmptyCompilationUnit()
     {
-        var result = CSharpParser.Parse("");
+        var result = ParserVariants.Parse("");
 
         Assert.IsNotNull(result);
         Assert.IsNull(result.Members);
@@ -51,7 +51,7 @@ public class CSharpParserEntryPointTests
     [TestMethod]
     public void Parse_RejectsTrailingGarbage()
     {
-        Assert.IsNull(CSharpParser.Parse("class A { } class"));
+        Assert.IsNull(ParserVariants.Parse("class A { } class"));
     }
 
     [TestMethod]

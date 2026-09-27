@@ -16,7 +16,7 @@ public class SpanTests
     public void Span_CoversTheTokensOfTheNodeWithoutTrivia()
     {
         const string source = "class C\n{\n    int M() => /* sum */ a + b * c ;\n}\n";
-        var unit = CSharpParser.Parse(source);
+        var unit = ParserVariants.Parse(source);
         var method = (MethodDeclaration)((ClassDeclaration)unit.Members[0]).Members[0];
         var body = (ExpressionMethodBody)method.Body;
         var add = (BinaryExpression)body.Expression;
@@ -32,7 +32,7 @@ public class SpanTests
     public void Span_OfAnExpressionBodyEndsBeforeTheSemicolon()
     {
         const string source = "class C { int P => 1; }";
-        var property = (PropertyDeclaration)((ClassDeclaration)CSharpParser.Parse(source).Members[0]).Members[0];
+        var property = (PropertyDeclaration)((ClassDeclaration)ParserVariants.Parse(source).Members[0]).Members[0];
 
         Assert.AreEqual("int P => 1;", Text(source, property));
         Assert.AreEqual("1", Text(source, property.ExpressionBody));
@@ -42,7 +42,7 @@ public class SpanTests
     public void Span_OfADeclarationStartsAtItsAttributes()
     {
         const string source = "namespace N;\n\n[Serializable]\npublic sealed class C : Base\n{\n}\n";
-        var unit = CSharpParser.Parse(source);
+        var unit = ParserVariants.Parse(source);
         var ns = (NamespaceDeclaration)unit.Members[0];
         var type = (ClassDeclaration)ns.Members[0];
 
@@ -57,7 +57,7 @@ public class SpanTests
     public void Span_OfTheCompilationUnitIsTheWholeInput()
     {
         const string source = "  // comment\nclass C { }\n\n";
-        var unit = CSharpParser.Parse(source);
+        var unit = ParserVariants.Parse(source);
 
         Assert.AreEqual(new TextSpan(0, source.Length), unit.Span);
         Assert.AreEqual("class C { }", Text(source, unit.Members[0]));
@@ -86,7 +86,7 @@ public class SpanTests
     public void Span_IsInUtf8BytesOfTheInputWithoutTheByteOrderMark()
     {
         const string source = "\uFEFFclass Привет { string s = \"мир\"; string e = \"🤩\"; }";
-        var unit = CSharpParser.Parse(source);
+        var unit = ParserVariants.Parse(source);
         var type = (ClassDeclaration)unit.Members[0];
         var field = (FieldDeclaration)type.Members[0];
         var literal = field.Variables[0].Initializer;
@@ -111,7 +111,7 @@ public class SpanTests
     public void Span_OfInterpolatedStringParts()
     {
         const string source = "class C { string s = $\"a{x,5:N}b\"; }";
-        var field = (FieldDeclaration)((ClassDeclaration)CSharpParser.Parse(source).Members[0]).Members[0];
+        var field = (FieldDeclaration)((ClassDeclaration)ParserVariants.Parse(source).Members[0]).Members[0];
         var interpolated = (InterpolatedStringExpression)field.Variables[0].Initializer;
 
         Assert.AreEqual("$\"a{x,5:N}b\"", Text(source, interpolated));
@@ -125,7 +125,7 @@ public class SpanTests
     public void Span_OfANullableDirectiveIsItsLine()
     {
         const string source = "#nullable enable\nclass C { }";
-        var type = CSharpParser.Parse(source).Members[0];
+        var type = ParserVariants.Parse(source).Members[0];
 
         Assert.AreEqual("#nullable enable", Text(source, type.NullableDirectives[0]));
         Assert.AreEqual("class C { }", Text(source, type));

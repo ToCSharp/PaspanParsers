@@ -12,7 +12,7 @@ internal static class SyntaxTestHelper
 
     public static IReadOnlyList<Statement> Statements(string statements)
     {
-        var unit = CSharpParser.Parse(InMethod(statements));
+        var unit = ParserVariants.Parse(InMethod(statements));
         Assert.IsNotNull(unit, "failed to parse: " + statements);
 
         var method = (MethodDeclaration)((ClassDeclaration)unit.Members[0]).Members[0];
@@ -58,7 +58,7 @@ internal static class SyntaxTestHelper
 
     public static void AssertParseFails(string statements)
     {
-        Assert.IsNull(CSharpParser.Parse(InMethod(statements)), "should not parse: " + statements);
+        Assert.IsNull(ParserVariants.Parse(InMethod(statements)), "should not parse: " + statements);
     }
 
     /// <summary>
