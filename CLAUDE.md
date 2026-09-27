@@ -14,3 +14,8 @@ Do not use `dotnet test`: the test project uses Microsoft.Testing.Platform, and 
 - `Oracle_BuiltInCorpus_Statements` checks every statement of every method body in the corpus on its own, wrapped in a method; all must pass.
 - Every node the parser creates must get its span: build it with `SyntaxParser.Finish(node, start)`.
 - The per-file report is written to `src/PaspanParsers.Tests/bin/Debug/net10.0/oracle-report.txt`. Set `CSHARP_CORPUS_DIR` to also measure an external corpus (`--filter "FullyQualifiedName~Oracle_ExternalCorpus"`, report in `oracle-external-report.txt`), and `CSHARP_CORPUS_SYMBOLS` (for example `NET;DEBUG`) to parse it with preprocessor symbols. With `CSHARP_CORPUS_DIR` set, `dotnet run -c Release --project src/PaspanParsers.Tests -- --filter "FullyQualifiedName~Benchmark_Corpus"` compares speed and allocations with Roslyn.
+
+## C# parser benchmarks
+
+- `src/PaspanParsers.Benchmarks` (BenchmarkDotNet) measures the scanner, the parser and Roslyn on the same files: `dotnet run -c Release --project src/PaspanParsers.Benchmarks -- --filter "*"`.
+- Without `CSHARP_BENCH_CORPORA` only the built-in corpus is measured. `scripts/get-csharp-bench-corpora.sh <dir>` downloads the Roslyn, dotnet/runtime and ASP.NET Core corpora at fixed commits; set `CSHARP_BENCH_CORPORA=<dir>` to measure them. Results and the hybrid parser plan are in `docs/csharp-hybrid-parser-plan.md`.

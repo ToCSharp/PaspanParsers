@@ -412,6 +412,22 @@ internal ref partial struct SyntaxParser
     public static Expression ParseExpressionRule(ref SyntaxParser parser) => parser.ParseExpression();
 
     /// <summary>
+    /// Scans the tokens of <paramref name="source"/> one after another, with the trivia before each of them,
+    /// and returns their number. Measures the scanner apart from the parser.
+    /// </summary>
+    public static int ScanTokens(ReadOnlySpan<byte> source, ParseContext context)
+    {
+        var parser = new SyntaxParser(source, 0, context);
+        var count = 0;
+        while (parser.EatToken().Kind != TokenKind.EndOfFile)
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    /// <summary>
     /// The error of a failed parse: the token after the furthest token any alternative consumed.
     /// </summary>
     public static ParseError DescribeFailure(ReadOnlySpan<byte> source, ParseContext context)

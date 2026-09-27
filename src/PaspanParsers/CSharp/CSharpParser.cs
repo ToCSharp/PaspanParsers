@@ -88,6 +88,24 @@ public partial class CSharpParser
     }
 
     /// <summary>
+    /// Scans the tokens of <paramref name="input"/> without parsing it and returns their number. Used by the
+    /// benchmarks to measure the scanner (lexer and preprocessor), which every variant of the parser shares.
+    /// </summary>
+    internal static int ScanTokens(string input, CSharpParseOptions options = null)
+    {
+        var source = GetUtf8Source(input);
+        var context = new CSharpParseContext(options);
+        try
+        {
+            return SyntaxParser.ScanTokens(source, context);
+        }
+        finally
+        {
+            context.ReleaseCaches();
+        }
+    }
+
+    /// <summary>
     /// The bytes the parser reads for <paramref name="input"/>: its UTF-8 encoding without the byte order mark.
     /// Node spans (<see cref="CSharpNode.Span"/>) are offsets into them.
     /// </summary>

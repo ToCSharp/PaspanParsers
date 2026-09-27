@@ -6,6 +6,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="PaspanParsers.Benchmarks" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Paspan\Paspan.csproj" />
   </ItemGroup>
 

@@ -12,6 +12,7 @@
   </Folder>
   <Project Path="src/Paspan/Paspan.csproj" />
   <Project Path="src/PaspanCommon/PaspanCommon.shproj" Id="1932c820-2d38-4274-9db9-8ca51dc21ca3" />
+  <Project Path="src/PaspanParsers.Benchmarks/PaspanParsers.Benchmarks.csproj" />
   <Project Path="src/PaspanParsers.Tests/PaspanParsers.Tests.csproj" />
   <Project Path="src/PaspanParsers/PaspanParsers.csproj" />
 </Solution>

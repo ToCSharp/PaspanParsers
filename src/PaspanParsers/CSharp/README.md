@@ -129,6 +129,9 @@ Measured with `CSharpPerformanceTests.Benchmark_Corpus` (Release build, one thre
 | dotnet/runtime libraries | 37.2 MB | 31.6 MB/s, 10.9 bytes per byte | 16.9 MB/s, 7.3 bytes per byte |
 | ASP.NET Core | 14.9 MB | 18.6 MB/s, 19.9 bytes per byte | 19.5 MB/s, 6.8 bytes per byte |
 
+`src/PaspanParsers.Benchmarks` (BenchmarkDotNet) measures the same with the scanner apart from the parser, on corpora
+pinned to fixed commits (`scripts/get-csharp-bench-corpora.sh`); results are in `docs/csharp-hybrid-parser-plan.md`.
+
 Parsing time is linear in the input, also for deeply nested code: 8 000 nested parentheses parse in about
 40 ms, a chain of 50 000 `a + a + …` in about 35 ms. Input nested deeper than the caller's stack allows
 (about 500 levels of nested blocks and lambdas, or 600 nested parentheses, on a 1 MB stack) is parsed again on a thread with a
