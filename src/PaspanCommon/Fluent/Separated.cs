@@ -50,9 +50,9 @@ public sealed class Separated<U, T>(Parser<U> separator, Parser<T> parser) : Par
                 // First element
                 var startPosition = reader.CaptureState();
 
-                if (!_parser.Parse(ref reader, context, ref parsed))
+                // If first element fails to parse, or consumes nothing, the entire parser fails (same as Parlot)
+                if (!_parser.Parse(ref reader, context, ref parsed) || reader.GetCurrentPosition() == startPosition)
                 {
-                    // If first element fails to parse, the entire parser fails
                     reader.RollBackState(startPosition);
                     return false;
                 }

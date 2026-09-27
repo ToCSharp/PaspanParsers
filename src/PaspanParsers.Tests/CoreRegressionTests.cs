@@ -190,8 +190,8 @@ public class CoreRegressionTests
 
         Assert.IsTrue(oneOrMany.TryParse("aab", out var many));
         Assert.HasCount(2, many);
-        Assert.IsTrue(oneOrMany.TryParse("b", out many));
-        Assert.HasCount(1, many);
+        // An empty first match doesn't satisfy "one", as in Parlot
+        Assert.IsFalse(oneOrMany.TryParse("b", out _));
     }
 
     [TestMethod]
@@ -391,5 +391,50 @@ public class CoreRegressionTests
 
         // Without extra predicates non-ASCII chars end the identifier
         Assert.AreEqual("ab", Terms.Identifier().Parse("abф"));
+    }
+
+    [TestMethod]
+    public void AsCharShouldReadTheMatchedTextAndNotAStaleValue()
+    {
+        Assert.AreEqual('+', Terms.Text("+").AsChar().Parse(" +"));
+        Assert.AreEqual('x', Terms.Keyword("x").AsChar().Parse("  x"));
+        Assert.AreEqual('Ж', Terms.Text("ж", caseInsensitive: true).AsChar().Parse(" Ж"));
+    }
+
+    [TestMethod]
+    public void CaseInsensitiveTextShouldMatchNonAsciiLetters()
+    {
+        Assert.AreEqual("ПРИВЕТ", Terms.Text("привет", caseInsensitive: true).Parse("ПРИВЕТ"));
+        Assert.AreEqual("HeLLo", Terms.Text("hello", caseInsensitive: true).Parse("HeLLo"));
+        Assert.IsNull(Terms.Text("привет", caseInsensitive: true).Parse("привед"));
+        Assert.IsNull(Terms.Text("при", caseInsensitive: true).Parse("пр"));
+
+        var keyword = Terms.Keyword("выбрать", caseInsensitive: true);
+        Assert.AreEqual("ВЫБРАТЬ", keyword.Parse("ВЫБРАТЬ 1"));
+        Assert.IsNull(keyword.Parse("ВЫБРАТЬВСЁ"));
+
+        // The cursor must advance by the matched input bytes
+        var result = ParseWithResult(Terms.Text("привет", caseInsensitive: true).And(Terms.Text("x")), "ПРИВЕТ x");
+        Assert.AreEqual(("ПРИВЕТ", "x"), result.Value);
+        Assert.AreEqual((0, 14), (result.Start, result.End));
+    }
+
+    [TestMethod]
+    public void StringAndCharShortcutsShouldBothSkipWhiteSpace()
+    {
+        Assert.AreEqual(5, '='.And(Terms.Integer()).Parse("  = 5"));
+        Assert.AreEqual(5, "=".And(Terms.Integer()).Parse("  = 5"));
+        Assert.AreEqual(5, "=".And("value", Terms.Integer()).Parse("  = 5").Value);
+        Assert.AreEqual("a", "=".AndString().Parse("  = 'a'"));
+    }
+
+    [TestMethod]
+    public void OneOrManyAndSeparatedShouldRequireANonEmptyFirstElement()
+    {
+        Assert.IsFalse(OneOrMany(ZeroOrMany(Terms.Char('x'))).TryParse("", out _));
+        Assert.IsFalse(Separated(Terms.Char(','), Terms.Integer().Else(0)).TryParse("", out _));
+
+        Assert.IsTrue(Separated(Terms.Char(','), Terms.Integer()).TryParse("1, 2", out var items));
+        Assert.HasCount(2, items);
     }
 }
