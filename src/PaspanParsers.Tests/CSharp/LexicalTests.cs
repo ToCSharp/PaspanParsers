@@ -69,6 +69,7 @@ public class LexicalTests
     [DataRow("_", "_")]
     [DataRow("_name1", "_name1")]
     [DataRow("имя", "имя")]
+    [DataRow("na\u200Bme", "name")]
     [DataRow("@class", "class")]
     [DataRow("@name", "name")]
     [DataRow("\\u0061bc", "abc")]

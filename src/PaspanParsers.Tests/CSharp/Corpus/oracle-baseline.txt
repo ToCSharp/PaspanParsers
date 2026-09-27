@@ -89,6 +89,7 @@ src/PaspanParsers.Tests/CSharp/CSharpExamples.xcs
 src/PaspanParsers.Tests/CSharp/CSharpExamples2.xcs
 src/PaspanParsers.Tests/CSharp/CSharpParserEntryPointTests.cs
 src/PaspanParsers.Tests/CSharp/CSharpParserTests.cs
+src/PaspanParsers.Tests/CSharp/CSharpPerformanceTests.cs
 src/PaspanParsers.Tests/CSharp/CSharpWriterExample.cs
 src/PaspanParsers.Tests/CSharp/CSharpWriterExampleTest.cs
 src/PaspanParsers.Tests/CSharp/CSharpWriterTests.cs
@@ -121,6 +122,8 @@ src/PaspanParsers.Tests/CSharp/LexicalTests.cs
 src/PaspanParsers.Tests/CSharp/PatternTests.cs
 src/PaspanParsers.Tests/CSharp/PreprocessorTests.cs
 src/PaspanParsers.Tests/CSharp/RoslynOracle.cs
+src/PaspanParsers.Tests/CSharp/SpanChecker.cs
+src/PaspanParsers.Tests/CSharp/SpanTests.cs
 src/PaspanParsers.Tests/CSharp/StatementTests.cs
 src/PaspanParsers.Tests/CSharp/SyntaxTestHelper.cs
 src/PaspanParsers.Tests/CSharp/TypeTests.cs

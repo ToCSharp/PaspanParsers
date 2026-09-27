@@ -42,6 +42,12 @@ internal ref partial struct SyntaxParser
         _position = position;
         _context = context;
         _cache = SyntaxCache.For(context);
+
+        // About one token per ten bytes of source code; sizing the cache up front avoids rehashing it
+        if (_cache.Tokens.Count == 0)
+        {
+            _cache.Tokens.EnsureCapacity((source.Length - position) / 9);
+        }
     }
 
     /// <summary>
@@ -82,6 +88,11 @@ internal ref partial struct SyntaxParser
     {
         var token = TokenAt(_position);
         _position = token.End;
+        if (_position > _cache.FurthestPosition)
+        {
+            _cache.FurthestPosition = _position;
+        }
+
         return token;
     }
 
@@ -139,19 +150,61 @@ internal ref partial struct SyntaxParser
         return token.Text;
     }
 
+    // ========================================
+    // Spans
+    // ========================================
+
+    /// <summary>
+    /// The start of the next token: the start of a node that begins with it.
+    /// </summary>
+    private int NodeStart => Current.Start;
+
+    /// <summary>
+    /// Sets the span of <paramref name="node"/> from <paramref name="start"/> to the end of the last consumed
+    /// token and returns the node; a null node stays null.
+    /// </summary>
+    private readonly T Finish<T>(T node, int start) where T : CSharpNode
+    {
+        if (node != null)
+        {
+            // A node without tokens (an omitted type argument) is empty at its start
+            node.Span = new TextSpan(start, Math.Max(start, _position));
+        }
+
+        return node;
+    }
+
+    /// <summary>
+    /// Sets the span of <paramref name="node"/> and returns the node.
+    /// </summary>
+    private static T Finish<T>(T node, int start, int end) where T : CSharpNode
+    {
+        node.Span = new TextSpan(start, end);
+        return node;
+    }
+
+    /// <summary>
+    /// Like <see cref="Finish{T}(T, int)"/> for a node that starts where <paramref name="first"/> starts.
+    /// </summary>
+    private readonly T Finish<T>(T node, CSharpNode first) where T : CSharpNode => Finish(node, first.Span.Start);
+
     /// <summary>
     /// True when <paramref name="second"/> directly follows <paramref name="first"/> without trivia.
     /// </summary>
     private static bool AreAdjacent(SyntaxToken first, SyntaxToken second) => first.End == second.Start;
 
     /// <summary>
-    /// Guards the recursion of nested expressions and statements against stack overflow.
+    /// Guards the recursion of nested constructs against stack overflow: throws
+    /// <see cref="InsufficientExecutionStackException"/>, which <see cref="CSharpParser.TryParse(string, CSharpParseOptions, out CompilationUnit, out ParseError)"/>
+    /// handles by parsing again on a larger stack. Failing the whole parse, rather than the current
+    /// alternative, keeps the parser from choosing another reading of the input.
     /// </summary>
-    private static bool HasSufficientStack() => RuntimeHelpers.TryEnsureSufficientExecutionStack();
+    private static void EnsureSufficientStack() => RuntimeHelpers.EnsureSufficientExecutionStack();
 
     /// <summary>
     /// The position after the token that closes the bracket at <paramref name="open"/>, or -1.
-    /// Parentheses, brackets and braces must nest; the result is cached by position.
+    /// Parentheses, brackets and braces must nest. The scan also records the ends of the brackets
+    /// nested inside, so looking ahead at each level of deeply nested brackets stays linear.
     /// </summary>
     private int SkipBalanced(int open)
     {
@@ -160,8 +213,8 @@ internal ref partial struct SyntaxParser
             return end;
         }
 
-        end = -1;
-        var stack = new Stack<string>();
+        // The positions of the open brackets and the closing text they expect
+        var stack = new Stack<(int Open, string Close)>();
         var position = open;
         while (true)
         {
@@ -171,6 +224,7 @@ internal ref partial struct SyntaxParser
                 break;
             }
 
+            var tokenPosition = position;
             position = token.End;
 
             if (token.Kind != TokenKind.Punctuator)
@@ -181,35 +235,46 @@ internal ref partial struct SyntaxParser
             switch (token.Text)
             {
                 case "(":
-                    stack.Push(")");
+                    stack.Push((tokenPosition, ")"));
                     break;
                 case "[":
-                    stack.Push("]");
+                    stack.Push((tokenPosition, "]"));
                     break;
                 case "{":
-                    stack.Push("}");
+                    stack.Push((tokenPosition, "}"));
                     break;
                 case ")":
                 case "]":
                 case "}":
-                    if (stack.Count == 0 || stack.Pop() != token.Text)
+                    if (stack.Count == 0 || stack.Peek().Close != token.Text)
                     {
+                        // Brackets still open here have no matching close
+                        foreach (var (unclosed, _) in stack)
+                        {
+                            _cache.BalancedEnds[unclosed] = -1;
+                        }
+
                         _cache.BalancedEnds[open] = -1;
                         return -1;
                     }
 
+                    _cache.BalancedEnds[stack.Pop().Open] = position;
                     break;
             }
 
             if (stack.Count == 0)
             {
-                end = position;
-                break;
+                return position;
             }
         }
 
-        _cache.BalancedEnds[open] = end;
-        return end;
+        foreach (var (unclosed, _) in stack)
+        {
+            _cache.BalancedEnds[unclosed] = -1;
+        }
+
+        _cache.BalancedEnds[open] = -1;
+        return -1;
     }
 
     // ========================================
@@ -297,7 +362,7 @@ internal ref partial struct SyntaxParser
             var length = Lexer.ScanIdentifierOrKeyword(s, out var isVerbatim, out var hasEscape);
             if (length > 0)
             {
-                var value = Lexer.IdentifierValue(s[..length], isVerbatim, hasEscape);
+                var value = isVerbatim || hasEscape ? Lexer.IdentifierValue(s[..length], isVerbatim, hasEscape) : _cache.Intern(s[..length]);
                 var isKeyword = !isVerbatim && !hasEscape && Lexer.ReservedKeywords.Contains(value);
                 return new SyntaxToken(isKeyword ? TokenKind.Keyword : TokenKind.Identifier, start, start + length, value, null, isVerbatim || hasEscape);
             }
@@ -345,6 +410,30 @@ internal ref partial struct SyntaxParser
     /// The expressions in the holes of interpolated strings, which are scanned by <see cref="InterpolatedStringToken"/>.
     /// </summary>
     public static Expression ParseExpressionRule(ref SyntaxParser parser) => parser.ParseExpression();
+
+    /// <summary>
+    /// The error of a failed parse: the token after the furthest token any alternative consumed.
+    /// </summary>
+    public static ParseError DescribeFailure(ReadOnlySpan<byte> source, ParseContext context)
+    {
+        var parser = new SyntaxParser(source, 0, context);
+        var token = parser.TokenAt(parser._cache.FurthestPosition);
+
+        string description;
+        if (token.Kind == TokenKind.EndOfFile)
+        {
+            description = "end of file";
+        }
+        else
+        {
+            var text = Encoding.UTF8.GetString(source[token.Start..token.End]).ReplaceLineEndings(" ");
+            description = $"'{(text.Length <= 40 ? text : text[..37] + "...")}'";
+        }
+
+        var error = new ParseError { Message = $"Unexpected {description}", Position = token.Start };
+        (error.Line, error.Column) = new SpanReader(source).GetLineAndColumn(token.Start);
+        return error;
+    }
 }
 
 /// <summary>
@@ -353,11 +442,81 @@ internal ref partial struct SyntaxParser
 /// </summary>
 internal sealed class SyntaxCache(HashSet<string> preprocessorSymbols)
 {
-    public Dictionary<int, SyntaxToken> Tokens { get; } = [];
+    /// <summary>
+    /// The largest token cache kept for reuse by the next parse on the thread (about 4 MB).
+    /// </summary>
+    private const int MaxPooledTokens = 1 << 16;
+
+    [ThreadStatic]
+    private static Dictionary<int, SyntaxToken> s_pooledTokens;
+
+    public Dictionary<int, SyntaxToken> Tokens { get; } = RentTokens();
 
     public Dictionary<int, int> BalancedEnds { get; } = [];
 
+    /// <summary>
+    /// The end of the furthest token consumed, for the error position of a failed parse.
+    /// </summary>
+    public int FurthestPosition { get; set; }
+
+    /// <summary>
+    /// Tuple types by the position of their '(': the type and the position after it, or a null type where
+    /// no tuple type starts. Without and with omitted type arguments (<c>typeof(Dictionary&lt;,&gt;)</c>).
+    /// </summary>
+    public Dictionary<int, (TypeReference Type, int End)> TupleTypes { get; } = [];
+
+    public Dictionary<int, (TypeReference Type, int End)> TupleTypesWithOmittedArguments { get; } = [];
+
     public Preprocessor Preprocessor { get; } = new(preprocessorSymbols);
+
+    private readonly HashSet<string> _strings = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The value of an identifier or keyword written without '@' and escapes; ASCII names get one string per distinct name.
+    /// </summary>
+    public string Intern(ReadOnlySpan<byte> utf8)
+    {
+        if (utf8.Length > 256 || utf8.IndexOfAnyExceptInRange((byte)0, (byte)0x7F) >= 0)
+        {
+            // Non-ASCII names drop formatting characters
+            return Lexer.IdentifierValue(utf8, isVerbatim: false, hasEscape: false);
+        }
+
+        Span<char> chars = stackalloc char[utf8.Length];
+        for (var i = 0; i < utf8.Length; i++)
+        {
+            chars[i] = (char)utf8[i];
+        }
+
+        var lookup = _strings.GetAlternateLookup<ReadOnlySpan<char>>();
+        if (!lookup.TryGetValue(chars, out var text))
+        {
+            text = new string(chars);
+            _strings.Add(text);
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// Called when the parse is over and the cache will not be used again: the token cache, the
+    /// largest allocation of a parse, is kept for the next parse on this thread.
+    /// </summary>
+    public void Release()
+    {
+        if (Tokens.Capacity <= MaxPooledTokens)
+        {
+            Tokens.Clear();
+            s_pooledTokens = Tokens;
+        }
+    }
+
+    private static Dictionary<int, SyntaxToken> RentTokens()
+    {
+        var tokens = s_pooledTokens ?? [];
+        s_pooledTokens = null;
+        return tokens;
+    }
 
     public static SyntaxCache For(ParseContext context)
     {

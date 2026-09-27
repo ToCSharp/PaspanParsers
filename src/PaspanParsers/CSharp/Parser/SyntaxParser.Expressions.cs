@@ -48,10 +48,7 @@ internal ref partial struct SyntaxParser
 
     private Expression ParseSubExpression(Precedence precedence)
     {
-        if (!HasSufficientStack())
-        {
-            return null;
-        }
+        EnsureSufficientStack();
 
         var token = Current;
 
@@ -64,7 +61,7 @@ internal ref partial struct SyntaxParser
 
             EatToken();
             var thrown = ParseSubExpression(Precedence.Coalescing);
-            return thrown == null ? null : new ThrowExpression(thrown);
+            return thrown == null ? null : Finish(new ThrowExpression(thrown), token.Start);
         }
 
         if (precedence <= Precedence.Conditional)
@@ -108,7 +105,7 @@ internal ref partial struct SyntaxParser
             {
                 EatToken();
                 var operand = ParseSubExpression(Precedence.Unary);
-                return operand == null ? null : new UnaryExpression(op.Value, operand);
+                return operand == null ? null : Finish(new UnaryExpression(op.Value, operand), token.Start);
             }
 
             if (token.Text == "..")
@@ -124,20 +121,21 @@ internal ref partial struct SyntaxParser
                     }
                 }
 
-                return new RangeExpression(null, end);
+                return Finish(new RangeExpression(null, end), token.Start);
             }
         }
         else if (token.IsKeyword("ref"))
         {
+            // Like in Roslyn, 'ref' takes a whole expression: ref c ? ref a : ref b is ref (c ? ref a : ref b)
             EatToken();
-            var operand = ParseSubExpression(Precedence.Unary);
-            return operand == null ? null : new RefExpression(operand);
+            var operand = ParseExpression();
+            return operand == null ? null : Finish(new RefExpression(operand), token.Start);
         }
         else if (token.IsContextual("await") && IsAwaitExpression())
         {
             EatToken();
             var operand = ParseSubExpression(Precedence.Unary);
-            return operand == null ? null : new AwaitExpression(operand);
+            return operand == null ? null : Finish(new AwaitExpression(operand), token.Start);
         }
 
         return ParsePostfix(ParsePrimary());
@@ -240,7 +238,7 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    left = new ConditionalExpression(left, whenTrue, whenFalse);
+                    left = Finish(new ConditionalExpression(left, whenTrue, whenFalse), left);
                     continue;
                 }
 
@@ -268,7 +266,7 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    left = new IsExpression(left, pattern);
+                    left = Finish(new IsExpression(left, pattern), left);
                     break;
                 }
 
@@ -280,7 +278,7 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    left = new AsExpression(left, type);
+                    left = Finish(new AsExpression(left, type), left);
                     break;
                 }
 
@@ -303,7 +301,7 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    left = new WithExpression(left, initializer);
+                    left = Finish(new WithExpression(left, initializer), left);
                     break;
                 }
 
@@ -319,7 +317,7 @@ internal ref partial struct SyntaxParser
                         }
                     }
 
-                    left = new RangeExpression(left, end);
+                    left = Finish(new RangeExpression(left, end), left);
                     break;
                 }
 
@@ -331,7 +329,7 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    left = new BinaryExpression(left, op, right);
+                    left = Finish(new BinaryExpression(left, op, right), left);
                     break;
                 }
             }
@@ -513,7 +511,7 @@ internal ref partial struct SyntaxParser
             case TokenKind.StringLiteral:
             case TokenKind.InterpolatedString:
                 EatToken();
-                return token.Literal;
+                return Finish(token.Literal, token.Start);
 
             case TokenKind.Identifier:
                 return ParseIdentifierExpression();
@@ -539,7 +537,9 @@ internal ref partial struct SyntaxParser
         }
     }
 
-    private Expression ParseKeywordExpression(SyntaxToken token)
+    private Expression ParseKeywordExpression(SyntaxToken token) => Finish(ParseKeywordExpressionCore(token), token.Start);
+
+    private Expression ParseKeywordExpressionCore(SyntaxToken token)
     {
         switch (token.Text)
         {
@@ -690,7 +690,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            return new AliasQualifiedNameExpression(token.Text, ParseSimpleName());
+            return Finish(new AliasQualifiedNameExpression(token.Text, ParseSimpleName()), token.Start);
         }
 
         // var (a, b) in a deconstruction
@@ -711,20 +711,21 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private NameExpression ParseSimpleName()
     {
-        var name = EatToken().Text;
-        var typeArguments = TryParseTypeArgumentsInExpression();
-        return new NameExpression([name], typeArguments);
+        var token = EatToken();
+        var typeArguments = TryParseTypeArgumentsInExpression(out var closeDirectives);
+        return Finish(new NameExpression([token.Text], typeArguments) { CloseAngleNullableDirectives = closeDirectives }, token.Start);
     }
 
-    private List<TypeReference> TryParseTypeArgumentsInExpression()
+    private List<TypeReference> TryParseTypeArgumentsInExpression(out IReadOnlyList<NullableDirective> closeDirectives)
     {
+        closeDirectives = null;
         if (!IsPunctuator("<"))
         {
             return null;
         }
 
         var start = _position;
-        var typeArguments = ParseTypeArgumentList();
+        var typeArguments = ParseTypeArgumentList(out closeDirectives);
         if (typeArguments != null && IsTypeArgumentFollow(Current))
         {
             return typeArguments;
@@ -740,20 +741,31 @@ internal ref partial struct SyntaxParser
     private Expression TryParseDeconstructionDeclaration()
     {
         var start = _position;
-        EatToken();
+        var var = EatToken();
 
         var designation = ParseParenthesizedDesignation();
         if (designation != null && (IsPunctuator("=") || IsKeyword("in")))
         {
-            return new DeclarationExpression(new NamedTypeReference(new NameExpression(["var"])), designation);
+            return Finish(new DeclarationExpression(VarType(var), designation), var.Start);
         }
 
         _position = start;
         return null;
     }
 
+    /// <summary>
+    /// The type <c>var</c> of a deconstruction.
+    /// </summary>
+    private static NamedTypeReference VarType(SyntaxToken var)
+    {
+        var name = Finish(new NameExpression(["var"]), var.Start, var.End);
+        return Finish(new NamedTypeReference(name), var.Start, var.End);
+    }
+
     private ParenthesizedVariableDesignation ParseParenthesizedDesignation()
     {
+        EnsureSufficientStack();
+        var start = NodeStart;
         if (!TryEatPunctuator("("))
         {
             return null;
@@ -784,18 +796,19 @@ internal ref partial struct SyntaxParser
                 continue;
             }
 
-            return TryEatPunctuator(")") ? new ParenthesizedVariableDesignation(variables) : null;
+            return TryEatPunctuator(")") ? Finish(new ParenthesizedVariableDesignation(variables), start) : null;
         }
     }
 
     private VariableDesignation ParseSingleDesignation()
     {
+        var start = NodeStart;
         var name = TryEatIdentifier();
         return name switch
         {
             null => null,
-            "_" => new DiscardDesignation(),
-            _ => new SingleVariableDesignation(name),
+            "_" => Finish(new DiscardDesignation(), start),
+            _ => Finish(new SingleVariableDesignation(name), start),
         };
     }
 
@@ -806,14 +819,15 @@ internal ref partial struct SyntaxParser
     private DeclarationExpression TryParseDeclarationExpression()
     {
         var start = _position;
+        var spanStart = NodeStart;
 
         if (IsContextual("var") && Peek(1).IsPunctuator("("))
         {
-            EatToken();
+            var var = EatToken();
             var parenthesized = ParseParenthesizedDesignation();
             if (parenthesized != null && IsDeclarationExpressionFollow())
             {
-                return new DeclarationExpression(new NamedTypeReference(new NameExpression(["var"])), parenthesized);
+                return Finish(new DeclarationExpression(VarType(var), parenthesized), spanStart);
             }
 
             _position = start;
@@ -827,7 +841,7 @@ internal ref partial struct SyntaxParser
             var designation = ParseSingleDesignation();
             if (IsDeclarationExpressionFollow())
             {
-                return new DeclarationExpression(type, designation);
+                return Finish(new DeclarationExpression(type, designation), spanStart);
             }
         }
 
@@ -870,8 +884,9 @@ internal ref partial struct SyntaxParser
 
                     EatToken();
                     var name = EatToken().Text;
-                    var typeArguments = TryParseTypeArgumentsInExpression();
-                    expression = new MemberAccessExpression(name, expression, false, typeArguments, token.Text == "->");
+                    var typeArguments = TryParseTypeArgumentsInExpression(out var closeDirectives);
+                    var memberAccess = new MemberAccessExpression(name, expression, false, typeArguments, token.Text == "->") { CloseAngleNullableDirectives = closeDirectives };
+                    expression = Finish(memberAccess, expression);
                     break;
                 }
 
@@ -883,8 +898,9 @@ internal ref partial struct SyntaxParser
                         EatToken();
                         EatToken();
                         var name = EatToken().Text;
-                        var typeArguments = TryParseTypeArgumentsInExpression();
-                        expression = new MemberAccessExpression(name, expression, true, typeArguments);
+                        var typeArguments = TryParseTypeArgumentsInExpression(out var closeDirectives);
+                        var memberAccess = new MemberAccessExpression(name, expression, true, typeArguments) { CloseAngleNullableDirectives = closeDirectives };
+                        expression = Finish(memberAccess, expression);
                         break;
                     }
 
@@ -897,7 +913,7 @@ internal ref partial struct SyntaxParser
                             return null;
                         }
 
-                        expression = new ElementAccessExpression(expression, arguments, true);
+                        expression = Finish(new ElementAccessExpression(expression, arguments, true), expression);
                         break;
                     }
 
@@ -917,9 +933,11 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    expression = isNameOf && arguments is [{ Name: null, RefKind: RefKind.None } argument]
-                        ? new NameOfExpression(argument.Expression)
-                        : new InvocationExpression(expression, arguments);
+                    expression = Finish<Expression>(
+                        isNameOf && arguments is [{ Name: null, RefKind: RefKind.None } argument]
+                            ? new NameOfExpression(argument.Expression)
+                            : new InvocationExpression(expression, arguments),
+                        expression);
                     break;
                 }
 
@@ -931,23 +949,23 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    expression = new ElementAccessExpression(expression, arguments);
+                    expression = Finish(new ElementAccessExpression(expression, arguments), expression);
                     break;
                 }
 
                 case "++":
                     EatToken();
-                    expression = new UnaryExpression(UnaryOperator.Increment, expression, isPrefix: false);
+                    expression = Finish(new UnaryExpression(UnaryOperator.Increment, expression, isPrefix: false), expression);
                     break;
 
                 case "--":
                     EatToken();
-                    expression = new UnaryExpression(UnaryOperator.Decrement, expression, isPrefix: false);
+                    expression = Finish(new UnaryExpression(UnaryOperator.Decrement, expression, isPrefix: false), expression);
                     break;
 
                 case "!":
                     EatToken();
-                    expression = new UnaryExpression(UnaryOperator.NullForgiving, expression, isPrefix: false);
+                    expression = Finish(new UnaryExpression(UnaryOperator.NullForgiving, expression, isPrefix: false), expression);
                     break;
 
                 default:
@@ -1018,6 +1036,7 @@ internal ref partial struct SyntaxParser
 
     private Argument ParseArgument()
     {
+        var start = NodeStart;
         string name = null;
         if (Current.IsIdentifier && Peek(1).IsPunctuator(":"))
         {
@@ -1046,7 +1065,7 @@ internal ref partial struct SyntaxParser
         }
 
         expression ??= ParseExpression();
-        return expression == null ? null : new Argument(expression, name, refKind);
+        return expression == null ? null : Finish(new Argument(expression, name, refKind), start);
     }
 
     // ========================================
@@ -1056,7 +1075,7 @@ internal ref partial struct SyntaxParser
     private Expression ParseParenthesizedExpressionOrCast()
     {
         var start = _position;
-        EatToken();
+        var spanStart = EatToken().Start;
 
         var type = ParseType(TypeMode.Normal);
         if (type != null && IsPunctuator(")") && IsCastFollow(type, Peek(1)))
@@ -1065,7 +1084,7 @@ internal ref partial struct SyntaxParser
             var operand = ParseSubExpression(Precedence.Cast);
             if (operand != null)
             {
-                return new CastExpression(type, operand);
+                return Finish(new CastExpression(type, operand), spanStart);
             }
         }
 
@@ -1076,6 +1095,7 @@ internal ref partial struct SyntaxParser
         _noLambdaArrow = false;
         try
         {
+            var firstStart = NodeStart;
             var first = ParseTupleElement(out var firstName, out var isDeclaration);
             if (first == null)
             {
@@ -1084,22 +1104,23 @@ internal ref partial struct SyntaxParser
 
             if (TryEatPunctuator(")"))
             {
-                return firstName == null && !isDeclaration ? ParsePostfix(new ParenthesizedExpression(first)) : null;
+                return firstName == null && !isDeclaration ? ParsePostfix(Finish(new ParenthesizedExpression(first), spanStart)) : null;
             }
 
-            var elements = new List<TupleExpressionElement> { new(first, firstName) };
+            var elements = new List<TupleExpressionElement> { Finish(new TupleExpressionElement(first, firstName), firstStart) };
             while (TryEatPunctuator(","))
             {
+                var elementStart = NodeStart;
                 var element = ParseTupleElement(out var name, out _);
                 if (element == null)
                 {
                     return null;
                 }
 
-                elements.Add(new TupleExpressionElement(element, name));
+                elements.Add(Finish(new TupleExpressionElement(element, name), elementStart));
             }
 
-            return TryEatPunctuator(")") ? ParsePostfix(new TupleExpression(elements)) : null;
+            return TryEatPunctuator(")") ? ParsePostfix(Finish(new TupleExpression(elements), spanStart)) : null;
         }
         finally
         {
@@ -1166,6 +1187,12 @@ internal ref partial struct SyntaxParser
     // ========================================
 
     private Expression ParseNewExpression()
+    {
+        var start = NodeStart;
+        return Finish(ParseNewExpressionCore(), start);
+    }
+
+    private Expression ParseNewExpressionCore()
     {
         EatToken();
 
@@ -1234,13 +1261,15 @@ internal ref partial struct SyntaxParser
         {
             var beforeRank = _position;
             var rank = ParseRankSpecifier();
+            var rankEnd = _position;
             if (rank == 0 || !TryEatPunctuator("?"))
             {
                 _position = beforeRank;
                 break;
             }
 
-            type = new NullableTypeReference(new ArrayTypeReference(type, rank));
+            var arrayType = Finish(new ArrayTypeReference(type, rank), type.Span.Start, rankEnd);
+            type = Finish(new NullableTypeReference(arrayType), type);
         }
 
         if (IsPunctuator("["))
@@ -1349,6 +1378,12 @@ internal ref partial struct SyntaxParser
 
     private Expression ParseStackAllocExpression()
     {
+        var start = NodeStart;
+        return Finish(ParseStackAllocExpressionCore(), start);
+    }
+
+    private Expression ParseStackAllocExpressionCore()
+    {
         EatToken();
 
         if (IsPunctuator("["))
@@ -1438,6 +1473,7 @@ internal ref partial struct SyntaxParser
 
     private static Expression ParseObjectInitializerMember(ref SyntaxParser parser)
     {
+        var start = parser.NodeStart;
         Expression target;
         if (parser.IsPunctuator("["))
         {
@@ -1447,7 +1483,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            target = new ImplicitElementAccessExpression(arguments);
+            target = parser.Finish(new ImplicitElementAccessExpression(arguments), start);
         }
         else
         {
@@ -1457,7 +1493,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            target = new NameExpression([name]);
+            target = parser.Finish(new NameExpression([name]), start);
         }
 
         if (!parser.TryEatPunctuator("="))
@@ -1466,7 +1502,7 @@ internal ref partial struct SyntaxParser
         }
 
         var value = parser.IsPunctuator("{") ? parser.ParseObjectOrCollectionInitializer() : parser.ParseExpression();
-        return value == null ? null : new BinaryExpression(target, BinaryOperator.Assign, value);
+        return value == null ? null : parser.Finish(new BinaryExpression(target, BinaryOperator.Assign, value), start);
     }
 
     private static Expression ParseCollectionElement(ref SyntaxParser parser)
@@ -1498,6 +1534,9 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private InitializerExpression ParseInitializer(InitializerKind kind, ElementParser element)
     {
+        // Initializers nest without expressions between them: new C { A = { B = { } } }
+        EnsureSufficientStack();
+        var start = NodeStart;
         if (!TryEatPunctuator("{"))
         {
             return null;
@@ -1527,7 +1566,7 @@ internal ref partial struct SyntaxParser
                 hasTrailingComma = IsPunctuator("}");
             }
 
-            return TryEatPunctuator("}") ? new InitializerExpression(kind, expressions, hasTrailingComma) : null;
+            return TryEatPunctuator("}") ? Finish(new InitializerExpression(kind, expressions, hasTrailingComma), start) : null;
         }
         finally
         {
@@ -1542,6 +1581,7 @@ internal ref partial struct SyntaxParser
         var hasTrailingComma = false;
         while (!IsPunctuator("}"))
         {
+            var memberStart = NodeStart;
             string name = null;
             if (Current.IsIdentifier && Peek(1).IsPunctuator("="))
             {
@@ -1555,7 +1595,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            members.Add(new AnonymousObjectMember(expression, name));
+            members.Add(Finish(new AnonymousObjectMember(expression, name), memberStart));
 
             if (!TryEatPunctuator(","))
             {
@@ -1573,7 +1613,7 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private Expression ParseCollectionExpression()
     {
-        EatToken();
+        var start = EatToken().Start;
 
         var noLambdaArrow = _noLambdaArrow;
         _noLambdaArrow = false;
@@ -1584,10 +1624,11 @@ internal ref partial struct SyntaxParser
             while (!IsPunctuator("]"))
             {
                 Expression element;
+                var elementStart = NodeStart;
                 if (TryEatPunctuator(".."))
                 {
                     var spread = ParseExpression();
-                    element = spread == null ? null : new SpreadElement(spread);
+                    element = spread == null ? null : Finish(new SpreadElement(spread), elementStart);
                 }
                 else
                 {
@@ -1609,7 +1650,7 @@ internal ref partial struct SyntaxParser
                 hasTrailingComma = IsPunctuator("]");
             }
 
-            return TryEatPunctuator("]") ? new CollectionExpression(elements, hasTrailingComma) : null;
+            return TryEatPunctuator("]") ? Finish(new CollectionExpression(elements, hasTrailingComma), start) : null;
         }
         finally
         {
@@ -1636,6 +1677,7 @@ internal ref partial struct SyntaxParser
             while (!IsPunctuator("}"))
             {
                 _noLambdaArrow = false;
+                var armStart = NodeStart;
                 var pattern = ParsePattern();
                 if (pattern == null)
                 {
@@ -1665,7 +1707,7 @@ internal ref partial struct SyntaxParser
                     return null;
                 }
 
-                arms.Add(new SwitchExpressionArm(pattern, expression, guard));
+                arms.Add(Finish(new SwitchExpressionArm(pattern, expression, guard), armStart));
 
                 if (!TryEatPunctuator(","))
                 {
@@ -1675,7 +1717,7 @@ internal ref partial struct SyntaxParser
                 hasTrailingComma = IsPunctuator("}");
             }
 
-            return TryEatPunctuator("}") ? new SwitchExpression(governing, arms, hasTrailingComma) : null;
+            return TryEatPunctuator("}") ? Finish(new SwitchExpression(governing, arms, hasTrailingComma), governing) : null;
         }
         finally
         {
@@ -1760,6 +1802,11 @@ internal ref partial struct SyntaxParser
 
         // Explicit return type: int (string s) => s.Length. A nullable name reads as a conditional:
         // c ? () => a : b
+        if (!CanStartReturnTypeOfLambda())
+        {
+            return false;
+        }
+
         var returnType = ParseReturnType();
         if (returnType != null && IsPunctuator("(") && returnType is not NamedTypeReference { IsNullable: true, TypeArguments: null, Qualifier: null, Alias: null })
         {
@@ -1770,10 +1817,59 @@ internal ref partial struct SyntaxParser
         return false;
     }
 
+    /// <summary>
+    /// Cheap check before parsing a type in <see cref="ScanLambda"/>, which runs for most expressions: a
+    /// dotted name or a predefined type is the return type of a lambda only when '(' or a token that
+    /// continues a type follows it.
+    /// </summary>
+    private bool CanStartReturnTypeOfLambda()
+    {
+        var next = TokenAfterSimpleType(out var isSimpleType);
+        return !isSimpleType || next.IsPunctuator("(") || IsTypeContinuation(next);
+    }
+
+    /// <summary>
+    /// When the input starts with a dotted name or a predefined type, the token after it; lets callers skip
+    /// parsing a type that cannot be followed by what they look for. Does not move the position.
+    /// </summary>
+    private SyntaxToken TokenAfterSimpleType(out bool isSimpleType)
+    {
+        var token = Current;
+        isSimpleType = true;
+        if (token.IsIdentifier)
+        {
+            token = TokenAt(token.End);
+            while (token.IsPunctuator(".") && TokenAt(token.End).IsIdentifier)
+            {
+                token = TokenAt(TokenAt(token.End).End);
+            }
+
+            return token;
+        }
+
+        if (IsPredefinedTypeKeyword(token))
+        {
+            return TokenAt(token.End);
+        }
+
+        isSimpleType = false;
+        return token;
+    }
+
+    /// <summary>
+    /// Punctuators that continue a type after a name: type arguments, alias qualifier, nullable, array, pointer.
+    /// </summary>
+    private static bool IsTypeContinuation(SyntaxToken token) => token.Kind == TokenKind.Punctuator && token.Text is "<" or "::" or "?" or "[" or "*";
+
     private Expression ParseLambda(int start)
     {
         _position = start;
+        var spanStart = NodeStart;
+        return Finish(ParseLambdaCore(), spanStart);
+    }
 
+    private Expression ParseLambdaCore()
+    {
         List<AttributeSection> attributes = null;
         if (IsPunctuator("["))
         {
@@ -1809,12 +1905,13 @@ internal ref partial struct SyntaxParser
         // x => ...
         if (Current.IsIdentifier && Peek(1).IsPunctuator("=>"))
         {
-            var name = EatToken().Text;
+            var name = EatToken();
+            var parameter = Finish(new Parameter(null, name.Text), name.Start, name.End);
             EatToken();
             var simpleBody = ParseLambdaBody();
             return simpleBody == null
                 ? null
-                : new LambdaExpression(simpleBody, [new Parameter(null, name)], isAsync, modifiers, null, attributes, hasParenthesizedParameters: false);
+                : new LambdaExpression(simpleBody, [parameter], isAsync, modifiers, null, attributes, hasParenthesizedParameters: false);
         }
 
         TypeReference returnType = null;
@@ -1841,14 +1938,15 @@ internal ref partial struct SyntaxParser
 
     private LambdaBody ParseLambdaBody()
     {
+        var start = NodeStart;
         if (IsPunctuator("{"))
         {
             var block = ParseBlock();
-            return block == null ? null : new BlockLambdaBody(block);
+            return block == null ? null : Finish(new BlockLambdaBody(block), start);
         }
 
         var expression = ParseExpression();
-        return expression == null ? null : new ExpressionLambdaBody(expression);
+        return expression == null ? null : Finish(new ExpressionLambdaBody(expression), start);
     }
 
     /// <summary>
@@ -1856,7 +1954,8 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private Expression ParseAnonymousMethod(List<Modifiers> modifiers)
     {
-        EatToken();
+        // Lambda modifiers are part of the span set by ParseLambda
+        var start = EatToken().Start;
 
         List<Parameter> parameters = null;
         if (IsPunctuator("("))
@@ -1874,7 +1973,7 @@ internal ref partial struct SyntaxParser
         }
 
         var block = ParseBlock();
-        return block == null ? null : new AnonymousMethodExpression(block, parameters, modifiers);
+        return block == null ? null : Finish(new AnonymousMethodExpression(block, parameters, modifiers), start);
     }
 
     // ========================================
@@ -1925,6 +2024,7 @@ internal ref partial struct SyntaxParser
         _queryDepth++;
         try
         {
+            var start = NodeStart;
             var from = ParseFromClause();
             if (from == null)
             {
@@ -1932,7 +2032,7 @@ internal ref partial struct SyntaxParser
             }
 
             var body = ParseQueryBody(out var selectOrGroup, out var continuation);
-            return body == null ? null : new QueryExpression(from, body, selectOrGroup, continuation);
+            return body == null ? null : Finish(new QueryExpression(from, body, selectOrGroup, continuation), start);
         }
         finally
         {
@@ -1945,7 +2045,7 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private FromClause ParseFromClause()
     {
-        EatToken();
+        var start = EatToken().Start;
 
         TypeReference type = null;
         if (!(Current.IsIdentifier && Peek(1).IsKeyword("in")))
@@ -1964,11 +2064,12 @@ internal ref partial struct SyntaxParser
         }
 
         var expression = ParseExpression();
-        return expression == null ? null : new FromClause(identifier, expression, type);
+        return expression == null ? null : Finish(new FromClause(identifier, expression, type), start);
     }
 
     private List<QueryClause> ParseQueryBody(out SelectOrGroupClause selectOrGroup, out QueryContinuation continuation)
     {
+        EnsureSufficientStack();
         selectOrGroup = null;
         continuation = null;
 
@@ -1976,6 +2077,7 @@ internal ref partial struct SyntaxParser
         while (true)
         {
             QueryClause clause;
+            var clauseStart = NodeStart;
             if (IsContextual("from"))
             {
                 clause = ParseFromClause();
@@ -1990,13 +2092,13 @@ internal ref partial struct SyntaxParser
                 }
 
                 var expression = ParseExpression();
-                clause = expression == null ? null : new LetClause(identifier, expression);
+                clause = expression == null ? null : Finish(new LetClause(identifier, expression), clauseStart);
             }
             else if (IsContextual("where"))
             {
                 EatToken();
                 var condition = ParseExpression();
-                clause = condition == null ? null : new WhereClause(condition);
+                clause = condition == null ? null : Finish(new WhereClause(condition), clauseStart);
             }
             else if (IsContextual("join"))
             {
@@ -2019,6 +2121,7 @@ internal ref partial struct SyntaxParser
             clauses.Add(clause);
         }
 
+        var selectStart = NodeStart;
         if (TryEatContextual("select"))
         {
             var expression = ParseExpression();
@@ -2027,7 +2130,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            selectOrGroup = new SelectClause(expression);
+            selectOrGroup = Finish(new SelectClause(expression), selectStart);
         }
         else if (TryEatContextual("group"))
         {
@@ -2043,13 +2146,14 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            selectOrGroup = new GroupClause(grouped, key);
+            selectOrGroup = Finish(new GroupClause(grouped, key), selectStart);
         }
         else
         {
             return null;
         }
 
+        var intoStart = NodeStart;
         if (TryEatContextual("into"))
         {
             var identifier = TryEatIdentifier();
@@ -2064,7 +2168,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            continuation = new QueryContinuation(identifier, body, continuationSelect, nested);
+            continuation = Finish(new QueryContinuation(identifier, body, continuationSelect, nested), intoStart);
         }
 
         return clauses;
@@ -2075,7 +2179,7 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private QueryClause ParseJoinClause()
     {
-        EatToken();
+        var start = EatToken().Start;
 
         TypeReference type = null;
         if (!(Current.IsIdentifier && Peek(1).IsKeyword("in")))
@@ -2121,16 +2225,17 @@ internal ref partial struct SyntaxParser
             }
         }
 
-        return new JoinClause(identifier, inExpression, left, right, type, into);
+        return Finish(new JoinClause(identifier, inExpression, left, right, type, into), start);
     }
 
     private QueryClause ParseOrderByClause()
     {
-        EatToken();
+        var start = EatToken().Start;
 
         var orderings = new List<Ordering>();
         while (true)
         {
+            var orderingStart = NodeStart;
             var expression = ParseExpression();
             if (expression == null)
             {
@@ -2149,11 +2254,11 @@ internal ref partial struct SyntaxParser
                 isExplicit = true;
             }
 
-            orderings.Add(new Ordering(expression, direction, isExplicit));
+            orderings.Add(Finish(new Ordering(expression, direction, isExplicit), orderingStart));
 
             if (!TryEatPunctuator(","))
             {
-                return new OrderByClause(orderings);
+                return Finish(new OrderByClause(orderings), start);
             }
         }
     }

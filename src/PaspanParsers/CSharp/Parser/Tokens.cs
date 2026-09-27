@@ -119,7 +119,10 @@ internal sealed class InterpolatedStringToken(Parser<Expression> expression) : P
         {
             if (end > textStart)
             {
-                contents.Add(new InterpolatedStringText(Encoding.UTF8.GetString(source[textStart..end]), null));
+                contents.Add(new InterpolatedStringText(Encoding.UTF8.GetString(source[textStart..end]), null)
+                {
+                    Span = new TextSpan(start + textStart, start + end),
+                });
             }
         }
 
@@ -187,7 +190,7 @@ internal sealed class InterpolatedStringToken(Parser<Expression> expression) : P
                 AddText(s, holeStart);
 
                 reader.RollBackState(start + holeStart + braces);
-                if (!ParseInterpolation(ref reader, context, braces, out var interpolation))
+                if (!ParseInterpolation(ref reader, context, braces, start + holeStart, out var interpolation))
                 {
                     return false;
                 }
@@ -273,7 +276,7 @@ internal sealed class InterpolatedStringToken(Parser<Expression> expression) : P
         return true;
     }
 
-    private bool ParseInterpolation(ref SpanReader reader, ParseContext context, int braces, out Interpolation interpolation)
+    private bool ParseInterpolation(ref SpanReader reader, ParseContext context, int braces, int holeStart, out Interpolation interpolation)
     {
         interpolation = null;
 
@@ -321,7 +324,10 @@ internal sealed class InterpolatedStringToken(Parser<Expression> expression) : P
         }
 
         reader.Read(braces);
-        interpolation = new Interpolation(expressionResult.Value, alignment, format);
+        interpolation = new Interpolation(expressionResult.Value, alignment, format)
+        {
+            Span = new TextSpan(holeStart, reader.GetCurrentPosition()),
+        };
         return true;
     }
 
@@ -345,7 +351,7 @@ internal sealed class InterpolatedStringToken(Parser<Expression> expression) : P
         {
             if (contents[n] is InterpolatedStringText text)
             {
-                contents[n] = new InterpolatedStringText(text.Text, DecodeText(text.Text, mode));
+                contents[n] = new InterpolatedStringText(text.Text, DecodeText(text.Text, mode)) { Span = text.Span };
             }
         }
     }
@@ -426,7 +432,7 @@ internal sealed class InterpolatedStringToken(Parser<Expression> expression) : P
                 builder.Append(startsLine && line.StartsWith(indentation, StringComparison.Ordinal) ? line[indentation.Length..] : line);
             }
 
-            contents[n] = new InterpolatedStringText(text.Text, builder.ToString());
+            contents[n] = new InterpolatedStringText(text.Text, builder.ToString()) { Span = text.Span };
             atLineStart = false;
         }
     }

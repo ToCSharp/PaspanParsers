@@ -21,4 +21,13 @@ public sealed class CSharpParseContext(CSharpParseOptions options) : ParseContex
     internal SyntaxCache SyntaxCache => _syntaxCache ??= new SyntaxCache(DefinedSymbols);
 
     private SyntaxCache _syntaxCache;
+
+    /// <summary>
+    /// Lets the next parse reuse the caches; the context must not be used to parse again.
+    /// </summary>
+    internal void ReleaseCaches()
+    {
+        _syntaxCache?.Release();
+        _syntaxCache = null;
+    }
 }

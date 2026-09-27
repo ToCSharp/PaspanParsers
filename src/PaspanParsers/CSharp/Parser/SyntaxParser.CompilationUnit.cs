@@ -38,10 +38,14 @@ internal ref partial struct SyntaxParser
             members.Add(member);
         }
 
-        return new CompilationUnit(NullIfEmpty(externs), NullIfEmpty(usings), NullIfEmpty(attributes), NullIfEmpty(members))
-        {
-            EndNullableDirectives = Current.NullableDirectives,
-        };
+        // The compilation unit spans the whole input, with the trivia around the tokens
+        return Finish(
+            new CompilationUnit(NullIfEmpty(externs), NullIfEmpty(usings), NullIfEmpty(attributes), NullIfEmpty(members))
+            {
+                EndNullableDirectives = Current.NullableDirectives,
+            },
+            0,
+            _source.Length);
     }
 
     /// <summary>
@@ -65,21 +69,23 @@ internal ref partial struct SyntaxParser
 
             if (IsKeyword("extern") && Peek(1).IsContextual("alias") && Peek(2).IsIdentifier && Peek(3).IsPunctuator(";"))
             {
+                var start = EatToken().Start;
                 EatToken();
+                var identifier = EatToken().Text;
                 EatToken();
-                externs.Add(new ExternAliasDirective(EatToken().Text) { NullableDirectives = nullableDirectives });
-                EatToken();
+                externs.Add(Finish(new ExternAliasDirective(identifier) { NullableDirectives = nullableDirectives }, start));
                 continue;
             }
 
             if (IsKeyword("using") || (IsContextual("global") && Peek(1).IsKeyword("using")))
             {
                 var start = _position;
+                var spanStart = NodeStart;
                 var directive = ParseUsingDirective();
                 if (directive != null)
                 {
                     directive.NullableDirectives = nullableDirectives;
-                    usings.Add(directive);
+                    usings.Add(Finish(directive, spanStart));
                     continue;
                 }
 
@@ -138,7 +144,7 @@ internal ref partial struct SyntaxParser
     private static NameExpression AsName(TypeReference type)
     {
         return type is NamedTypeReference { Qualifier: null, IsNullable: false } named
-            ? new NameExpression(named.Name.Parts, named.TypeArguments, named.Alias)
+            ? Finish(new NameExpression(named.Name.Parts, named.TypeArguments, named.Alias) { CloseAngleNullableDirectives = named.CloseAngleNullableDirectives }, named.Span.Start, named.Span.End)
             : null;
     }
 }

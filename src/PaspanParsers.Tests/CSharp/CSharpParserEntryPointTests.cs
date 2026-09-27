@@ -35,6 +35,20 @@ public class CSharpParserEntryPointTests
     }
 
     [TestMethod]
+    [DataRow("class A\n{\n    void M() { x = ; }\n}", 3, 20, "Unexpected ';'")]
+    [DataRow("class A { } }", 1, 13, "Unexpected '}'")]
+    [DataRow("class A {", 1, 10, "Unexpected end of file")]
+    [DataRow("// привет\nclass { }", 2, 7, "Unexpected '{'")]
+    public void TryParse_ReportsWhereTheInputStopsParsing(string code, int line, int column, string message)
+    {
+        Assert.IsFalse(CSharpParser.TryParse(code, out var result, out var error));
+
+        Assert.IsNull(result);
+        Assert.AreEqual(message, error.Message);
+        Assert.AreEqual((line, column), (error.Line, error.Column));
+    }
+
+    [TestMethod]
     public void Parse_RejectsTrailingGarbage()
     {
         Assert.IsNull(CSharpParser.Parse("class A { } class"));

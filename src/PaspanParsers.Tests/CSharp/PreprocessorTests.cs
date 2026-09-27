@@ -255,6 +255,40 @@ public class PreprocessorTests
     }
 
     [TestMethod]
+    public void Nullable_InsideTypeArgumentLists()
+    {
+        const string code = """
+            class C
+            {
+                public static IEnumerable<
+            #nullable disable
+                    TResult
+            #nullable restore
+                    > Cast<TResult>(IEnumerable<KeyValuePair<
+            #nullable disable
+                    string, string
+            #nullable restore
+                    >> source) => F<
+            #nullable disable
+                    object
+            #nullable restore
+                    >(source).G<
+            #nullable disable
+                    string
+            #nullable restore
+                    >();
+            }
+            """;
+
+        var method = (MethodDeclaration)((ClassDeclaration)Unit(code).Members[0]).Members[0];
+        var returnType = (NamedTypeReference)method.ReturnType;
+        Assert.AreEqual(NullableSetting.Disable, returnType.TypeArguments[0].NullableDirectives[0].Setting);
+        Assert.AreEqual(NullableSetting.Restore, returnType.CloseAngleNullableDirectives[0].Setting);
+
+        AssertOracle(code);
+    }
+
+    [TestMethod]
     public void ParseContext_DefinedSymbols_ReflectDefines()
     {
         var context = new CSharpParseContext(new CSharpParseOptions(preprocessorSymbols: ["A"]));

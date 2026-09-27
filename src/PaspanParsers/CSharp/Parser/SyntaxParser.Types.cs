@@ -49,6 +49,9 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private TypeReference ParseType(TypeMode mode, bool allowRanks = true)
     {
+        // Tuple types and type arguments nest
+        EnsureSufficientStack();
+
         var start = _position;
         var type = ParseUnderlyingType();
         if (type == null)
@@ -72,6 +75,7 @@ internal ref partial struct SyntaxParser
     private TypeReference ParseReturnType()
     {
         var start = _position;
+        var spanStart = NodeStart;
         if (TryEatKeyword("ref"))
         {
             var isReadOnly = TryEatKeyword("readonly");
@@ -82,7 +86,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            return new RefTypeReference(type, isReadOnly);
+            return Finish(new RefTypeReference(type, isReadOnly), spanStart);
         }
 
         return ParseType(TypeMode.Normal);
@@ -97,7 +101,7 @@ internal ref partial struct SyntaxParser
                 if (TryGetPredefinedType(token.Text, out var predefined))
                 {
                     EatToken();
-                    return new PredefinedTypeReference(predefined);
+                    return Finish(new PredefinedTypeReference(predefined), token.Start);
                 }
 
                 if (token.Text == "delegate" && Peek(1).IsPunctuator("*"))
@@ -131,14 +135,14 @@ internal ref partial struct SyntaxParser
             if (token.Text == "?" && !IsNullableType(type) && (mode == TypeMode.Normal || IsNullableQuestionInExpression()))
             {
                 EatToken();
-                type = MakeNullable(type);
+                type = Finish(MakeNullable(type), type);
                 continue;
             }
 
             if (token.Text == "*" && mode == TypeMode.Normal)
             {
                 EatToken();
-                type = new PointerTypeReference(type);
+                type = Finish(new PointerTypeReference(type), type);
                 continue;
             }
 
@@ -150,7 +154,7 @@ internal ref partial struct SyntaxParser
                     return null;
                 }
 
-                type = new ArrayTypeReference(type, rank);
+                type = Finish(new ArrayTypeReference(type, rank), type);
                 continue;
             }
 
@@ -184,7 +188,10 @@ internal ref partial struct SyntaxParser
 
     private static TypeReference MakeNullable(TypeReference type) => type switch
     {
-        NamedTypeReference named => new NamedTypeReference(named.Name, named.TypeArguments, true, named.Qualifier, named.Alias),
+        NamedTypeReference named => new NamedTypeReference(named.Name, named.TypeArguments, true, named.Qualifier, named.Alias)
+        {
+            CloseAngleNullableDirectives = named.CloseAngleNullableDirectives,
+        },
         PredefinedTypeReference predefined => new PredefinedTypeReference(predefined.Type, true),
         _ => new NullableTypeReference(type),
     };
@@ -223,6 +230,7 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private TypeReference ParseNamedType()
     {
+        var start = NodeStart;
         string alias = null;
         if (Peek(1).IsPunctuator("::"))
         {
@@ -236,15 +244,18 @@ internal ref partial struct SyntaxParser
 
         TypeReference qualifier = null;
         var parts = new List<string>();
+        var partsStart = NodeStart;
         while (true)
         {
             parts.Add(EatToken().Text);
+            var partsEnd = _position;
 
             List<TypeReference> typeArguments = null;
+            IReadOnlyList<NullableDirective> closeDirectives = null;
             if (IsPunctuator("<"))
             {
                 var beforeArguments = _position;
-                typeArguments = ParseTypeArgumentList();
+                typeArguments = ParseTypeArgumentList(out closeDirectives);
                 if (typeArguments == null)
                 {
                     _position = beforeArguments;
@@ -255,25 +266,36 @@ internal ref partial struct SyntaxParser
             {
                 if (typeArguments != null)
                 {
-                    qualifier = new NamedTypeReference(new NameExpression(parts), typeArguments, false, qualifier, alias);
+                    var qualifierName = Finish(new NameExpression(parts), partsStart, partsEnd);
+                    var qualifierType = new NamedTypeReference(qualifierName, typeArguments, false, qualifier, alias) { CloseAngleNullableDirectives = closeDirectives };
+                    qualifier = Finish(qualifierType, start);
                     alias = null;
                     parts = [];
                 }
 
                 EatToken();
+                if (parts.Count == 0)
+                {
+                    partsStart = NodeStart;
+                }
+
                 continue;
             }
 
-            return new NamedTypeReference(new NameExpression(parts), typeArguments, false, qualifier, alias);
+            var name = Finish(new NameExpression(parts), partsStart, partsEnd);
+            return Finish(new NamedTypeReference(name, typeArguments, false, qualifier, alias) { CloseAngleNullableDirectives = closeDirectives }, start);
         }
     }
 
     /// <summary>
     /// '&lt;' Type (',' Type)* '&gt;', or '&lt;' ','* '&gt;' for unbound generic types inside typeof.
     /// Returns null without restoring the position when the input is not a type argument list.
+    /// <paramref name="closeDirectives"/> are the <c>#nullable</c> directives before the '&gt;'; those before
+    /// a type argument are in its <see cref="TypeReference.NullableDirectives"/>.
     /// </summary>
-    private List<TypeReference> ParseTypeArgumentList()
+    private List<TypeReference> ParseTypeArgumentList(out IReadOnlyList<NullableDirective> closeDirectives)
     {
+        closeDirectives = null;
         if (!TryEatPunctuator("<"))
         {
             return null;
@@ -283,10 +305,10 @@ internal ref partial struct SyntaxParser
 
         if (_allowOmittedTypeArguments && (IsPunctuator(">") || IsPunctuator(",")))
         {
-            arguments.Add(new OmittedTypeReference());
+            arguments.Add(Finish(new OmittedTypeReference(), NodeStart));
             while (TryEatPunctuator(","))
             {
-                arguments.Add(new OmittedTypeReference());
+                arguments.Add(Finish(new OmittedTypeReference(), NodeStart));
             }
 
             return TryEatPunctuator(">") ? arguments : null;
@@ -294,10 +316,16 @@ internal ref partial struct SyntaxParser
 
         while (true)
         {
+            var nullableDirectives = Current.NullableDirectives;
             var type = ParseType(TypeMode.Normal);
             if (type == null)
             {
                 return null;
+            }
+
+            if (nullableDirectives != null)
+            {
+                type.NullableDirectives = nullableDirectives;
             }
 
             arguments.Add(type);
@@ -307,6 +335,7 @@ internal ref partial struct SyntaxParser
                 continue;
             }
 
+            closeDirectives = Current.NullableDirectives;
             return TryEatPunctuator(">") ? arguments : null;
         }
     }
@@ -316,10 +345,32 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private TypeReference ParseTupleType()
     {
-        EatToken();
+        // Each '(' of ((((a)))) and (((a, b), c), d) tries a tuple type for a cast; remembering the
+        // results keeps it linear. A tuple type does not depend on the context it is parsed in.
+        var cache = _allowOmittedTypeArguments ? _cache.TupleTypesWithOmittedArguments : _cache.TupleTypes;
+        if (cache.TryGetValue(_position, out var cached))
+        {
+            if (cached.Type != null)
+            {
+                _position = cached.End;
+            }
+
+            return cached.Type;
+        }
+
+        var position = _position;
+        var type = ParseTupleTypeCore();
+        cache[position] = (type, _position);
+        return type;
+    }
+
+    private TypeReference ParseTupleTypeCore()
+    {
+        var start = EatToken().Start;
         var elements = new List<TupleElement>();
         while (true)
         {
+            var elementStart = NodeStart;
             var type = ParseType(TypeMode.Normal);
             if (type == null)
             {
@@ -332,7 +383,7 @@ internal ref partial struct SyntaxParser
                 name = EatToken().Text;
             }
 
-            elements.Add(new TupleElement(type, name));
+            elements.Add(Finish(new TupleElement(type, name), elementStart));
 
             if (TryEatPunctuator(","))
             {
@@ -341,7 +392,7 @@ internal ref partial struct SyntaxParser
 
             if (TryEatPunctuator(")") && elements.Count >= 2)
             {
-                return new TupleTypeReference(elements);
+                return Finish(new TupleTypeReference(elements), start);
             }
 
             return null;
@@ -353,7 +404,7 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private TypeReference ParseFunctionPointerType()
     {
-        EatToken();
+        var start = EatToken().Start;
         EatToken();
 
         string callingConvention = null;
@@ -398,6 +449,7 @@ internal ref partial struct SyntaxParser
         var parameters = new List<FunctionPointerParameter>();
         while (true)
         {
+            var parameterStart = NodeStart;
             var modifiers = new List<ParameterModifier>();
             while (true)
             {
@@ -429,7 +481,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            parameters.Add(new FunctionPointerParameter(type, modifiers.Count != 0 ? modifiers : null));
+            parameters.Add(Finish(new FunctionPointerParameter(type, modifiers.Count != 0 ? modifiers : null), parameterStart));
 
             if (TryEatPunctuator(","))
             {
@@ -441,7 +493,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            return new FunctionPointerTypeReference(parameters, callingConvention, unmanagedConventions);
+            return Finish(new FunctionPointerTypeReference(parameters, callingConvention, unmanagedConventions), start);
         }
     }
 

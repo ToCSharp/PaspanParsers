@@ -178,6 +178,8 @@ internal sealed class Preprocessor
                 var directive = ReadNullableDirective(s, ref i, lineEnd);
                 if (directive != null)
                 {
+                    // Like in Roslyn, the directive runs to the end of the line
+                    directive.Span = new TextSpan(hash, lineEnd);
                     (nullableDirectives ??= []).Add(directive);
                 }
 
@@ -386,6 +388,9 @@ internal sealed class Preprocessor
 
     private static bool EvaluateUnary(ReadOnlySpan<byte> s, ref int i, HashSet<string> symbols)
     {
+        // Parentheses and '!' nest; see SyntaxParser.EnsureSufficientStack
+        System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
+
         if (TryEat(s, ref i, "!"u8))
         {
             return !EvaluateUnary(s, ref i, symbols);

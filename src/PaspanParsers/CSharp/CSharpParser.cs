@@ -9,6 +9,11 @@ namespace PaspanParsers.CSharp;
 /// </summary>
 public partial class CSharpParser
 {
+    /// <summary>
+    /// The stack of the thread that parses input nested too deeply for the caller's stack.
+    /// </summary>
+    private const int LargeStackSize = 256 * 1024 * 1024;
+
     public static readonly Parser<CompilationUnit> CompilationUnitParser =
         WithTrivia(new SyntaxRuleParser<CompilationUnit>(SyntaxParser.ParseCompilationUnitRule));
 
@@ -22,17 +27,76 @@ public partial class CSharpParser
         return TryParse(input, null, out result, out error);
     }
 
+    /// <summary>
+    /// Parses <paramref name="input"/>. When it is not valid C#, returns false and an <paramref name="error"/>
+    /// at the token after the furthest token the parser could consume.
+    /// </summary>
     public static bool TryParse(string input, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
+    {
+        var source = GetUtf8Source(input);
+        try
+        {
+            return TryParse(source, options, out result, out error);
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            // Deeply nested input: parse again on a thread with a large stack
+        }
+
+        CompilationUnit largeStackResult = null;
+        ParseError largeStackError = null;
+        var success = false;
+        var thread = new Thread(
+            () =>
+            {
+                try
+                {
+                    success = TryParse(source, options, out largeStackResult, out largeStackError);
+                }
+                catch (InsufficientExecutionStackException)
+                {
+                    largeStackError = new ParseError { Message = "The input is nested too deeply." };
+                }
+            },
+            LargeStackSize);
+        thread.Start();
+        thread.Join();
+
+        result = largeStackResult;
+        error = largeStackError;
+        return success;
+    }
+
+    private static bool TryParse(byte[] source, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
+    {
+        var reader = new SpanReader(source);
+        var context = new CSharpParseContext(options);
+        try
+        {
+            if (CompilationUnitParser.TryParse(ref reader, context, out result, out error))
+            {
+                return true;
+            }
+
+            error ??= SyntaxParser.DescribeFailure(source, context);
+            return false;
+        }
+        finally
+        {
+            context.ReleaseCaches();
+        }
+    }
+
+    /// <summary>
+    /// The bytes the parser reads for <paramref name="input"/>: its UTF-8 encoding without the byte order mark.
+    /// Node spans (<see cref="CSharpNode.Span"/>) are offsets into them.
+    /// </summary>
+    public static byte[] GetUtf8Source(string input)
     {
         input ??= string.Empty;
 
         // A byte order mark is not part of the source text
-        if (input.Length > 0 && input[0] == '\uFEFF')
-        {
-            input = input[1..];
-        }
-
-        var reader = new SpanReader(input);
-        return CompilationUnitParser.TryParse(ref reader, new CSharpParseContext(options), out result, out error);
+        var start = input.Length > 0 && input[0] == '\uFEFF' ? 1 : 0;
+        return System.Text.Encoding.UTF8.GetBytes(input, start, input.Length - start);
     }
 }

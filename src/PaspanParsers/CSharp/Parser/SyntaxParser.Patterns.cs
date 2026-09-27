@@ -10,17 +10,14 @@ internal ref partial struct SyntaxParser
     /// <param name="isAfterIs">After <c>is</c> a plain name is a type pattern; elsewhere it is a constant.</param>
     public Pattern ParsePattern(bool isAfterIs = false)
     {
-        if (!HasSufficientStack())
-        {
-            return null;
-        }
+        EnsureSufficientStack();
 
         var left = ParseConjunctivePattern(isAfterIs);
         while (left != null && IsContextual("or") && CanStartPattern(Peek(1)))
         {
             EatToken();
             var right = ParseConjunctivePattern(isAfterIs);
-            left = right == null ? null : new LogicalPattern(LogicalPatternKind.Or, left, right);
+            left = right == null ? null : Finish(new LogicalPattern(LogicalPatternKind.Or, left, right), left);
         }
 
         return left;
@@ -33,7 +30,7 @@ internal ref partial struct SyntaxParser
         {
             EatToken();
             var right = ParseNegatedPattern(isAfterIs);
-            left = right == null ? null : new LogicalPattern(LogicalPatternKind.And, left, right);
+            left = right == null ? null : Finish(new LogicalPattern(LogicalPatternKind.And, left, right), left);
         }
 
         return left;
@@ -41,11 +38,12 @@ internal ref partial struct SyntaxParser
 
     private Pattern ParseNegatedPattern(bool isAfterIs)
     {
+        EnsureSufficientStack();
         if (IsContextual("not") && CanStartPattern(Peek(1)))
         {
-            EatToken();
+            var start = EatToken().Start;
             var operand = ParseNegatedPattern(isAfterIs);
-            return operand == null ? null : new LogicalPattern(LogicalPatternKind.Not, operand);
+            return operand == null ? null : Finish(new LogicalPattern(LogicalPatternKind.Not, operand), start);
         }
 
         return ParsePrimaryPattern(isAfterIs);
@@ -67,6 +65,12 @@ internal ref partial struct SyntaxParser
     }
 
     private Pattern ParsePrimaryPattern(bool isAfterIs)
+    {
+        var start = NodeStart;
+        return Finish(ParsePrimaryPatternCore(isAfterIs), start);
+    }
+
+    private Pattern ParsePrimaryPatternCore(bool isAfterIs)
     {
         var token = Current;
 
@@ -255,6 +259,7 @@ internal ref partial struct SyntaxParser
         {
             while (true)
             {
+                var subpatternStart = NodeStart;
                 string name = null;
                 if (Current.IsIdentifier && Peek(1).IsPunctuator(":"))
                 {
@@ -268,7 +273,7 @@ internal ref partial struct SyntaxParser
                     return null;
                 }
 
-                subpatterns.Add(new SubPattern(pattern, name));
+                subpatterns.Add(Finish(new SubPattern(pattern, name), subpatternStart));
 
                 if (!TryEatPunctuator(","))
                 {
@@ -322,6 +327,7 @@ internal ref partial struct SyntaxParser
         var properties = new List<PropertySubPattern>();
         while (!IsPunctuator("}"))
         {
+            var subpatternStart = NodeStart;
             string name = null;
             if (Current.IsIdentifier)
             {
@@ -355,7 +361,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            properties.Add(new PropertySubPattern(name, pattern));
+            properties.Add(Finish(new PropertySubPattern(name, pattern), subpatternStart));
 
             if (!TryEatPunctuator(","))
             {

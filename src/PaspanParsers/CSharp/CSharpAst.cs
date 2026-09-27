@@ -9,6 +9,49 @@ namespace PaspanParsers.CSharp;
 /// </summary>
 public interface ICSharpNode
 {
+    /// <summary>
+    /// The position of the node in the parsed input; see <see cref="TextSpan"/>.
+    /// </summary>
+    TextSpan Span { get; }
+}
+
+/// <summary>
+/// Base class of the C# AST nodes.
+/// </summary>
+public abstract class CSharpNode : ICSharpNode
+{
+    /// <summary>
+    /// The position of the node in the parsed input, from its first token to the end of its last token,
+    /// without the trivia around them. The parser sets it; nodes built in code have an empty span at 0.
+    /// </summary>
+    public TextSpan Span { get; set; }
+}
+
+/// <summary>
+/// A range of the parsed input in UTF-8 bytes: <see cref="Start"/> is the first byte, <see cref="End"/>
+/// the byte after the last one. Offsets count from the start of the input without its byte order mark.
+/// </summary>
+public readonly record struct TextSpan(int Start, int End)
+{
+    public int Length => End - Start;
+
+    public bool IsEmpty => Start == End;
+
+    /// <summary>True when <paramref name="span"/> lies inside this span.</summary>
+    public bool Contains(TextSpan span) => Start <= span.Start && span.End <= End;
+
+    /// <summary>
+    /// The text of the span in <paramref name="utf8Source"/>, the input as UTF-8 bytes without the byte order mark.
+    /// </summary>
+    public string GetText(ReadOnlySpan<byte> utf8Source) => System.Text.Encoding.UTF8.GetString(utf8Source[Start..End]);
+
+    /// <summary>
+    /// The text of the span in <paramref name="source"/>, the string that was parsed. The string is encoded
+    /// to UTF-8 on each call; use <see cref="GetText(ReadOnlySpan{byte})"/> for many spans of one input.
+    /// </summary>
+    public string GetText(string source) => GetText(CSharpParser.GetUtf8Source(source));
+
+    public override string ToString() => $"[{Start}..{End})";
 }
 
 // ========================================
@@ -19,7 +62,7 @@ public sealed class CompilationUnit(
     IReadOnlyList<ExternAliasDirective> externAliases = null,
     IReadOnlyList<UsingDirective> usings = null,
     IReadOnlyList<AttributeSection> globalAttributes = null,
-    IReadOnlyList<MemberDeclaration> members = null) : ICSharpNode
+    IReadOnlyList<MemberDeclaration> members = null) : CSharpNode
 {
     public IReadOnlyList<ExternAliasDirective> ExternAliases { get; } = externAliases;
     public IReadOnlyList<UsingDirective> Usings { get; } = usings;
@@ -43,7 +86,7 @@ public sealed class CompilationUnit(
 /// trivia before their first token (<c>NullableDirectives</c>, set by the parser after the node is built);
 /// nodes with braces also hold the directives before the closing brace (<c>CloseBraceNullableDirectives</c>).
 /// </remarks>
-public sealed class NullableDirective(NullableSetting setting, NullableTarget? target = null) : ICSharpNode
+public sealed class NullableDirective(NullableSetting setting, NullableTarget? target = null) : CSharpNode
 {
     public NullableSetting Setting { get; } = setting;
     public NullableTarget? Target { get; } = target;
@@ -66,7 +109,7 @@ public enum NullableTarget
 // Using Directives
 // ========================================
 
-public abstract class UsingDirective : ICSharpNode
+public abstract class UsingDirective : CSharpNode
 {
     /// <summary><c>global using</c> (C# 10).</summary>
     public bool IsGlobal { get; init; }
@@ -104,7 +147,7 @@ public sealed class UsingStaticDirective(NameExpression type, TypeReference targ
     public TypeReference TargetType { get; } = targetType;
 }
 
-public sealed class ExternAliasDirective(string identifier) : ICSharpNode
+public sealed class ExternAliasDirective(string identifier) : CSharpNode
 {
     public string Identifier { get; } = identifier;
 
@@ -116,7 +159,7 @@ public sealed class ExternAliasDirective(string identifier) : ICSharpNode
 // Member Declarations
 // ========================================
 
-public abstract class MemberDeclaration(IReadOnlyList<AttributeSection> attributes, Modifiers modifiers) : ICSharpNode
+public abstract class MemberDeclaration(IReadOnlyList<AttributeSection> attributes, Modifiers modifiers) : CSharpNode
 {
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public Modifiers Modifiers { get; } = modifiers;
@@ -289,7 +332,7 @@ public sealed class EnumDeclaration(
     public bool HasTrailingComma { get; init; }
 }
 
-public sealed class EnumMember(string name, Expression value = null, IReadOnlyList<AttributeSection> attributes = null) : ICSharpNode
+public sealed class EnumMember(string name, Expression value = null, IReadOnlyList<AttributeSection> attributes = null) : CSharpNode
 {
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public string Name { get; } = name;
@@ -339,7 +382,7 @@ public sealed class RecordDeclaration(
 // Type Parameters
 // ========================================
 
-public sealed class TypeParameter(string name, VarianceKind? variance = null, IReadOnlyList<AttributeSection> attributes = null) : ICSharpNode
+public sealed class TypeParameter(string name, VarianceKind? variance = null, IReadOnlyList<AttributeSection> attributes = null) : CSharpNode
 {
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public string Name { get; } = name;
@@ -352,7 +395,7 @@ public enum VarianceKind
     Out
 }
 
-public sealed class TypeParameterConstraint(string typeParameterName, IReadOnlyList<TypeConstraint> constraints) : ICSharpNode
+public sealed class TypeParameterConstraint(string typeParameterName, IReadOnlyList<TypeConstraint> constraints) : CSharpNode
 {
     public string TypeParameterName { get; } = typeParameterName;
     public IReadOnlyList<TypeConstraint> Constraints { get; } = constraints;
@@ -361,7 +404,7 @@ public sealed class TypeParameterConstraint(string typeParameterName, IReadOnlyL
     public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
-public abstract class TypeConstraint : ICSharpNode
+public abstract class TypeConstraint : CSharpNode
 {
 }
 
@@ -419,7 +462,7 @@ public sealed class FieldDeclaration(
     public IReadOnlyList<VariableDeclarator> Variables { get; } = variables;
 }
 
-public sealed class VariableDeclarator(string name, Expression initializer = null) : ICSharpNode
+public sealed class VariableDeclarator(string name, Expression initializer = null) : CSharpNode
 {
     public string Name { get; } = name;
     public Expression Initializer { get; } = initializer;
@@ -453,7 +496,7 @@ public sealed class MethodDeclaration(
     public TypeReference ExplicitInterface { get; init; }
 }
 
-public abstract class MethodBody : ICSharpNode
+public abstract class MethodBody : CSharpNode
 {
 }
 
@@ -478,7 +521,7 @@ public sealed class Parameter(
     ParameterModifier modifier = ParameterModifier.None,
     Expression defaultValue = null,
     IReadOnlyList<AttributeSection> attributes = null,
-    IReadOnlyList<ParameterModifier> modifiers = null) : ICSharpNode
+    IReadOnlyList<ParameterModifier> modifiers = null) : CSharpNode
 {
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public ParameterModifier Modifier { get; } = modifier;
@@ -533,7 +576,7 @@ public sealed class Accessor(
     AccessorKind kind,
     IReadOnlyList<AttributeSection> attributes = null,
     Modifiers modifiers = Modifiers.None,
-    MethodBody body = null) : ICSharpNode
+    MethodBody body = null) : CSharpNode
 {
     public AccessorKind Kind { get; } = kind;
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
@@ -607,7 +650,7 @@ public sealed class EventDeclaration(
 /// <summary>
 /// An <c>add</c> or <c>remove</c> accessor with a <see cref="Block"/> or an <see cref="ExpressionBody"/>.
 /// </summary>
-public sealed class EventAccessor(EventAccessorKind kind, BlockStatement block, IReadOnlyList<AttributeSection> attributes = null) : ICSharpNode
+public sealed class EventAccessor(EventAccessorKind kind, BlockStatement block, IReadOnlyList<AttributeSection> attributes = null) : CSharpNode
 {
     public EventAccessorKind Kind { get; } = kind;
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
@@ -639,7 +682,7 @@ public sealed class ConstructorDeclaration(
     public MethodBody Body { get; } = body;
 }
 
-public sealed class ConstructorInitializer(bool isBase, IReadOnlyList<Argument> arguments = null) : ICSharpNode
+public sealed class ConstructorInitializer(bool isBase, IReadOnlyList<Argument> arguments = null) : CSharpNode
 {
     public bool IsBase { get; } = isBase;
     public IReadOnlyList<Argument> Arguments { get; } = arguments;
@@ -744,8 +787,10 @@ public sealed class GlobalStatement(Statement statement) : MemberDeclaration(nul
 // Type References
 // ========================================
 
-public abstract class TypeReference : ICSharpNode
+public abstract class TypeReference : CSharpNode
 {
+    /// <summary><c>#nullable</c> directives before a type argument: <c>IEnumerable&lt;</c> <c>#nullable disable</c> <c>T&gt;</c>.</summary>
+    public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
 }
 
 /// <summary>
@@ -766,6 +811,9 @@ public sealed class NamedTypeReference(
     public NameExpression Name { get; } = name;
     public IReadOnlyList<TypeReference> TypeArguments { get; } = typeArguments;
     public bool IsNullable { get; } = isNullable;
+
+    /// <summary><c>#nullable</c> directives before the '&gt;' that closes <see cref="TypeArguments"/>.</summary>
+    public IReadOnlyList<NullableDirective> CloseAngleNullableDirectives { get; init; }
 }
 
 public sealed class PredefinedTypeReference(PredefinedType type, bool isNullable = false) : TypeReference
@@ -839,7 +887,7 @@ public sealed class FunctionPointerTypeReference(
     public IReadOnlyList<FunctionPointerParameter> Parameters { get; } = parameters;
 }
 
-public sealed class FunctionPointerParameter(TypeReference type, IReadOnlyList<ParameterModifier> modifiers = null) : ICSharpNode
+public sealed class FunctionPointerParameter(TypeReference type, IReadOnlyList<ParameterModifier> modifiers = null) : CSharpNode
 {
     public IReadOnlyList<ParameterModifier> Modifiers { get; } = modifiers;
     public TypeReference Type { get; } = type;
@@ -869,7 +917,7 @@ public sealed class OmittedTypeReference : TypeReference
 {
 }
 
-public sealed class TupleElement(TypeReference type, string name = null) : ICSharpNode
+public sealed class TupleElement(TypeReference type, string name = null) : CSharpNode
 {
     public TypeReference Type { get; } = type;
     public string Name { get; } = name;
@@ -879,7 +927,7 @@ public sealed class TupleElement(TypeReference type, string name = null) : ICSha
 // Statements
 // ========================================
 
-public abstract class Statement : ICSharpNode
+public abstract class Statement : CSharpNode
 {
     /// <summary><c>#nullable</c> directives before the statement.</summary>
     public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
@@ -940,13 +988,13 @@ public sealed class SwitchStatement(Expression expression, IReadOnlyList<SwitchS
     public IReadOnlyList<SwitchSection> Sections { get; } = sections;
 }
 
-public sealed class SwitchSection(IReadOnlyList<SwitchLabel> labels, IReadOnlyList<Statement> statements) : ICSharpNode
+public sealed class SwitchSection(IReadOnlyList<SwitchLabel> labels, IReadOnlyList<Statement> statements) : CSharpNode
 {
     public IReadOnlyList<SwitchLabel> Labels { get; } = labels;
     public IReadOnlyList<Statement> Statements { get; } = statements;
 }
 
-public abstract class SwitchLabel : ICSharpNode
+public abstract class SwitchLabel : CSharpNode
 {
     /// <summary><c>#nullable</c> directives before the label.</summary>
     public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
@@ -1038,7 +1086,7 @@ public sealed class CatchClause(
     BlockStatement block,
     TypeReference exceptionType = null,
     string identifier = null,
-    Expression filter = null) : ICSharpNode
+    Expression filter = null) : CSharpNode
 {
     public TypeReference ExceptionType { get; } = exceptionType;
     public string Identifier { get; } = identifier;
@@ -1140,7 +1188,7 @@ public sealed class LocalFunctionStatement(
 // Expressions
 // ========================================
 
-public abstract class Expression : ICSharpNode
+public abstract class Expression : CSharpNode
 {
 }
 
@@ -1185,7 +1233,7 @@ public sealed class InterpolatedStringExpression(
     public int BraceCount { get; } = braceCount;
 }
 
-public abstract class InterpolatedStringContent : ICSharpNode
+public abstract class InterpolatedStringContent : CSharpNode
 {
 }
 
@@ -1219,6 +1267,9 @@ public sealed class NameExpression(IReadOnlyList<string> parts, IReadOnlyList<Ty
     public string Alias { get; } = alias;
     public IReadOnlyList<string> Parts { get; } = parts;
     public IReadOnlyList<TypeReference> TypeArguments { get; } = typeArguments;
+
+    /// <summary><c>#nullable</c> directives before the '&gt;' that closes <see cref="TypeArguments"/>.</summary>
+    public IReadOnlyList<NullableDirective> CloseAngleNullableDirectives { get; init; }
 }
 
 /// <summary>
@@ -1303,7 +1354,7 @@ public sealed class InvocationExpression(Expression expression, IReadOnlyList<Ar
 /// An argument: <c>x</c>, <c>name: x</c>, <c>ref x</c>, <c>out var x</c>. Attribute arguments can also
 /// be written <c>Name = x</c>, which sets <see cref="IsNameEquals"/>.
 /// </summary>
-public sealed class Argument(Expression expression, string name = null, RefKind refKind = RefKind.None, bool isNameEquals = false) : ICSharpNode
+public sealed class Argument(Expression expression, string name = null, RefKind refKind = RefKind.None, bool isNameEquals = false) : CSharpNode
 {
     public string Name { get; } = name;
     public bool IsNameEquals { get; } = isNameEquals;
@@ -1335,6 +1386,9 @@ public sealed class MemberAccessExpression(
     public IReadOnlyList<TypeReference> TypeArguments { get; } = typeArguments;
     public bool IsConditional { get; } = isConditional;
     public bool IsPointerAccess { get; } = isPointerAccess;
+
+    /// <summary><c>#nullable</c> directives before the '&gt;' that closes <see cref="TypeArguments"/>.</summary>
+    public IReadOnlyList<NullableDirective> CloseAngleNullableDirectives { get; init; }
 }
 
 /// <summary>
@@ -1395,7 +1449,7 @@ public sealed class AnonymousObjectCreationExpression(IReadOnlyList<AnonymousObj
     public bool HasTrailingComma { get; } = hasTrailingComma;
 }
 
-public sealed class AnonymousObjectMember(Expression expression, string name = null) : ICSharpNode
+public sealed class AnonymousObjectMember(Expression expression, string name = null) : CSharpNode
 {
     public string Name { get; } = name;
     public Expression Expression { get; } = expression;
@@ -1509,7 +1563,7 @@ public sealed class AnonymousMethodExpression(
     public BlockStatement Block { get; } = block;
 }
 
-public abstract class LambdaBody : ICSharpNode
+public abstract class LambdaBody : CSharpNode
 {
 }
 
@@ -1543,7 +1597,7 @@ public sealed class FromClause(string identifier, Expression expression, TypeRef
     public Expression Expression { get; } = expression;
 }
 
-public abstract class QueryClause : ICSharpNode
+public abstract class QueryClause : CSharpNode
 {
 }
 
@@ -1583,14 +1637,14 @@ public sealed class OrderByClause(IReadOnlyList<Ordering> orderings) : QueryClau
 /// An ordering of an orderby clause. <see cref="HasExplicitDirection"/> is true when
 /// <c>ascending</c> or <c>descending</c> is written.
 /// </summary>
-public sealed class Ordering(Expression expression, OrderDirection direction = OrderDirection.Ascending, bool hasExplicitDirection = false) : ICSharpNode
+public sealed class Ordering(Expression expression, OrderDirection direction = OrderDirection.Ascending, bool hasExplicitDirection = false) : CSharpNode
 {
     public Expression Expression { get; } = expression;
     public OrderDirection Direction { get; } = direction;
     public bool HasExplicitDirection { get; } = hasExplicitDirection || direction == OrderDirection.Descending;
 }
 
-public abstract class SelectOrGroupClause : ICSharpNode
+public abstract class SelectOrGroupClause : CSharpNode
 {
 }
 
@@ -1609,7 +1663,7 @@ public sealed class QueryContinuation(
     string identifier,
     IReadOnlyList<QueryClause> bodyClauses,
     SelectOrGroupClause selectOrGroupClause,
-    QueryContinuation continuation = null) : ICSharpNode
+    QueryContinuation continuation = null) : CSharpNode
 {
     public string Identifier { get; } = identifier;
     public IReadOnlyList<QueryClause> BodyClauses { get; } = bodyClauses;
@@ -1630,7 +1684,7 @@ public sealed class SwitchExpression(Expression governingExpression, IReadOnlyLi
     public bool HasTrailingComma { get; } = hasTrailingComma;
 }
 
-public sealed class SwitchExpressionArm(Pattern pattern, Expression expression, Expression guard = null) : ICSharpNode
+public sealed class SwitchExpressionArm(Pattern pattern, Expression expression, Expression guard = null) : CSharpNode
 {
     public Pattern Pattern { get; } = pattern;
     public Expression Guard { get; } = guard;
@@ -1677,7 +1731,7 @@ public sealed class TupleExpression(IReadOnlyList<TupleExpressionElement> elemen
     public IReadOnlyList<TupleExpressionElement> Elements { get; } = elements;
 }
 
-public sealed class TupleExpressionElement(Expression expression, string name = null) : ICSharpNode
+public sealed class TupleExpressionElement(Expression expression, string name = null) : CSharpNode
 {
     public string Name { get; } = name;
     public Expression Expression { get; } = expression;
@@ -1722,7 +1776,7 @@ public sealed class DeclarationExpression(TypeReference type, VariableDesignatio
     public VariableDesignation Designation { get; } = designation;
 }
 
-public abstract class VariableDesignation : ICSharpNode
+public abstract class VariableDesignation : CSharpNode
 {
 }
 
@@ -1777,7 +1831,7 @@ public sealed class RefValueExpression(Expression expression, TypeReference type
 // Patterns
 // ========================================
 
-public abstract class Pattern : ICSharpNode
+public abstract class Pattern : CSharpNode
 {
 }
 
@@ -1842,7 +1896,7 @@ public sealed class RecursivePattern(
 /// <summary>
 /// A positional subpattern, optionally named: <c>X: 0</c>.
 /// </summary>
-public sealed class SubPattern(Pattern pattern, string name = null) : ICSharpNode
+public sealed class SubPattern(Pattern pattern, string name = null) : CSharpNode
 {
     public string Name { get; } = name;
     public Pattern Pattern { get; } = pattern;
@@ -1851,7 +1905,7 @@ public sealed class SubPattern(Pattern pattern, string name = null) : ICSharpNod
 /// <summary>
 /// A property subpattern. <see cref="PropertyName"/> may be an extended property path: <c>A.B</c>.
 /// </summary>
-public sealed class PropertySubPattern(string propertyName, Pattern pattern) : ICSharpNode
+public sealed class PropertySubPattern(string propertyName, Pattern pattern) : CSharpNode
 {
     public string PropertyName { get; } = propertyName;
     public Pattern Pattern { get; } = pattern;
@@ -1912,7 +1966,7 @@ public enum LogicalPatternKind
 // Attributes
 // ========================================
 
-public sealed class AttributeSection(IReadOnlyList<AttributeNode> attributes, AttributeTarget? target = null) : ICSharpNode
+public sealed class AttributeSection(IReadOnlyList<AttributeNode> attributes, AttributeTarget? target = null) : CSharpNode
 {
     public AttributeTarget? Target { get; } = target;
     public IReadOnlyList<AttributeNode> Attributes { get; } = attributes;
@@ -1941,7 +1995,7 @@ public enum AttributeTarget
 /// <summary>
 /// An attribute; <see cref="Arguments"/> is null without parentheses and empty for <c>Name()</c>.
 /// </summary>
-public sealed class AttributeNode(NameExpression name, IReadOnlyList<Argument> arguments = null) : ICSharpNode
+public sealed class AttributeNode(NameExpression name, IReadOnlyList<Argument> arguments = null) : CSharpNode
 {
     public NameExpression Name { get; } = name;
     public IReadOnlyList<Argument> Arguments { get; } = arguments;

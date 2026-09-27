@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace PaspanParsers.CSharp;
@@ -97,6 +98,57 @@ public class CSharpWriter(string indentString = "    ")
 
     public void WriteCompilationUnit(CompilationUnit unit)
     {
+        var length = _builder.Length;
+        var indentLevel = _indentLevel;
+        var needsIndent = _needsIndent;
+        try
+        {
+            WriteCompilationUnitCore(unit);
+            return;
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            // A deeply nested tree: write it again on a thread with a large stack, like CSharpParser parses it
+            _builder.Length = length;
+            _indentLevel = indentLevel;
+            _needsIndent = needsIndent;
+        }
+
+        Exception failure = null;
+        var thread = new Thread(
+            () =>
+            {
+                try
+                {
+                    WriteCompilationUnitCore(unit);
+                }
+                catch (Exception e)
+                {
+                    failure = e;
+                }
+            },
+            LargeStackSize);
+        thread.Start();
+        thread.Join();
+
+        if (failure != null)
+        {
+            throw failure is InsufficientExecutionStackException
+                ? new InsufficientExecutionStackException("The syntax tree is nested too deeply.", failure)
+                : new InvalidOperationException("Writing the syntax tree failed.", failure);
+        }
+    }
+
+    private const int LargeStackSize = 256 * 1024 * 1024;
+
+    /// <summary>
+    /// Guards the recursion over nested nodes: a tree too deep for the stack throws
+    /// <see cref="InsufficientExecutionStackException"/> instead of overflowing the stack.
+    /// </summary>
+    private static void EnsureSufficientStack() => RuntimeHelpers.EnsureSufficientExecutionStack();
+
+    private void WriteCompilationUnitCore(CompilationUnit unit)
+    {
         if (unit.ExternAliases != null)
         {
             foreach (var externAlias in unit.ExternAliases)
@@ -190,6 +242,7 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteMemberDeclaration(MemberDeclaration member)
     {
+        EnsureSufficientStack();
         WriteNullableDirectives(member.NullableDirectives);
 
         switch (member)
@@ -978,6 +1031,8 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteTypeReference(TypeReference type)
     {
+        EnsureSufficientStack();
+        WriteNullableDirectives(type.NullableDirectives);
         switch (type)
         {
             case NamedTypeReference named:
@@ -995,6 +1050,7 @@ public class CSharpWriter(string indentString = "    ")
                 {
                     Write("<");
                     WriteList(named.TypeArguments, WriteTypeReference);
+                    WriteNullableDirectives(named.CloseAngleNullableDirectives);
                     Write(">");
                 }
                 if (named.IsNullable)
@@ -1107,6 +1163,8 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteStatement(Statement stmt)
     {
+        EnsureSufficientStack();
+
         // A block writes its directives itself, also as the body of a member
         if (stmt is not BlockStatement)
             WriteNullableDirectives(stmt.NullableDirectives);
@@ -1592,6 +1650,7 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteExpression(Expression expr)
     {
+        EnsureSufficientStack();
         switch (expr)
         {
             case LiteralExpression lit:
@@ -1994,6 +2053,7 @@ public class CSharpWriter(string indentString = "    ")
         {
             Write("<");
             WriteList(name.TypeArguments, WriteTypeReference);
+            WriteNullableDirectives(name.CloseAngleNullableDirectives);
             Write(">");
         }
     }
@@ -2140,6 +2200,7 @@ public class CSharpWriter(string indentString = "    ")
         {
             Write("<");
             WriteList(memberAccess.TypeArguments, WriteTypeReference);
+            WriteNullableDirectives(memberAccess.CloseAngleNullableDirectives);
             Write(">");
         }
     }
@@ -2466,6 +2527,7 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WritePattern(Pattern pattern)
     {
+        EnsureSufficientStack();
         switch (pattern)
         {
             case TypePattern type:

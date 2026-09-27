@@ -35,7 +35,7 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private AttributeSection ParseAttributeSection()
     {
-        EatToken();
+        var start = EatToken().Start;
 
         AttributeTarget? target = null;
         var token = Current;
@@ -71,7 +71,7 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        return new AttributeSection(attributes, target);
+        return Finish(new AttributeSection(attributes, target), start);
     }
 
     /// <summary>
@@ -104,6 +104,7 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private AttributeNode ParseAttribute()
     {
+        var start = NodeStart;
         string alias = null;
         if (Peek(1).IsPunctuator("::"))
         {
@@ -113,6 +114,7 @@ internal ref partial struct SyntaxParser
 
         var parts = new List<string>();
         List<TypeReference> typeArguments = null;
+        IReadOnlyList<NullableDirective> closeDirectives = null;
         while (true)
         {
             var part = TryEatIdentifier();
@@ -125,7 +127,7 @@ internal ref partial struct SyntaxParser
 
             if (IsPunctuator("<"))
             {
-                typeArguments = ParseTypeArgumentList();
+                typeArguments = ParseTypeArgumentList(out closeDirectives);
                 if (typeArguments == null)
                 {
                     return null;
@@ -140,11 +142,11 @@ internal ref partial struct SyntaxParser
             }
         }
 
-        var name = new NameExpression(parts, typeArguments, alias);
+        var name = Finish(new NameExpression(parts, typeArguments, alias) { CloseAngleNullableDirectives = closeDirectives }, start);
 
         if (!IsPunctuator("("))
         {
-            return new AttributeNode(name);
+            return Finish(new AttributeNode(name), start);
         }
 
         EatToken();
@@ -156,10 +158,10 @@ internal ref partial struct SyntaxParser
                 Argument argument;
                 if (Current.IsIdentifier && Peek(1).IsPunctuator("="))
                 {
-                    var argumentName = EatToken().Text;
+                    var argumentStart = EatToken();
                     EatToken();
                     var value = ParseExpressionInNestedContext();
-                    argument = value == null ? null : new Argument(value, argumentName, isNameEquals: true);
+                    argument = value == null ? null : Finish(new Argument(value, argumentStart.Text, isNameEquals: true), argumentStart.Start);
                 }
                 else
                 {
@@ -187,7 +189,7 @@ internal ref partial struct SyntaxParser
             }
         }
 
-        return new AttributeNode(name, arguments);
+        return Finish(new AttributeNode(name, arguments), start);
     }
 
     // ========================================
@@ -243,7 +245,8 @@ internal ref partial struct SyntaxParser
     private Parameter ParseParameter(bool allowImplicitTypes, bool allowMissingName = false)
     {
         var nullableDirectives = Current.NullableDirectives;
-        var parameter = ParseParameterCore(allowImplicitTypes, allowMissingName);
+        var start = NodeStart;
+        var parameter = Finish(ParseParameterCore(allowImplicitTypes, allowMissingName), start);
         if (parameter != null)
         {
             parameter.NullableDirectives = nullableDirectives;
@@ -361,6 +364,7 @@ internal ref partial struct SyntaxParser
         var parameters = new List<TypeParameter>();
         while (true)
         {
+            var start = NodeStart;
             var attributes = ParseAttributeSections();
 
             VarianceKind? variance = null;
@@ -379,7 +383,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            parameters.Add(new TypeParameter(name, variance, attributes.Count != 0 ? attributes : null));
+            parameters.Add(Finish(new TypeParameter(name, variance, attributes.Count != 0 ? attributes : null), start));
 
             if (TryEatPunctuator(","))
             {
@@ -398,7 +402,8 @@ internal ref partial struct SyntaxParser
         var clauses = new List<TypeParameterConstraint>();
         while (IsContextual("where") && Peek(1).IsIdentifier && Peek(2).IsPunctuator(":"))
         {
-            var nullableDirectives = EatToken().NullableDirectives;
+            var where = EatToken();
+            var nullableDirectives = where.NullableDirectives;
             var name = EatToken().Text;
             EatToken();
 
@@ -419,13 +424,19 @@ internal ref partial struct SyntaxParser
                 }
             }
 
-            clauses.Add(new TypeParameterConstraint(name, constraints) { NullableDirectives = nullableDirectives });
+            clauses.Add(Finish(new TypeParameterConstraint(name, constraints) { NullableDirectives = nullableDirectives }, where.Start));
         }
 
         return clauses;
     }
 
     private TypeConstraint ParseTypeConstraint()
+    {
+        var start = NodeStart;
+        return Finish(ParseTypeConstraintCore(), start);
+    }
+
+    private TypeConstraint ParseTypeConstraintCore()
     {
         if (TryEatKeyword("class"))
         {

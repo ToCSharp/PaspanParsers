@@ -15,6 +15,8 @@ public enum OracleStatus
     WriteFailed,
     /// <summary>The written AST is not valid C# or not equivalent to the original.</summary>
     Mismatch,
+    /// <summary>The AST is right, but a node's span is not where the node is in the source.</summary>
+    SpanMismatch,
     Passed,
 }
 
@@ -22,8 +24,9 @@ public sealed record OracleResult(OracleStatus Status, string Detail = null);
 
 /// <summary>
 /// Uses Roslyn as the reference parser: valid C# must parse with <see cref="CSharpParser"/>,
-/// and the AST printed back by <see cref="CSharpWriter"/> must be equivalent to the original
-/// according to Roslyn (trivia is ignored).
+/// the AST printed back by <see cref="CSharpWriter"/> must be equivalent to the original
+/// according to Roslyn (trivia is ignored), and the spans of the nodes must match Roslyn's
+/// (<see cref="SpanChecker"/>).
 /// </summary>
 public static class RoslynOracle
 {
@@ -68,6 +71,12 @@ public static class RoslynOracle
         if (!AreEquivalent(original.GetRoot(), regenerated.GetRoot()))
         {
             return new OracleResult(OracleStatus.Mismatch, FirstDifference(original.GetRoot(), regenerated.GetRoot()));
+        }
+
+        var spanProblem = SpanChecker.Check(source, unit, original.GetRoot());
+        if (spanProblem != null)
+        {
+            return new OracleResult(OracleStatus.SpanMismatch, spanProblem);
         }
 
         return new OracleResult(OracleStatus.Passed);

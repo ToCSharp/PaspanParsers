@@ -25,12 +25,10 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private MemberDeclaration ParseMemberDeclaration(MemberContext context)
     {
-        if (!HasSufficientStack())
-        {
-            return null;
-        }
+        EnsureSufficientStack();
 
         var start = _position;
+        var spanStart = NodeStart;
         var nullableDirectives = Current.NullableDirectives;
         var attributes = ParseAttributeSections();
         var modifiers = ParseMemberModifiers();
@@ -39,7 +37,7 @@ internal ref partial struct SyntaxParser
         if (member != null)
         {
             member.NullableDirectives = nullableDirectives;
-            return member;
+            return Finish(member, spanStart);
         }
 
         if (context != MemberContext.CompilationUnit)
@@ -51,7 +49,7 @@ internal ref partial struct SyntaxParser
 
         _position = start;
         var statement = ParseStatement();
-        return statement == null ? null : new GlobalStatement(statement);
+        return statement == null ? null : Finish(new GlobalStatement(statement), statement);
     }
 
     private MemberDeclaration ParseMemberDeclarationRest(MemberContext context, List<AttributeSection> attributes, List<Modifiers> modifierList)
@@ -137,6 +135,7 @@ internal ref partial struct SyntaxParser
             return explicitInterface == null ? null : ParseOperatorDeclarationRest(type, explicitInterface, attributes, modifiers, list);
         }
 
+        var nameStart = NodeStart;
         var name = TryEatIdentifier();
         if (name == null)
         {
@@ -153,7 +152,7 @@ internal ref partial struct SyntaxParser
             return ParsePropertyDeclarationRest(type, explicitInterface, name, attributes, modifiers, list);
         }
 
-        return explicitInterface == null ? ParseFieldDeclarationRest(type, name, attributes, modifiers, list) : null;
+        return explicitInterface == null ? ParseFieldDeclarationRest(type, name, nameStart, attributes, modifiers, list) : null;
     }
 
     // ========================================
@@ -299,6 +298,7 @@ internal ref partial struct SyntaxParser
     {
         EatToken();
 
+        var nameStart = NodeStart;
         var parts = new List<string>();
         while (true)
         {
@@ -315,7 +315,7 @@ internal ref partial struct SyntaxParser
             }
         }
 
-        var name = new NameExpression(parts);
+        var name = Finish(new NameExpression(parts), nameStart);
         var externs = new List<ExternAliasDirective>();
         var usings = new List<UsingDirective>();
         var members = new List<MemberDeclaration>();
@@ -552,6 +552,7 @@ internal ref partial struct SyntaxParser
         var hasTrailingComma = false;
         while (!TryEatPunctuator("}"))
         {
+            var memberStart = NodeStart;
             var memberAttributes = ParseAttributeSections();
             var memberName = TryEatIdentifier();
             if (memberName == null)
@@ -569,7 +570,7 @@ internal ref partial struct SyntaxParser
                 }
             }
 
-            members.Add(new EnumMember(memberName, value, NullIfEmpty(memberAttributes)));
+            members.Add(Finish(new EnumMember(memberName, value, NullIfEmpty(memberAttributes)), memberStart));
 
             if (TryEatPunctuator(","))
             {
@@ -699,26 +700,32 @@ internal ref partial struct SyntaxParser
     private TypeReference ParseExplicitInterfaceSpecifier()
     {
         var start = _position;
+        var spanStart = NodeStart;
+        var partsStart = spanStart;
 
         string alias = null;
         if (Current.IsIdentifier && Peek(1).IsPunctuator("::"))
         {
             alias = EatToken().Text;
             EatToken();
+            partsStart = NodeStart;
         }
 
         TypeReference qualifier = null;
         TypeReference result = null;
         var parts = new List<string>();
+        var partsEnd = partsStart;
         while (Current.IsIdentifier)
         {
             var segmentStart = _position;
             var part = EatToken().Text;
+            var partEnd = _position;
 
             List<TypeReference> typeArguments = null;
+            IReadOnlyList<NullableDirective> closeDirectives = null;
             if (IsPunctuator("<"))
             {
-                typeArguments = ParseTypeArgumentList();
+                typeArguments = ParseTypeArgumentList(out closeDirectives);
                 if (typeArguments == null)
                 {
                     _position = segmentStart;
@@ -733,18 +740,24 @@ internal ref partial struct SyntaxParser
                 break;
             }
 
+            var segmentEnd = _position;
             EatToken();
             parts.Add(part);
+            partsEnd = partEnd;
             if (typeArguments != null)
             {
-                qualifier = new NamedTypeReference(new NameExpression(parts), typeArguments, false, qualifier, alias);
+                var qualifierName = Finish(new NameExpression(parts), partsStart, partsEnd);
+                var qualifierType = new NamedTypeReference(qualifierName, typeArguments, false, qualifier, alias) { CloseAngleNullableDirectives = closeDirectives };
+                qualifier = Finish(qualifierType, spanStart, segmentEnd);
                 alias = null;
                 parts = [];
+                partsStart = NodeStart;
                 result = qualifier;
             }
             else
             {
-                result = new NamedTypeReference(new NameExpression(parts.ToList()), null, false, qualifier, alias);
+                var name = Finish(new NameExpression(parts.ToList()), partsStart, partsEnd);
+                result = Finish(new NamedTypeReference(name, null, false, qualifier, alias), spanStart, segmentEnd);
             }
         }
 
@@ -771,10 +784,11 @@ internal ref partial struct SyntaxParser
                 return false;
             }
 
-            body = new BlockMethodBody(block);
+            body = Finish(new BlockMethodBody(block), block);
             return true;
         }
 
+        var arrowStart = NodeStart;
         if (TryEatPunctuator("=>"))
         {
             var expression = ParseExpression();
@@ -783,7 +797,8 @@ internal ref partial struct SyntaxParser
                 return false;
             }
 
-            body = new ExpressionMethodBody(expression);
+            // Like Roslyn's arrow expression clause, the body ends before the ';'
+            body = Finish(new ExpressionMethodBody(expression), arrowStart, expression.Span.End);
             return true;
         }
 
@@ -891,6 +906,7 @@ internal ref partial struct SyntaxParser
         var accessors = new List<Accessor>();
         while (!TryEatPunctuator("}"))
         {
+            var accessorStart = NodeStart;
             var nullableDirectives = Current.NullableDirectives;
             var attributes = ParseAttributeSections();
             var modifierList = ParseMemberModifiers();
@@ -919,11 +935,13 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            accessors.Add(new Accessor(kind, NullIfEmpty(attributes), Combine(modifierList), body)
-            {
-                ModifierList = NullIfEmpty(modifierList),
-                NullableDirectives = nullableDirectives,
-            });
+            accessors.Add(Finish(
+                new Accessor(kind, NullIfEmpty(attributes), Combine(modifierList), body)
+                {
+                    ModifierList = NullIfEmpty(modifierList),
+                    NullableDirectives = nullableDirectives,
+                },
+                accessorStart));
         }
 
         return accessors;
@@ -988,12 +1006,14 @@ internal ref partial struct SyntaxParser
     private MemberDeclaration ParseFieldDeclarationRest(
         TypeReference type,
         string firstName,
+        int firstNameStart,
         List<AttributeSection> attributes,
         Modifiers modifiers,
         List<Modifiers> modifierList)
     {
         var variables = new List<VariableDeclarator>();
         var name = firstName;
+        var nameStart = firstNameStart;
         while (true)
         {
             List<Argument> size = null;
@@ -1016,7 +1036,7 @@ internal ref partial struct SyntaxParser
                 }
             }
 
-            variables.Add(new VariableDeclarator(name, initializer) { BracketedArguments = size });
+            variables.Add(Finish(new VariableDeclarator(name, initializer) { BracketedArguments = size }, nameStart));
 
             if (TryEatPunctuator(";"))
             {
@@ -1028,6 +1048,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
+            nameStart = NodeStart;
             name = TryEatIdentifier();
             if (name == null)
             {
@@ -1052,6 +1073,7 @@ internal ref partial struct SyntaxParser
 
         var explicitInterface = ParseExplicitInterfaceSpecifier();
         var start = _position;
+        var nameToken = Current;
         var name = TryEatIdentifier();
         if (name == null)
         {
@@ -1066,7 +1088,8 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            return new EventDeclaration(type, [new VariableDeclarator(name)], attributes, modifiers, accessors)
+            var variable = Finish(new VariableDeclarator(name), nameToken.Start, nameToken.End);
+            return new EventDeclaration(type, [variable], attributes, modifiers, accessors)
             {
                 ModifierList = modifierList,
                 ExplicitInterface = explicitInterface,
@@ -1098,6 +1121,7 @@ internal ref partial struct SyntaxParser
         var accessors = new List<EventAccessor>();
         while (!TryEatPunctuator("}"))
         {
+            var accessorStart = NodeStart;
             var attributes = NullIfEmpty(ParseAttributeSections());
 
             EventAccessorKind kind;
@@ -1120,12 +1144,14 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            accessors.Add(body switch
-            {
-                BlockMethodBody block => new EventAccessor(kind, block.Block, attributes),
-                ExpressionMethodBody expression => new EventAccessor(kind, null, attributes) { ExpressionBody = expression.Expression },
-                _ => null,
-            });
+            accessors.Add(Finish(
+                body switch
+                {
+                    BlockMethodBody block => new EventAccessor(kind, block.Block, attributes),
+                    ExpressionMethodBody expression => new EventAccessor(kind, null, attributes) { ExpressionBody = expression.Expression },
+                    _ => null,
+                },
+                accessorStart));
         }
 
         return accessors;
@@ -1144,6 +1170,7 @@ internal ref partial struct SyntaxParser
         }
 
         ConstructorInitializer initializer = null;
+        var initializerStart = NodeStart;
         if (TryEatPunctuator(":"))
         {
             var isBase = IsKeyword("base");
@@ -1159,7 +1186,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            initializer = new ConstructorInitializer(isBase, arguments);
+            initializer = Finish(new ConstructorInitializer(isBase, arguments), initializerStart);
         }
 
         if (!TryParseMemberBody(out var body))

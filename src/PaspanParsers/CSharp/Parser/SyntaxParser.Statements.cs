@@ -5,6 +5,7 @@ internal ref partial struct SyntaxParser
 {
     public BlockStatement ParseBlock()
     {
+        var start = NodeStart;
         var nullableDirectives = Current.NullableDirectives;
         if (!TryEatPunctuator("{"))
         {
@@ -30,11 +31,13 @@ internal ref partial struct SyntaxParser
             }
 
             var closeBraceDirectives = EatToken().NullableDirectives;
-            return new BlockStatement(statements.Count != 0 ? statements : null)
-            {
-                NullableDirectives = nullableDirectives,
-                CloseBraceNullableDirectives = closeBraceDirectives,
-            };
+            return Finish(
+                new BlockStatement(statements.Count != 0 ? statements : null)
+                {
+                    NullableDirectives = nullableDirectives,
+                    CloseBraceNullableDirectives = closeBraceDirectives,
+                },
+                start);
         }
         finally
         {
@@ -47,7 +50,8 @@ internal ref partial struct SyntaxParser
     {
         // A block keeps the directives before its brace itself, also as the body of a member
         var nullableDirectives = Current.NullableDirectives;
-        var statement = ParseStatementCore();
+        var start = NodeStart;
+        var statement = Finish(ParseStatementCore(), start);
         if (statement != null && nullableDirectives != null)
         {
             statement.NullableDirectives ??= nullableDirectives;
@@ -58,10 +62,7 @@ internal ref partial struct SyntaxParser
 
     private Statement ParseStatementCore()
     {
-        if (!HasSufficientStack())
-        {
-            return null;
-        }
+        EnsureSufficientStack();
 
         var token = Current;
         switch (token.Kind)
@@ -336,6 +337,13 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private Statement TryParseLocalDeclarationOrFunction(List<AttributeSection> attributes, List<Modifiers> modifiers)
     {
+        // Most statements are expressions like a.b(c); only a name follows the type of a declaration
+        var afterType = TokenAfterSimpleType(out var isSimpleType);
+        if (isSimpleType && afterType.Kind == TokenKind.Punctuator && !IsTypeContinuation(afterType))
+        {
+            return null;
+        }
+
         var type = ParseLocalType();
         if (type == null || !Current.IsIdentifier)
         {
@@ -370,11 +378,11 @@ internal ref partial struct SyntaxParser
         if (IsContextual("scoped"))
         {
             var start = _position;
-            EatToken();
+            var spanStart = EatToken().Start;
             var inner = ParseReturnType();
             if (inner != null && Current.IsIdentifier)
             {
-                return new ScopedTypeReference(inner);
+                return Finish(new ScopedTypeReference(inner), spanStart);
             }
 
             _position = start;
@@ -391,6 +399,7 @@ internal ref partial struct SyntaxParser
         var variables = new List<VariableDeclarator>();
         while (true)
         {
+            var start = NodeStart;
             var name = TryEatIdentifier();
             if (name == null)
             {
@@ -407,7 +416,7 @@ internal ref partial struct SyntaxParser
                 }
             }
 
-            variables.Add(new VariableDeclarator(name, initializer));
+            variables.Add(Finish(new VariableDeclarator(name, initializer), start));
 
             if (!TryEatPunctuator(","))
             {
@@ -596,7 +605,7 @@ internal ref partial struct SyntaxParser
                     return null;
                 }
 
-                initializers = expressions.Select(e => (Statement)new ExpressionStatement(e)).ToList();
+                initializers = expressions.Select(e => (Statement)Finish(new ExpressionStatement(e), e.Span.Start, e.Span.End)).ToList();
             }
         }
 
@@ -664,6 +673,7 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private LocalDeclarationStatement TryParseVariableDeclaration()
     {
+        var start = NodeStart;
         var type = ParseLocalType();
         if (type == null || !Current.IsIdentifier)
         {
@@ -677,7 +687,7 @@ internal ref partial struct SyntaxParser
         }
 
         var variables = ParseVariableDeclarators();
-        return variables == null ? null : new LocalDeclarationStatement(type, variables);
+        return variables == null ? null : Finish(new LocalDeclarationStatement(type, variables), start);
     }
 
     /// <summary>
@@ -766,10 +776,12 @@ internal ref partial struct SyntaxParser
         var sections = new List<SwitchSection>();
         while (!IsPunctuator("}"))
         {
+            var sectionStart = NodeStart;
             var labels = new List<SwitchLabel>();
             while (true)
             {
                 var nullableDirectives = Current.NullableDirectives;
+                var labelStart = NodeStart;
                 if (TryEatKeyword("case"))
                 {
                     var pattern = ParsePattern();
@@ -793,13 +805,13 @@ internal ref partial struct SyntaxParser
                         return null;
                     }
 
-                    labels.Add(new CaseSwitchLabel(pattern, guard) { NullableDirectives = nullableDirectives });
+                    labels.Add(Finish(new CaseSwitchLabel(pattern, guard) { NullableDirectives = nullableDirectives }, labelStart));
                 }
                 else if (IsKeyword("default") && Peek(1).IsPunctuator(":"))
                 {
                     EatToken();
                     EatToken();
-                    labels.Add(new DefaultSwitchLabel { NullableDirectives = nullableDirectives });
+                    labels.Add(Finish(new DefaultSwitchLabel { NullableDirectives = nullableDirectives }, labelStart));
                 }
                 else
                 {
@@ -824,7 +836,7 @@ internal ref partial struct SyntaxParser
                 statements.Add(statement);
             }
 
-            sections.Add(new SwitchSection(labels, statements));
+            sections.Add(Finish(new SwitchSection(labels, statements), sectionStart));
         }
 
         EatToken();
@@ -848,8 +860,9 @@ internal ref partial struct SyntaxParser
         }
 
         var catches = new List<CatchClause>();
-        while (TryEatKeyword("catch"))
+        while (IsKeyword("catch"))
         {
+            var catchStart = EatToken().Start;
             TypeReference type = null;
             string identifier = null;
             if (TryEatPunctuator("("))
@@ -883,7 +896,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            catches.Add(new CatchClause(catchBlock, type, identifier, filter));
+            catches.Add(Finish(new CatchClause(catchBlock, type, identifier, filter), catchStart));
         }
 
         BlockStatement finallyBlock = null;
@@ -942,7 +955,7 @@ internal ref partial struct SyntaxParser
                     return null;
                 }
 
-                resource = new ExpressionStatement(expression);
+                resource = Finish(new ExpressionStatement(expression), expression);
             }
 
             if (!TryEatPunctuator(")"))
