@@ -41,7 +41,7 @@ public class CppExpressionTests
     private static Expression Initializer(string source, int statement = 0)
     {
         var declaration = (DeclarationStatement)CppTestHelper.Statements(source)[statement];
-        return ((EqualsInitializer)declaration.Declaration.Declarators[0].Initializer).Value;
+        return ((EqualsInitializer)((SimpleDeclaration)declaration.Declaration).Declarators[0].Initializer).Value;
     }
 
     /// <summary>

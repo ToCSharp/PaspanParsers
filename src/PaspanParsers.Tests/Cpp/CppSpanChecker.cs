@@ -137,7 +137,7 @@ public static class CppSpanChecker
 
         var candidates = byName[name].ToList();
         var otherEnd = rule.OtherEnd?.Invoke(node) ?? -1;
-        if (candidates.Any(n => n.FromMacro || (rule.Kinds.Contains(n.Kind) && (n.Span.End == node.Span.End || n.Span.End == otherEnd))))
+        if (candidates.Any(n => n.FromMacro || (rule.Kinds.Contains(n.Kind) && (rule.AnyEnd || n.Span.End == node.Span.End || n.Span.End == otherEnd))))
         {
             return null;
         }

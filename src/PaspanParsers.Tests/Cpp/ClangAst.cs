@@ -34,7 +34,7 @@ public sealed partial class ClangAst
     /// <summary>
     /// Keys whose values depend on positions or on addresses of the clang process, not on the tree.
     /// </summary>
-    private static readonly HashSet<string> IgnoredKeys = ["id", "loc", "range", "previousDecl", "parentDeclContextId", "referencedMemberDecl", "typeAliasDeclId"];
+    private static readonly HashSet<string> IgnoredKeys = ["id", "loc", "range", "previousDecl", "parentDeclContextId", "referencedMemberDecl", "typeAliasDeclId", "targetLabelDeclId", "declId"];
 
     private ClangAst(List<JsonObject> declarations)
     {

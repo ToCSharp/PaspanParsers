@@ -193,10 +193,15 @@ public sealed class CppWriter
                 NewLine();
                 break;
             case FunctionDefinition function:
+                WriteLeadingAttributes(function.Attributes);
                 WriteSpecifiersAndDeclarator(function.Specifiers, function.Declarator);
                 WriteRequiresClause(function.RequiresClause);
                 NewLine();
                 WriteCompoundStatement(function.Body);
+                NewLine();
+                break;
+            case StaticAssertDeclaration staticAssert:
+                WriteStaticAssertDeclaration(staticAssert);
                 NewLine();
                 break;
             default:
@@ -204,9 +209,57 @@ public sealed class CppWriter
         }
     }
 
+    /// <summary>
+    /// A declaration in a block or at namespace scope, without the line break after it.
+    /// </summary>
+    private void WriteBlockDeclaration(Declaration declaration)
+    {
+        switch (declaration)
+        {
+            case SimpleDeclaration simple:
+                WriteSimpleDeclaration(simple);
+                break;
+            case StaticAssertDeclaration staticAssert:
+                WriteStaticAssertDeclaration(staticAssert);
+                break;
+            default:
+                throw new NotSupportedException($"Unknown block declaration {declaration.GetType().Name}");
+        }
+    }
+
+    private void WriteStaticAssertDeclaration(StaticAssertDeclaration declaration)
+    {
+        Directives(declaration);
+        Token("static_assert");
+        Token("(");
+        WriteExpression(declaration.Condition);
+        if (declaration.Message != null)
+        {
+            Token(",");
+            Space();
+            WriteExpression(declaration.Message);
+        }
+
+        Token(")");
+        Token(";");
+    }
+
+    /// <summary>
+    /// Attributes at the start of a declaration or statement, followed by a space.
+    /// </summary>
+    private void WriteLeadingAttributes(IReadOnlyList<AttributeSpecifier> attributes)
+    {
+        if (attributes.Count != 0)
+        {
+            WriteAttributeSpecifiers(attributes);
+            Space();
+        }
+    }
+
     private void WriteSimpleDeclaration(SimpleDeclaration declaration)
     {
         Directives(declaration);
+        WriteLeadingAttributes(declaration.Attributes);
         if (declaration.Declarators.Count == 0)
         {
             WriteDeclSpecifiers(declaration.Specifiers);
@@ -384,6 +437,21 @@ public sealed class CppWriter
         {
             case NameDeclarator name:
                 WriteName(name.Name);
+                break;
+            case StructuredBindingDeclarator binding:
+                Token("[");
+                for (var i = 0; i < binding.Names.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        Token(",");
+                        Space();
+                    }
+
+                    WriteName(binding.Names[i]);
+                }
+
+                Token("]");
                 break;
             case PackDeclarator pack:
                 Token("...");
@@ -628,7 +696,7 @@ public sealed class CppWriter
                 WriteCompoundStatement(compound);
                 break;
             case DeclarationStatement declaration:
-                WriteSimpleDeclaration(declaration.Declaration);
+                WriteBlockDeclaration(declaration.Declaration);
                 break;
             case ExpressionStatement expression:
                 if (expression.Expression != null)
@@ -639,45 +707,272 @@ public sealed class CppWriter
                 Token(";");
                 break;
             case IfStatement @if:
-                Token("if");
+                WriteIfStatement(@if);
+                break;
+            case SwitchStatement @switch:
+                Token("switch");
+                WriteConditionClause(@switch.InitStatement, @switch.Condition);
+                WriteEmbeddedStatement(@switch.Body);
+                break;
+            case CaseStatement @case:
+                Token("case");
                 Space();
-                Token("(");
-                WriteExpression(@if.Condition);
-                Token(")");
-                WriteEmbeddedStatement(@if.Then);
-                if (@if.Else != null)
+                WriteExpression(@case.Value);
+                if (@case.RangeEnd != null)
                 {
-                    NewLine();
-                    Token("else");
-                    WriteEmbeddedStatement(@if.Else);
+                    Space();
+                    Token("...");
+                    Space();
+                    WriteExpression(@case.RangeEnd);
                 }
 
+                Token(":");
+                WriteLabeledStatement(@case.Statement);
+                break;
+            case DefaultStatement @default:
+                Token("default");
+                Token(":");
+                WriteLabeledStatement(@default.Statement);
+                break;
+            case LabeledStatement labeled:
+                Token(labeled.Label);
+                Token(":");
+                WriteLabeledStatement(labeled.Statement);
                 break;
             case WhileStatement @while:
                 Token("while");
-                Space();
-                Token("(");
-                WriteExpression(@while.Condition);
-                Token(")");
+                WriteConditionClause(null, @while.Condition);
                 WriteEmbeddedStatement(@while.Body);
                 break;
+            case DoStatement @do:
+                Token("do");
+                WriteEmbeddedStatement(@do.Body);
+                NewLine();
+                Token("while");
+                Space();
+                Token("(");
+                WriteExpression(@do.Condition);
+                Token(")");
+                Token(";");
+                break;
+            case ForStatement @for:
+                WriteForStatement(@for);
+                break;
+            case RangeForStatement rangeFor:
+                Token("for");
+                Space();
+                Token("(");
+                WriteInitStatement(rangeFor.InitStatement);
+                Directives(rangeFor.Declaration);
+                WriteLeadingAttributes(rangeFor.Declaration.Attributes);
+                WriteSpecifiersAndDeclarator(rangeFor.Declaration.Specifiers, rangeFor.Declaration.Declarator);
+                Space();
+                Token(":");
+                Space();
+                WriteExpression(rangeFor.Range);
+                Token(")");
+                WriteEmbeddedStatement(rangeFor.Body);
+                break;
+            case BreakStatement:
+                Token("break");
+                Token(";");
+                break;
+            case ContinueStatement:
+                Token("continue");
+                Token(";");
+                break;
             case ReturnStatement @return:
-                Token("return");
-                if (@return.Expression != null)
+                WriteReturnStatement("return", @return.Expression);
+                break;
+            case CoReturnStatement coReturn:
+                WriteReturnStatement("co_return", coReturn.Expression);
+                break;
+            case GotoStatement @goto:
+                Token("goto");
+                Space();
+                Token(@goto.Label);
+                Token(";");
+                break;
+            case AttributedStatement attributed:
+                WriteLeadingAttributes(attributed.Attributes);
+                WriteStatement(attributed.Statement);
+                break;
+            case TryStatement @try:
+                Token("try");
+                NewLine();
+                WriteCompoundStatement(@try.Block);
+                foreach (var handler in @try.Handlers)
                 {
+                    NewLine();
+                    Directives(handler);
+                    Token("catch");
                     Space();
-                    WriteExpression(@return.Expression);
+                    Token("(");
+                    if (handler.Declaration == null)
+                    {
+                        Token("...");
+                    }
+                    else
+                    {
+                        WriteParameter(handler.Declaration);
+                    }
+
+                    Token(")");
+                    NewLine();
+                    WriteCompoundStatement(handler.Body);
                 }
 
-                Token(";");
                 break;
             default:
                 throw new NotSupportedException($"Unknown statement {statement.GetType().Name}");
         }
     }
 
+    private void WriteIfStatement(IfStatement @if)
+    {
+        Token("if");
+        Space();
+        if (@if.IsConsteval)
+        {
+            if (@if.IsNegated)
+            {
+                Token("!");
+            }
+
+            Token("consteval");
+        }
+        else
+        {
+            if (@if.IsConstexpr)
+            {
+                Token("constexpr");
+            }
+
+            WriteConditionClause(@if.InitStatement, @if.Condition);
+        }
+
+        WriteEmbeddedStatement(@if.Then);
+        if (@if.Else != null)
+        {
+            NewLine();
+            Token("else");
+            if (@if.Else is IfStatement elseIf && elseIf.LeadingDirectives == null)
+            {
+                // else if on one line
+                Space();
+                WriteStatement(elseIf);
+            }
+            else
+            {
+                WriteEmbeddedStatement(@if.Else);
+            }
+        }
+    }
+
+    private void WriteForStatement(ForStatement @for)
+    {
+        Token("for");
+        Space();
+        Token("(");
+        if (@for.InitStatement == null)
+        {
+            Token(";");
+            Space();
+        }
+
+        WriteInitStatement(@for.InitStatement);
+        if (@for.Condition != null)
+        {
+            WriteCondition(@for.Condition);
+        }
+
+        Token(";");
+        if (@for.Increment != null)
+        {
+            Space();
+            WriteExpression(@for.Increment);
+        }
+
+        Token(")");
+        WriteEmbeddedStatement(@for.Body);
+    }
+
     /// <summary>
-    /// The body of an if or while statement: a block on its own lines, other statements indented.
+    /// <c>( init-statement condition )</c> after if, switch or while.
+    /// </summary>
+    private void WriteConditionClause(Statement initStatement, CppNode condition)
+    {
+        Space();
+        Token("(");
+        WriteInitStatement(initStatement);
+        WriteCondition(condition);
+        Token(")");
+    }
+
+    /// <summary>
+    /// The init-statement of an if, switch or for statement, with its ';', followed by a space.
+    /// </summary>
+    private void WriteInitStatement(Statement initStatement)
+    {
+        if (initStatement != null)
+        {
+            WriteStatement(initStatement);
+            Space();
+        }
+    }
+
+    private void WriteCondition(CppNode condition)
+    {
+        switch (condition)
+        {
+            case Expression expression:
+                WriteExpression(expression);
+                break;
+            case ConditionDeclaration declaration:
+                Directives(declaration);
+                WriteLeadingAttributes(declaration.Attributes);
+                WriteSpecifiersAndDeclarator(declaration.Specifiers, declaration.Declarator);
+                WriteInitializer(declaration.Initializer);
+                break;
+            default:
+                throw new NotSupportedException($"Unknown condition {condition?.GetType().Name}");
+        }
+    }
+
+    private void WriteReturnStatement(string keyword, Expression expression)
+    {
+        Token(keyword);
+        if (expression != null)
+        {
+            Space();
+            WriteExpression(expression);
+        }
+
+        Token(";");
+    }
+
+    /// <summary>
+    /// The statement after a label, on the next line; nothing for a label at the end of a block.
+    /// </summary>
+    private void WriteLabeledStatement(Statement statement)
+    {
+        if (statement == null)
+        {
+            return;
+        }
+
+        if (statement is CaseStatement or DefaultStatement or LabeledStatement)
+        {
+            NewLine();
+            WriteStatement(statement);
+            return;
+        }
+
+        WriteEmbeddedStatement(statement);
+    }
+
+    /// <summary>
+    /// The body of an if statement or a loop: a block on its own lines, other statements indented.
     /// </summary>
     private void WriteEmbeddedStatement(Statement statement)
     {

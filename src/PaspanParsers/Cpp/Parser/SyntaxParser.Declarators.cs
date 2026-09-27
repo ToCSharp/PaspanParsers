@@ -145,6 +145,11 @@ internal ref partial struct SyntaxParser
 
             declarator = Finish(new PackDeclarator(inner), start);
         }
+        else if (kind == DeclaratorKind.Named && IsPunctuator("[") && !Peek(1).IsPunctuator("["))
+        {
+            // A structured binding takes no parameters or array bounds
+            return TryParseStructuredBindingDeclarator(out declarator);
+        }
         else if (kind != DeclaratorKind.Abstract && IsNameStart(Current, NameContext.Declarator))
         {
             var name = ParseName(NameContext.Declarator);
@@ -209,6 +214,37 @@ internal ref partial struct SyntaxParser
             }
         }
 
+        return true;
+    }
+
+    /// <summary>
+    /// <c>[a, b]</c> of a structured binding declaration.
+    /// </summary>
+    private bool TryParseStructuredBindingDeclarator(out Declarator declarator)
+    {
+        declarator = null;
+        var start = NodeStart;
+        EatToken();
+        var names = new List<IdentifierName>();
+        do
+        {
+            var nameStart = NodeStart;
+            var identifier = TryEatIdentifier();
+            if (identifier == null)
+            {
+                return false;
+            }
+
+            names.Add(Finish(new IdentifierName(identifier), nameStart));
+        }
+        while (TryEatPunctuator(","));
+
+        if (!TryEatPunctuator("]"))
+        {
+            return false;
+        }
+
+        declarator = Finish(new StructuredBindingDeclarator(names), start);
         return true;
     }
 
@@ -453,6 +489,16 @@ internal ref partial struct SyntaxParser
         ArrayDeclarator array => DeclaredName(array.Inner),
         FunctionDeclarator function => DeclaredName(function.Inner),
         ParenthesizedDeclarator parenthesized => DeclaredName(parenthesized.Inner),
+        _ => null,
+    };
+
+    /// <summary>
+    /// The structured binding a declarator declares, possibly by reference: <c>&amp;[a, b]</c>; null for other declarators.
+    /// </summary>
+    public static StructuredBindingDeclarator StructuredBinding(Declarator declarator) => declarator switch
+    {
+        StructuredBindingDeclarator binding => binding,
+        ReferenceDeclarator reference => StructuredBinding(reference.Inner),
         _ => null,
     };
 

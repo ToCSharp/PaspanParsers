@@ -1,5 +1,6 @@
 // Classes: members, access, inheritance, nested types, friends, bit-fields, static members; expressions
-// with classes (member access, pointers to members, this in lambdas).
+// with classes (member access, pointers to members, this in lambdas) and statements with classes (range-based
+// for over a class, structured bindings of members, function-try-blocks).
 
 #include <compare>
 
@@ -168,3 +169,35 @@ struct Widget
         return [=, this](int extra) { return this->size + extra; };
     }
 };
+
+// Statements with classes
+
+struct Range
+{
+    int data[3] = { 1, 2, 3 };
+    const int *begin() const { return data; }
+    const int *end() const { return data + 3; }
+};
+
+struct Tuple { int first; double second; };
+
+int class_statements(Range range)
+{
+    int total = 0;
+    for (int value : range) total += value;
+    for (Range copy = range; auto value : copy) total += value;
+    auto [first, second] = Tuple{ 1, 2.0 };
+    const auto &[a, b] = Tuple{ 3, 4.0 };
+    if (Tuple t{ 5, 6.0 }; t.first > 0) total += t.first;
+    try { throw range; } catch (const Range &caught) { total += caught.data[0]; }
+    return total + first + static_cast<int>(second + b) + a;
+}
+
+void function_try_block(int x)
+try
+{
+    if (x) throw x;
+}
+catch (int)
+{
+}

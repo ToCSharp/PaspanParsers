@@ -27,11 +27,13 @@ public sealed record ExactRule(params string[] Kinds) : KindRule
 /// declaration of one of the <see cref="Kinds"/> located there that ends where the node ends. Clang's
 /// declarations start at their declaration specifiers, shared by all declarators of a declaration.
 /// <see cref="OtherEnd"/>, when set, is another end clang may give the declaration: a variable initialized
-/// with parentheses ends at its last argument, <c>int a(1</c>, unless a constructor is called.
+/// with parentheses ends at its last argument, <c>int a(1</c>, unless a constructor is called. With
+/// <see cref="AnyEnd"/>, the end is not checked: clang ends the loop variable of a range-based for at the ':'.
 /// </summary>
 public sealed record DeclarationRule(Func<ICppNode, int> Name, params string[] Kinds) : KindRule
 {
     public Func<ICppNode, int> OtherEnd { get; init; }
+    public bool AnyEnd { get; init; }
 }
 
 /// <summary>
@@ -62,15 +64,27 @@ public static class CppKindMap
         // of designators
         Expression when IsInType(parent) => Tokens,
 
-        // Declarations
+        // Declarations: clang starts a function after its attributes, and a declaration statement before them
+        FunctionDefinition { Attributes.Count: > 0 } function => new ExactRule(FunctionKinds)
+        {
+            ClangStart = function.Specifiers?.Span.Start ?? function.Declarator.Span.Start,
+        },
         FunctionDefinition => new ExactRule(FunctionKinds),
         SimpleDeclaration => Tokens,
+        StaticAssertDeclaration => new ExactRule("StaticAssertDecl") { WithoutSemicolon = true },
         DeclSpecifierSequence or DeclSpecifier => Tokens,
-        InitDeclarator => new DeclarationRule(n => NameLocation(((InitDeclarator)n).Declarator), ["VarDecl", "TypedefDecl", .. FunctionKinds])
+        InitDeclarator => new DeclarationRule(n => NameLocation(((InitDeclarator)n).Declarator), ["VarDecl", "DecompositionDecl", "TypedefDecl", .. FunctionKinds])
         {
             OtherEnd = n => ((InitDeclarator)n).Initializer is ParenthesizedInitializer { Arguments: [.., var last] } ? last.Span.End : -1,
         },
+        ConditionDeclaration => new DeclarationRule(n => NameLocation(((ConditionDeclaration)n).Declarator), "VarDecl", "DecompositionDecl"),
+        ForRangeDeclaration => new DeclarationRule(n => NameLocation(((ForRangeDeclaration)n).Declarator), "VarDecl", "DecompositionDecl")
+        {
+            AnyEnd = true,
+        },
+        IdentifierName when parent.Node is StructuredBindingDeclarator => new ExactRule("BindingDecl"),
         Declarator or Name or TypeId or NoexceptSpecifier => Tokens,
+        ParameterDeclaration when parent.Node is CatchClause => new ExactRule("VarDecl"),
         ParameterDeclaration parameter => IsFunctionParameter(parameter, parent) ? new ExactRule("ParmVarDecl") : Tokens,
         Initializer => Tokens,
 
@@ -82,14 +96,30 @@ public static class CppKindMap
         TemplateTemplateParameter => new ExactRule("TemplateTemplateParmDecl"),
         AttributeSpecifier or CppAttribute => Tokens,
 
-        // Statements
+        // Statements. Clang's ranges of statements that end with ';' do not include it, except for null
+        // statements and declarations. Clang drops attributes it does not know, and with them the
+        // AttributedStmt; the attributes of a label belong to it, and its LabelStmt starts after them.
         CompoundStatement => new ExactRule("CompoundStmt"),
         DeclarationStatement => new ExactRule("DeclStmt"),
         ExpressionStatement { Expression: null } => new ExactRule("NullStmt"),
         ExpressionStatement => Tokens,
         IfStatement => new ExactRule("IfStmt") { WithoutSemicolon = true },
+        SwitchStatement => new ExactRule("SwitchStmt") { WithoutSemicolon = true },
+        CaseStatement => new ExactRule("CaseStmt") { WithoutSemicolon = true },
+        DefaultStatement => new ExactRule("DefaultStmt") { WithoutSemicolon = true },
+        LabeledStatement => new ExactRule("LabelStmt") { WithoutSemicolon = true },
         WhileStatement => new ExactRule("WhileStmt") { WithoutSemicolon = true },
+        DoStatement => new ExactRule("DoStmt") { WithoutSemicolon = true },
+        ForStatement => new ExactRule("ForStmt") { WithoutSemicolon = true },
+        RangeForStatement => new ExactRule("CXXForRangeStmt") { WithoutSemicolon = true },
+        BreakStatement => new ExactRule("BreakStmt") { WithoutSemicolon = true },
+        ContinueStatement => new ExactRule("ContinueStmt") { WithoutSemicolon = true },
         ReturnStatement => new ExactRule("ReturnStmt") { WithoutSemicolon = true },
+        CoReturnStatement => new ExactRule("CoreturnStmt") { WithoutSemicolon = true },
+        GotoStatement => new ExactRule("GotoStmt") { WithoutSemicolon = true },
+        AttributedStatement => new ExactRule("AttributedStmt") { WithoutSemicolon = true, OrAbsent = true },
+        TryStatement => new ExactRule("CXXTryStmt"),
+        CatchClause => new ExactRule("CXXCatchStmt"),
 
         // Expressions
         LiteralExpression when parent.Node is ConcatenatedStringExpression => Tokens,
@@ -221,10 +251,21 @@ public static class CppKindMap
 
     /// <summary>
     /// Where clang locates the declaration of a declarator: at the unqualified name, at <c>operator</c> or
-    /// <c>~</c>. -1 for an abstract declarator.
+    /// <c>~</c>, at the '[' of a structured binding. -1 for an abstract declarator.
     /// </summary>
     public static int NameLocation(Declarator declarator)
     {
+        // A structured binding is located at its '['
+        for (var binding = declarator; binding is ReferenceDeclarator or StructuredBindingDeclarator;)
+        {
+            if (binding is StructuredBindingDeclarator)
+            {
+                return binding.Span.Start;
+            }
+
+            binding = ((ReferenceDeclarator)binding).Inner;
+        }
+
         var name = DeclaredName(declarator)?.Name;
         while (true)
         {

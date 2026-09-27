@@ -77,16 +77,25 @@ that the lazily scanned tokens can skip directives and inactive branches in any 
 | Names | Qualified names (`::a::b<int>::c`, `decltype(x)::type`, `T::template f<int>`), template-ids with type and expression arguments, operator, conversion and literal operator functions, destructors |
 | Types | Declaration specifiers in any order: fundamental types, cv-qualifiers, storage classes, `typedef`, named types, `typename`, elaborated types (`struct X`), `decltype`, `decltype(auto)`, constrained placeholders (`C auto`), GNU `__int128` and friends; type-ids |
 | Declarators | Pointers, references, pointers to members, arrays, functions with cv- and ref-qualifiers, `noexcept`, trailing return types and variadic parameters, parentheses, parameter packs, abstract declarators; `requires` after a declarator |
-| Declarations | Function definitions (also constructors, destructors and conversion functions without specifiers) and simple declarations, `struct X;`, parameters with default values; initializers `= x`, `= { }`, `(x)` and `{ }` (`int a(b);` declares a variable when `b` is a value) |
-| Names and scopes | A symbol table tells types from values: `a * b;` declares `b` when `a` is a type; unknown names use heuristics (`X y`, `X *y;`, `X &y = z;`, `vector<int> v;`), and `CppParseOptions.TypeNames`/`TemplateNames` add names from headers |
-| Statements | Compound, declaration, expression, null, `if`/`else`, `while`, `return` (also with a braced list) |
+| Declarations | Function definitions (also constructors, destructors and conversion functions without specifiers) and simple declarations with attributes, `struct X;`, parameters with default values; initializers `= x`, `= { }`, `(x)` and `{ }` (`int a(b);` declares a variable when `b` is a value); structured bindings (`auto &[a, b] = x;`); `static_assert` |
+| Names and scopes | A symbol table tells types from values: `a * b;` declares `b` when `a` is a type; unknown names use heuristics (`X y`, `X const`, `X *y;`, `X &y = z;`, `vector<int> v;`), and `CppParseOptions.TypeNames`/`TemplateNames` add names from headers. Blocks, statements, their substatements and handlers have scopes |
+| Statements | All statements of C++23: compound, declaration, expression, null; `if` with init-statements and condition declarations, `if constexpr`, `if consteval`, `if !consteval`; `switch`, `case` (also the GNU range `case 1 ... 3:`), `default`; `while`, `do`, `for`, range-based `for` with init-statements and structured bindings; `break`, `continue`, `return`, `co_return`, `goto`, labels (also at the end of a block); `try`/`catch`; attributes of statements |
 | Expressions | All operators of C++23 with their precedence and associativity (including `<=>`, `.*`, `->*`, the comma, `?:` and GNU `?:`, `throw`, `co_await`, `co_yield`); calls, subscripts with any number of arguments, member access (`a.template f<int>`, `p->~T()`); C-style, named and functional casts (`int(x)`, `T{x}`, `auto(x)`, `typename T::x()`, `decltype(x)(y)`); `sizeof`, `sizeof...`, `alignof`, `noexcept`, `typeid`; `new` (placement, parenthesized types, array bounds, initializers) and `delete`; `this`; braced lists with designators; pack expansions; fold expressions; lambdas (captures, init-captures, template parameters, attributes, specifiers, `noexcept`, trailing return types, `requires`); requires-expressions |
 | Templates | Template parameters of lambdas: type, non-type, template template, packs, defaults, constrained (`std::integral T`) |
-| Attributes | `[[...]]` with namespaces, `using`, arguments (kept as written) and `...`; in lambdas |
+| Attributes | `[[...]]` with namespaces, `using`, arguments (kept as written) and `...`; in lambdas, before declarations and statements |
 | Preprocessor | Directives as trivia, conditional compilation, macro expansion in conditions, `__has_include` and other feature tests |
-| Classes, enums, namespaces, template declarations, statements other than the above, ... | Not yet |
+| Classes, enums, namespaces, template declarations, `using` and alias declarations, function-try-blocks, `asm`, ... | Not yet |
 
-Ambiguities of expressions are resolved like clang, with the symbol table:
+Ambiguities are resolved like clang, with the symbol table:
+
+- A statement that can be a declaration is one ([stmt.ambig]): when it starts with a declaration specifier
+  keyword or a type, it is parsed as a declaration first, and as an expression when that fails. With
+  `typedef int T;`, `T(x);`, `T(*p);`, `T(c) = 7;` and `T(g)(int);` are declarations, `T(a) + 1;` and
+  `T{a};` expressions. A name that is not declared in the file starts a declaration only when what follows
+  can only follow a type: `X y`, `X const y`, `X *y;`, `X &y = z;`; `X(y);` is a call.
+- A condition is a declaration when it starts like one and has an initializer: `if (int k = next())`.
+  An if, switch or for statement has an init-statement when its parentheses hold a `;` outside brackets,
+  and a for statement with two of them is not range-based.
 
 - `(T)x` is a cast when `T` is a type: it has a keyword, a pointer or reference declarator, or names a
   type declared in the file. A single name that is not declared in the file (from a header) is a type when

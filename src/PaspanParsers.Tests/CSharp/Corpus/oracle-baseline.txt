@@ -147,6 +147,7 @@ src/PaspanParsers.Tests/Cpp/CppLiteralChecker.cs
 src/PaspanParsers.Tests/Cpp/CppParserEntryPointTests.cs
 src/PaspanParsers.Tests/Cpp/CppPreprocessorTests.cs
 src/PaspanParsers.Tests/Cpp/CppSpanChecker.cs
+src/PaspanParsers.Tests/Cpp/CppStatementTests.cs
 src/PaspanParsers.Tests/Cpp/CppTestHelper.cs
 src/PaspanParsers.Tests/FluentTests.cs
 src/PaspanParsers.Tests/Java/JavaExamples.cs

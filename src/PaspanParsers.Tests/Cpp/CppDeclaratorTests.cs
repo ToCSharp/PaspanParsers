@@ -68,7 +68,7 @@ public class CppDeclaratorTests
     {
         // a is a value: '<' compares
         var statements = CppTestHelper.Statements("int a = 1, b = 2, c = 3;\nbool d = a < b > c;");
-        var initializer = (EqualsInitializer)((DeclarationStatement)statements[1]).Declaration.Declarators[0].Initializer;
+        var initializer = (EqualsInitializer)((SimpleDeclaration)((DeclarationStatement)statements[1]).Declaration).Declarators[0].Initializer;
         Assert.AreEqual(">", ((BinaryExpression)initializer.Value).Operator);
 
         var options = new CppParseOptions(templateNames: ["make"]);

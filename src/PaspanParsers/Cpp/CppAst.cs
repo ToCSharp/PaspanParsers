@@ -152,11 +152,15 @@ public abstract class Declaration : CppNode
 
 /// <summary>
 /// A declaration of variables, functions or types: <c>static int a = 1, *b;</c>, <c>int f(int);</c>,
-/// <c>typedef int Integer;</c> or, without declarators, <c>struct Point;</c>. The span includes the ';'.
-/// The specifiers are null for a constructor, destructor or conversion function, which have none.
+/// <c>typedef int Integer;</c> or, without declarators, <c>struct Point;</c>. The span includes the
+/// attributes before it and the ';'. The specifiers are null for a constructor, destructor or conversion
+/// function, which have none.
 /// </summary>
 public sealed class SimpleDeclaration(DeclSpecifierSequence specifiers, IReadOnlyList<InitDeclarator> declarators) : Declaration
 {
+    /// <summary>The attributes before the specifiers: <c>[[maybe_unused]] int a;</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
     public DeclSpecifierSequence Specifiers { get; } = specifiers;
     public IReadOnlyList<InitDeclarator> Declarators { get; } = declarators ?? [];
 }
@@ -167,6 +171,9 @@ public sealed class SimpleDeclaration(DeclSpecifierSequence specifiers, IReadOnl
 /// </summary>
 public sealed class FunctionDefinition(DeclSpecifierSequence specifiers, Declarator declarator, CompoundStatement body) : Declaration
 {
+    /// <summary>The attributes before the specifiers: <c>[[nodiscard]] int f() { … }</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
     public DeclSpecifierSequence Specifiers { get; } = specifiers;
     public Declarator Declarator { get; } = declarator;
 
@@ -174,6 +181,15 @@ public sealed class FunctionDefinition(DeclSpecifierSequence specifiers, Declara
     public Expression RequiresClause { get; init; }
 
     public CompoundStatement Body { get; } = body;
+}
+
+/// <summary>
+/// <c>static_assert(condition, message);</c>; the message is null in <c>static_assert(condition);</c>.
+/// </summary>
+public sealed class StaticAssertDeclaration(Expression condition, Expression message = null) : Declaration
+{
+    public Expression Condition { get; } = condition;
+    public Expression Message { get; } = message;
 }
 
 // ========================================
@@ -392,6 +408,14 @@ public sealed class NameDeclarator(Name name) : Declarator
 }
 
 /// <summary>
+/// The names of a structured binding declaration: <c>[a, b]</c> in <c>auto &amp;[a, b] = pair;</c>.
+/// </summary>
+public sealed class StructuredBindingDeclarator(IReadOnlyList<IdentifierName> names) : Declarator
+{
+    public IReadOnlyList<IdentifierName> Names { get; } = names ?? [];
+}
+
+/// <summary>
 /// A parameter pack: <c>... args</c>; the inner declarator is null in an abstract declarator.
 /// </summary>
 public sealed class PackDeclarator(Declarator inner) : Declarator
@@ -547,11 +571,11 @@ public sealed class CompoundStatement(IReadOnlyList<Statement> statements) : Sta
 }
 
 /// <summary>
-/// A declaration in a block: <c>int a = 1;</c>.
+/// A declaration in a block: <c>int a = 1;</c>, <c>static_assert(sizeof(int) == 4);</c>.
 /// </summary>
-public sealed class DeclarationStatement(SimpleDeclaration declaration) : Statement
+public sealed class DeclarationStatement(Declaration declaration) : Statement
 {
-    public SimpleDeclaration Declaration { get; } = declaration;
+    public Declaration Declaration { get; } = declaration;
 }
 
 /// <summary>
@@ -563,30 +587,199 @@ public sealed class ExpressionStatement(Expression expression) : Statement
 }
 
 /// <summary>
-/// <c>if (condition) then else otherwise</c>.
+/// The declaration of a condition: <c>int k = next()</c> in <c>if (int k = next())</c>. The initializer is an
+/// <see cref="EqualsInitializer"/> or a <see cref="BracedInitializer"/>.
 /// </summary>
-public sealed class IfStatement(Expression condition, Statement then, Statement @else = null) : Statement
+public sealed class ConditionDeclaration(DeclSpecifierSequence specifiers, Declarator declarator, Initializer initializer) : CppNode
 {
-    public Expression Condition { get; } = condition;
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+    public DeclSpecifierSequence Specifiers { get; } = specifiers;
+    public Declarator Declarator { get; } = declarator;
+    public Initializer Initializer { get; } = initializer;
+}
+
+/// <summary>
+/// <c>if (init; condition) then else otherwise</c>, <c>if constexpr (condition) …</c> and
+/// <c>if consteval { … }</c>, <c>if !consteval { … }</c>. The condition is an <see cref="Expression"/> or a
+/// <see cref="ConditionDeclaration"/>, and null in <c>if consteval</c>. The else branch is null when there is none.
+/// </summary>
+public sealed class IfStatement(CppNode condition, Statement then, Statement @else = null) : Statement
+{
+    public bool IsConstexpr { get; init; }
+
+    /// <summary><c>if consteval</c>, or <c>if !consteval</c> with <see cref="IsNegated"/>.</summary>
+    public bool IsConsteval { get; init; }
+
+    public bool IsNegated { get; init; }
+
+    /// <summary>The init-statement before the condition: <c>int m = n * 2;</c> in <c>if (int m = n * 2; m &gt; 10)</c>, or null.</summary>
+    public Statement InitStatement { get; init; }
+
+    public CppNode Condition { get; } = condition;
     public Statement Then { get; } = then;
     public Statement Else { get; } = @else;
 }
 
 /// <summary>
-/// <c>while (condition) body</c>.
+/// <c>switch (init; condition) body</c>. The condition is an <see cref="Expression"/> or a <see cref="ConditionDeclaration"/>.
 /// </summary>
-public sealed class WhileStatement(Expression condition, Statement body) : Statement
+public sealed class SwitchStatement(CppNode condition, Statement body) : Statement
 {
-    public Expression Condition { get; } = condition;
+    /// <summary>The init-statement before the condition, or null.</summary>
+    public Statement InitStatement { get; init; }
+
+    public CppNode Condition { get; } = condition;
     public Statement Body { get; } = body;
 }
 
 /// <summary>
-/// <c>return expression;</c>; the expression is null in <c>return;</c>.
+/// <c>case value: statement</c>; <see cref="RangeEnd"/> is set in the GNU range <c>case 1 ... 3:</c>. The
+/// statement is null for a label at the end of a block (C++23): <c>case 1: }</c>.
+/// </summary>
+public sealed class CaseStatement(Expression value, Statement statement) : Statement
+{
+    public Expression Value { get; } = value;
+    public Expression RangeEnd { get; init; }
+    public Statement Statement { get; } = statement;
+}
+
+/// <summary>
+/// <c>default: statement</c>; the statement is null for a label at the end of a block (C++23).
+/// </summary>
+public sealed class DefaultStatement(Statement statement) : Statement
+{
+    public Statement Statement { get; } = statement;
+}
+
+/// <summary>
+/// <c>label: statement</c>; the statement is null for a label at the end of a block (C++23): <c>end: }</c>.
+/// Attributes of the label are in an <see cref="AttributedStatement"/> around it.
+/// </summary>
+public sealed class LabeledStatement(string label, Statement statement) : Statement
+{
+    public string Label { get; } = label;
+    public Statement Statement { get; } = statement;
+}
+
+/// <summary>
+/// <c>while (condition) body</c>. The condition is an <see cref="Expression"/> or a <see cref="ConditionDeclaration"/>.
+/// </summary>
+public sealed class WhileStatement(CppNode condition, Statement body) : Statement
+{
+    public CppNode Condition { get; } = condition;
+    public Statement Body { get; } = body;
+}
+
+/// <summary>
+/// <c>do body while (condition);</c>.
+/// </summary>
+public sealed class DoStatement(Statement body, Expression condition) : Statement
+{
+    public Statement Body { get; } = body;
+    public Expression Condition { get; } = condition;
+}
+
+/// <summary>
+/// <c>for (init condition; increment) body</c>. The init-statement is a <see cref="DeclarationStatement"/> or
+/// an <see cref="ExpressionStatement"/> and includes its ';'; it is null in <c>for (;;)</c>. The condition is an
+/// <see cref="Expression"/>, a <see cref="ConditionDeclaration"/> or null; the increment may be null.
+/// </summary>
+public sealed class ForStatement(Statement initStatement, CppNode condition, Expression increment, Statement body) : Statement
+{
+    public Statement InitStatement { get; } = initStatement;
+    public CppNode Condition { get; } = condition;
+    public Expression Increment { get; } = increment;
+    public Statement Body { get; } = body;
+}
+
+/// <summary>
+/// The range-based for statement: <c>for (init; declaration : range) body</c>. The range is an expression or
+/// a braced-init-list.
+/// </summary>
+public sealed class RangeForStatement(ForRangeDeclaration declaration, Expression range, Statement body) : Statement
+{
+    /// <summary>The init-statement before the declaration, or null.</summary>
+    public Statement InitStatement { get; init; }
+
+    public ForRangeDeclaration Declaration { get; } = declaration;
+    public Expression Range { get; } = range;
+    public Statement Body { get; } = body;
+}
+
+/// <summary>
+/// The loop variable of a range-based for statement: <c>const auto &amp;value</c>, <c>auto [key, value]</c>.
+/// </summary>
+public sealed class ForRangeDeclaration(DeclSpecifierSequence specifiers, Declarator declarator) : CppNode
+{
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+    public DeclSpecifierSequence Specifiers { get; } = specifiers;
+    public Declarator Declarator { get; } = declarator;
+}
+
+/// <summary>
+/// <c>break;</c>.
+/// </summary>
+public sealed class BreakStatement : Statement
+{
+}
+
+/// <summary>
+/// <c>continue;</c>.
+/// </summary>
+public sealed class ContinueStatement : Statement
+{
+}
+
+/// <summary>
+/// <c>return expression;</c>; the expression is null in <c>return;</c> and may be a braced-init-list.
 /// </summary>
 public sealed class ReturnStatement(Expression expression = null) : Statement
 {
     public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// <c>co_return expression;</c>; the expression is null in <c>co_return;</c> and may be a braced-init-list.
+/// </summary>
+public sealed class CoReturnStatement(Expression expression = null) : Statement
+{
+    public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// <c>goto label;</c>.
+/// </summary>
+public sealed class GotoStatement(string label) : Statement
+{
+    public string Label { get; } = label;
+}
+
+/// <summary>
+/// A statement with attributes: <c>[[likely]] return 1;</c>, <c>[[fallthrough]];</c>. The attributes of a
+/// declaration statement belong to its declaration (<see cref="SimpleDeclaration.Attributes"/>).
+/// </summary>
+public sealed class AttributedStatement(IReadOnlyList<AttributeSpecifier> attributes, Statement statement) : Statement
+{
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; } = attributes ?? [];
+    public Statement Statement { get; } = statement;
+}
+
+/// <summary>
+/// <c>try { … } catch (…) { … }</c>.
+/// </summary>
+public sealed class TryStatement(CompoundStatement block, IReadOnlyList<CatchClause> handlers) : Statement
+{
+    public CompoundStatement Block { get; } = block;
+    public IReadOnlyList<CatchClause> Handlers { get; } = handlers ?? [];
+}
+
+/// <summary>
+/// A handler: <c>catch (const std::exception &amp;e) { … }</c>; the declaration is null in <c>catch (...)</c>.
+/// </summary>
+public sealed class CatchClause(ParameterDeclaration declaration, CompoundStatement body) : CppNode
+{
+    public ParameterDeclaration Declaration { get; } = declaration;
+    public CompoundStatement Body { get; } = body;
 }
 
 // ========================================

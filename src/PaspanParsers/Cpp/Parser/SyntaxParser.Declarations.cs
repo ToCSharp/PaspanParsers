@@ -34,19 +34,29 @@ internal ref partial struct SyntaxParser
     // ========================================
 
     /// <summary>
-    /// A function definition or a simple declaration.
+    /// A function definition, a simple declaration or a <c>static_assert</c>.
     /// </summary>
     private Declaration ParseDeclaration() => ParseDeclaration(allowFunctionDefinition: true);
 
     /// <summary>
-    /// A simple declaration in a block: <c>int a = 1, *b;</c>.
+    /// A declaration in a block: <c>int a = 1, *b;</c> or <c>static_assert(sizeof(int) == 4);</c>.
     /// </summary>
-    private SimpleDeclaration ParseSimpleDeclaration() => ParseDeclaration(allowFunctionDefinition: false) as SimpleDeclaration;
+    private Declaration ParseBlockDeclaration() => ParseDeclaration(allowFunctionDefinition: false);
 
     private Declaration ParseDeclaration(bool allowFunctionDefinition)
     {
         EnsureSufficientStack();
         var start = NodeStart;
+        if (IsKeyword("static_assert"))
+        {
+            return ParseStaticAssertDeclaration();
+        }
+
+        var attributes = ParseAttributeSpecifiers();
+        if (attributes == null)
+        {
+            return null;
+        }
 
         var specifiers = ParseDeclSpecifiers();
         if (specifiers == null && !IsNameStart(Current, NameContext.Declarator))
@@ -63,7 +73,7 @@ internal ref partial struct SyntaxParser
             }
 
             EatToken();
-            return Finish(new SimpleDeclaration(specifiers, []), start);
+            return Finish(new SimpleDeclaration(specifiers, []) { Attributes = attributes }, start);
         }
 
         if (!TryParseDeclarator(DeclaratorKind.Named, out var declarator))
@@ -85,16 +95,47 @@ internal ref partial struct SyntaxParser
 
         if (allowFunctionDefinition && IsPunctuator("{") && DeclaresFunction(declarator))
         {
-            return ParseFunctionBodyRest(start, specifiers, declarator, requiresClause);
+            return ParseFunctionBodyRest(start, attributes, specifiers, declarator, requiresClause);
         }
 
-        return ParseSimpleDeclarationRest(start, specifiers, declarator, requiresClause);
+        return ParseSimpleDeclarationRest(start, attributes, specifiers, declarator, requiresClause);
+    }
+
+    /// <summary>
+    /// <c>static_assert(condition, message);</c> or <c>static_assert(condition);</c>.
+    /// </summary>
+    private StaticAssertDeclaration ParseStaticAssertDeclaration()
+    {
+        var start = NodeStart;
+        EatToken();
+        if (!TryEatPunctuator("("))
+        {
+            return null;
+        }
+
+        var saved = EnterBrackets();
+        var condition = ParseAssignmentExpression();
+        Expression message = null;
+        if (condition != null && TryEatPunctuator(","))
+        {
+            message = ParseAssignmentExpression();
+            condition = message == null ? null : condition;
+        }
+
+        LeaveBrackets(saved);
+        if (condition == null || !TryEatPunctuator(")") || !TryEatPunctuator(";"))
+        {
+            return null;
+        }
+
+        return Finish(new StaticAssertDeclaration(condition, message), start);
     }
 
     /// <summary>
     /// The body of a function definition: the parameters are declared in the scope of the body.
     /// </summary>
-    private FunctionDefinition ParseFunctionBodyRest(int start, DeclSpecifierSequence specifiers, Declarator declarator, Expression requiresClause)
+    private FunctionDefinition ParseFunctionBodyRest(
+        int start, IReadOnlyList<AttributeSpecifier> attributes, DeclSpecifierSequence specifiers, Declarator declarator, Expression requiresClause)
     {
         DeclareName(specifiers, declarator);
         var symbols = _cache.Symbols;
@@ -109,7 +150,11 @@ internal ref partial struct SyntaxParser
 
         var body = ParseCompoundStatement();
         symbols.ExitScope();
-        return body == null ? null : Finish(new FunctionDefinition(specifiers, declarator, body) { RequiresClause = requiresClause }, start);
+        return body == null ? null : Finish(new FunctionDefinition(specifiers, declarator, body)
+        {
+            Attributes = attributes,
+            RequiresClause = requiresClause,
+        }, start);
     }
 
     /// <summary>
@@ -176,7 +221,8 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// The initializer of the first declarator, the other init-declarators and the ';'.
     /// </summary>
-    private SimpleDeclaration ParseSimpleDeclarationRest(int start, DeclSpecifierSequence specifiers, Declarator first, Expression requiresClause)
+    private SimpleDeclaration ParseSimpleDeclarationRest(
+        int start, IReadOnlyList<AttributeSpecifier> attributes, DeclSpecifierSequence specifiers, Declarator first, Expression requiresClause)
     {
         var declarators = new List<InitDeclarator>();
         var declarator = first;
@@ -211,7 +257,7 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        return Finish(new SimpleDeclaration(specifiers, declarators), start);
+        return Finish(new SimpleDeclaration(specifiers, declarators) { Attributes = attributes }, start);
     }
 
     /// <summary>
@@ -249,10 +295,20 @@ internal ref partial struct SyntaxParser
 
     /// <summary>
     /// Declares the name of <paramref name="declarator"/> in the current scope: a type after <c>typedef</c>,
-    /// otherwise a value. Qualified names declare nothing new.
+    /// otherwise a value; the names of a structured binding are values. Qualified names declare nothing new.
     /// </summary>
     private readonly void DeclareName(DeclSpecifierSequence specifiers, Declarator declarator)
     {
+        if (StructuredBinding(declarator) is { } binding)
+        {
+            foreach (var name in binding.Names)
+            {
+                _cache.Symbols.Declare(name.Identifier, SymbolKind.Value);
+            }
+
+            return;
+        }
+
         if (DeclaredName(declarator)?.Name is IdentifierName identifier)
         {
             var isTypedef = specifiers?.Specifiers.Any(s => s is KeywordSpecifier { Keyword: "typedef" }) == true;

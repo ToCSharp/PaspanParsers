@@ -380,6 +380,47 @@ C#-парсер переходит на них. Единственное изм�
 - Дизамбигуации: C-cast или скобки, `sizeof(T)` или `sizeof(expr)`, `<` как шаблон, `>` внутри аргументов шаблона.
 
 ### Этап 5. Операторы
+
+> **Статус: выполнен.**
+> - **Диспетчер** (`Parser/SyntaxParser.Statements.cs`) по первому токену: ключевое слово оператора, `{`, `;`, метка
+>   (`идентификатор :`), `[[`; всё остальное — объявление или выражение.
+> - **Операторы и AST:**
+>   - `IfStatement` — `InitStatement`, условие (`Expression` или `ConditionDeclaration`), `IsConstexpr`, `IsConsteval`/`IsNegated`
+>     для `if consteval`/`if !consteval` (условия нет); `SwitchStatement` с init-statement; `CaseStatement` (`RangeEnd` —
+>     GNU `case 1 ... 3:`), `DefaultStatement`, `LabeledStatement`; у меток в конце блока (C++23: `end: }`) оператор `null`.
+>   - `WhileStatement`, `DoStatement`, `ForStatement` (у `for (;;)` нет init-statement, как у Clang), `RangeForStatement`
+>     (`ForRangeDeclaration`, диапазон — выражение или braced-init-list, init-statement).
+>   - `BreakStatement`, `ContinueStatement`, `ReturnStatement`, `CoReturnStatement`, `GotoStatement`, `TryStatement` с `CatchClause`
+>     (объявление — `ParameterDeclaration`, `null` у `catch (...)`), `AttributedStatement`.
+>   - Структурные привязки — декларатор `StructuredBindingDeclarator` (в том числе под `&`/`&&` и в range-`for`);
+>     `StaticAssertDeclaration` — в блоке и на уровне namespace; `DeclarationStatement.Declaration` теперь `Declaration`.
+>   - Атрибуты: у объявлений — `SimpleDeclaration.Attributes`/`FunctionDefinition.Attributes` (Clang включает их в `DeclStmt`),
+>     у остальных операторов — `AttributedStatement`, у метки — тоже `AttributedStatement` вокруг `LabeledStatement`.
+> - **[stmt.ambig]:** оператор, который начинается с ключевого слова-спецификатора или известного типа, сначала разбирается
+>   как объявление, при неудаче — как выражение; с `typedef int T;` `T(x);`, `T(*p);`, `T(c) = 7;`, `T(g)(int);`, `T(f), h;` —
+>   объявления, `T(a) + 1;`, `T(a)->m;`, `T{a};` — выражения. Для неизвестного имени добавлено `X const y`/`X volatile`.
+>   Условие — объявление, если начинается как объявление и после декларатора идёт `=` или `{`. Init-statement есть, если в скобках
+>   `if`/`switch`/`for` есть `;` вне скобок; `for` с двумя такими `;` — обычный, иначе range-based.
+> - **Области видимости:** у `if`/`switch`/`while`/`for` своя область для init-statement и условия, у каждого подоператора —
+>   своя, у обработчика — область параметра; имена привязок — значения; переменная range-`for` не видна в диапазоне.
+> - **Writer** печатает все операторы; `else if` — на одной строке.
+> - **Оракул:**
+>   - правила для всех новых узлов: операторы, которые кончаются `;`, — `WithoutSemicolon`; `AttributedStatement` — `OrAbsent`
+>     (Clang отбрасывает неизвестные атрибуты вместе с `AttributedStmt`; атрибуты метки принадлежат `LabelDecl`, и `LabelStmt`
+>     начинается после них);
+>   - `ConditionDeclaration` ↔ `VarDecl`; `ForRangeDeclaration` ↔ `VarDecl`/`DecompositionDecl` с новым `DeclarationRule.AnyEnd`
+>     (Clang заканчивает переменную range-`for` на `:`); декларация привязки находится на `[`, имена ↔ `BindingDecl`;
+>     параметр `catch` ↔ `VarDecl`; `FunctionDefinition` с атрибутами начинается у Clang после них (`ClangStart`);
+>   - нормализация игнорирует адреса `targetLabelDeclId` и `declId` меток.
+> - **Корпус:** `07-Statements.cpp` переписан под грамматику этапа: вместо классов — массивы и `std::initializer_list`,
+>   привязки к массивам. Range-`for` по классу, привязки к полям и function-try-block перенесены в конец `08-Classes.cpp` (этап 6).
+> - **База:** 8/20 (`00`–`07`). Юнит-тесты: `CppStatementTests.cs` (все операторы, области видимости, [stmt.ambig], round-trip
+>   Writer'а, оракул на фрагментах).
+> - Проход по 4891 файлу `/usr/include`: без исключений, около 2,5 с в Release; разбирается 1555 файлов (на этапе 4 — 1553),
+>   все прежние в их числе.
+> - **Ограничения:** alias-declaration в init-statement (`for (using T = int; …)`), `using`-объявления, локальные классы и
+>   function-try-block — этап 6; GNU `asm`, `__label__`, computed goto `goto *p;` не поддерживаются; `co_return` проверен только
+>   юнит-тестами (оракулу нужен тип корутины — этап 6).
 - Диспетчер по первому токену. «Объявление или выражение» решается по [stmt.ambig] с опорой на таблицу символов.
 - Операторы:
   - `if`/`if constexpr`/`if consteval` с init-statement; `switch`;

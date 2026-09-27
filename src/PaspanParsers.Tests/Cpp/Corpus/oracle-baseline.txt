@@ -5,3 +5,4 @@ src/PaspanParsers.Tests/Cpp/Corpus/03-Types.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/04-Declarators.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/05-Expressions.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/06-Lambdas.cpp
+src/PaspanParsers.Tests/Cpp/Corpus/07-Statements.cpp
