@@ -65,12 +65,67 @@ public static class RoslynOracle
             return new OracleResult(OracleStatus.Mismatch, "written code is invalid: " + Describe(regeneratedErrors[0]));
         }
 
-        if (!SyntaxFactory.AreEquivalent(original.GetRoot(), regenerated.GetRoot(), topLevel: false))
+        if (!AreEquivalent(original.GetRoot(), regenerated.GetRoot()))
         {
             return new OracleResult(OracleStatus.Mismatch, FirstDifference(original.GetRoot(), regenerated.GetRoot()));
         }
 
         return new OracleResult(OracleStatus.Passed);
+    }
+
+    /// <summary>
+    /// <see cref="SyntaxFactory.AreEquivalent(SyntaxNode, SyntaxNode, bool)"/>, falling back to a comparison
+    /// of the red trees when it fails.
+    /// </summary>
+    /// <remarks>
+    /// Roslyn compares green nodes slot by slot, and the parser sometimes stores a one-element list as
+    /// a list node and sometimes as the element itself (it depends on the trivia around the statement),
+    /// so identical trees can compare as different. <see cref="SyntaxNode.ChildNodesAndTokens"/> flattens
+    /// lists, and tokens are compared with Roslyn's rules: kind, missing, value text of identifiers and
+    /// the text of literals.
+    /// </remarks>
+    public static bool AreEquivalent(SyntaxNode expected, SyntaxNode actual)
+    {
+        return SyntaxFactory.AreEquivalent(expected, actual, topLevel: false) || AreStructurallyEquivalent(expected, actual);
+    }
+
+    private static bool AreStructurallyEquivalent(SyntaxNode expected, SyntaxNode actual)
+    {
+        var stack = new Stack<(SyntaxNodeOrToken Expected, SyntaxNodeOrToken Actual)>();
+        stack.Push((expected, actual));
+
+        while (stack.Count != 0)
+        {
+            var (e, a) = stack.Pop();
+            if (e.RawKind != a.RawKind || e.IsToken != a.IsToken)
+            {
+                return false;
+            }
+
+            if (e.IsToken)
+            {
+                if (!SyntaxFactory.AreEquivalent(e.AsToken(), a.AsToken()))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            var expectedChildren = e.ChildNodesAndTokens();
+            var actualChildren = a.ChildNodesAndTokens();
+            if (expectedChildren.Count != actualChildren.Count)
+            {
+                return false;
+            }
+
+            for (var i = expectedChildren.Count - 1; i >= 0; i--)
+            {
+                stack.Push((expectedChildren[i], actualChildren[i]));
+            }
+        }
+
+        return true;
     }
 
     private static string Describe(Diagnostic diagnostic)
@@ -94,12 +149,12 @@ public static class RoslynOracle
 
             if (e.IsNode && a.IsNode && e.IsKind(a.Kind()))
             {
-                if (!SyntaxFactory.AreEquivalent(e.AsNode(), a.AsNode(), topLevel: false))
+                if (!AreEquivalent(e.AsNode(), a.AsNode()))
                 {
                     return FirstDifference(e.AsNode(), a.AsNode());
                 }
             }
-            else if (!e.IsKind(a.Kind()) || (e.IsToken && e.AsToken().ValueText != a.AsToken().ValueText))
+            else if (!e.IsKind(a.Kind()) || (e.IsToken && !SyntaxFactory.AreEquivalent(e.AsToken(), a.AsToken())))
             {
                 return Mismatch(e, a);
             }

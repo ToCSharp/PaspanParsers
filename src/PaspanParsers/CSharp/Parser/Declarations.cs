@@ -9,72 +9,14 @@ public partial class CSharpParser
     private static Parser<List<AttributeNode>> attributeList;
     private static Parser<List<AttributeSection>> attributes;
     private static Parser<Modifiers> modifiers;
-    private static Parser<ParameterModifier> parameterModifier;
     private static Parser<List<Parameter>> parameterList;
+    private static Parser<List<VariableDeclarator>> variableDeclarators;
     private static Parser<MemberDeclaration> typeDeclaration;
 
     private static void InitializeAttributesAndModifiers()
     {
-        // Attribute target
-        var attributeTarget =
-            ATTR_ASSEMBLY.Then(AttributeTarget.Assembly)
-            .Or(ATTR_MODULE.Then(AttributeTarget.Module))
-            .Or(ATTR_FIELD.Then(AttributeTarget.Field))
-            .Or(ATTR_EVENT.Then(AttributeTarget.Event))
-            .Or(ATTR_METHOD.Then(AttributeTarget.Method))
-            .Or(ATTR_PARAM.Then(AttributeTarget.Param))
-            .Or(ATTR_PROPERTY.Then(AttributeTarget.Property))
-            .Or(ATTR_RETURN.Then(AttributeTarget.Return))
-            .Or(ATTR_TYPE.Then(AttributeTarget.Type));
-
-        var attributeTargetSpecifier = attributeTarget.AndSkip(COLON);
-
-        // Attribute argument (either positional or named)
-        var attributeArgument = Deferred<Argument>();
-
-        var namedArgument = anyIdentifier.AndSkip(EQ).And(expression)
-            .Then<Argument>(result =>
-            {
-                var (name, expr) = result;
-                return new Argument(expr, name);
-            });
-
-        var positionalArgument = expression
-            .Then<Argument>(expr => new Argument(expr, null));
-
-        attributeArgument.Parser = namedArgument.Or(positionalArgument);
-
-        var attributeArgumentList = Separated(COMMA, attributeArgument);
-
-        // Attribute
-        var attributeArguments = Between(LPAREN, attributeArgumentList, RPAREN).Optional();
-
-        var attribute = qualifiedName.And(attributeArguments)
-            .Then(result =>
-            {
-                var (name, args) = result;
-                return new AttributeNode(
-                    new NameExpression(name),
-                    args.HasValue && args.Value.Count != 0 ? args.Value : null
-                );
-            });
-
-        attributeList = Separated(COMMA, attribute);
-
-        // Attribute section: [AttributeTarget: Attr1, Attr2]
-        var attributeSection = Between(
-                LBRACKET,
-                attributeTargetSpecifier.Optional().And(attributeList),
-                RBRACKET
-            )
-            .Then(result =>
-            {
-                var (target, attrs) = result;
-                AttributeTarget? targetValue = target.HasValue ? target.Value : null;
-                return new AttributeSection(attrs, targetValue);
-            });
-
-        attributes = ZeroOrMany(attributeSection);
+        attributes = new SyntaxRuleParser<List<AttributeSection>>(SyntaxParser.ParseAttributesRule);
+        attributeList = new SyntaxRuleParser<List<AttributeNode>>(SyntaxParser.ParseAttributeListRule);
 
         // Modifiers
         var modifierKeyword =
@@ -96,7 +38,8 @@ public partial class CSharpParser
             .Or(VOLATILE.Then(Modifiers.Volatile))
             .Or(NEW.Then(Modifiers.New))
             .Or(REQUIRED.Then(Modifiers.Required))
-            .Or(REF.Then(Modifiers.Ref));
+            // 'ref' is a modifier of ref structs; before a type it starts a by-reference return type
+            .Or(REF.WhenFollowedBy(STRUCT.Or(PARTIAL)).Then(Modifiers.Ref));
 
         modifiers = ZeroOrMany(modifierKeyword)
             .Then(mods =>
@@ -112,24 +55,8 @@ public partial class CSharpParser
 
     private static void InitializeParameters()
     {
-        parameterModifier =
-            REF.Then(ParameterModifier.Ref)
-            .Or(OUT.Then(ParameterModifier.Out))
-            .Or(IN.Then(ParameterModifier.In))
-            .Or(PARAMS.Then(ParameterModifier.Params))
-            .Or(THIS.Then(ParameterModifier.This));
-
-        var parameter = parameterModifier.Else(ParameterModifier.None)
-            .And(typeReference)
-            .And(anyIdentifier)
-            .And(EQ.SkipAnd(expression).Optional())
-            .Then(result =>
-            {
-                var (modifier, type, name, defaultValue) = result;
-                return new Parameter(type, name, modifier, defaultValue.OrSome(null));
-            });
-
-        parameterList = Separated(COMMA, parameter);
+        parameterList = new SyntaxRuleParser<List<Parameter>>(SyntaxParser.ParseParametersRule);
+        variableDeclarators = new SyntaxRuleParser<List<VariableDeclarator>>(SyntaxParser.ParseVariableDeclaratorsRule);
     }
 
     private static void InitializeDeclarations()
@@ -179,7 +106,7 @@ public partial class CSharpParser
             });
 
         // Method declaration
-        var methodDeclaration = attributes.And(modifiers).And(typeReference).And(anyIdentifier)
+        var methodDeclaration = attributes.And(modifiers).And(returnType).And(anyIdentifier)
             .And(typeParameters)
             .And(Between(LPAREN, parameterList.Else([]), RPAREN))
             .And(typeParameterConstraintClauses)

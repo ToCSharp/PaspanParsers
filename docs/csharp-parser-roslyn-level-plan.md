@@ -39,7 +39,8 @@
 
 ## Архитектура
 
-`CSharpParser` разбивается на partial-файлы в `src/PaspanParsers/CSharp/Parser/`:
+`CSharpParser` разбивается на partial-файлы в `src/PaspanParsers/CSharp/Parser/`
+(после этапов 2–5 типы, выражения, паттерны и операторы живут в `SyntaxParser*.cs`, см. ниже):
 - `Lexical.cs`, `Trivia.cs`, `Preprocessor.cs`
 - `Names.cs`, `Types.cs`
 - `Expressions.cs`, `Patterns.cs`, `Statements.cs`
@@ -104,7 +105,41 @@
   - `\a` в валидаторе `SpanReader.ReadQuotedString` (`src/Paspan/SpanReader.cs`).
   - Остальное C#-специфичное пишем в самом C#-парсере, а не в ядре.
 
+> **Этапы 2–5: общее решение.** Имена, типы, выражения, паттерны и операторы разбирает один рукописный
+> рекурсивный спуск `SyntaxParser` (`ref struct`, файлы `Parser/SyntaxParser*.cs`).
+> - **Отклонение от плана:** это не отдельные `ExpressionParser`, `Types.cs` и `Statements.cs` на комбинаторах.
+>   Эти части взаимно рекурсивны: лямбды содержат блоки, паттерны — типы и выражения. Правилам Roslyn нужен просмотр вперёд через целые типы.
+> - Токены сканируются лениво поверх `Lexer` и кэшируются по позиции в `CSharpParseContext` (`SyntaxToken`, `SyntaxCache`).
+>   `>` всегда отдельный токен, а `>>`, `>>>`, `>>=`, `>>>=` собираются из соседних `>` без trivia между ними.
+> - Комбинаторная грамматика объявлений получает эти части через `SyntaxRuleParser<T>`: `expression`, `block`, `typeReference`, `returnType`,
+>   атрибуты, параметры, параметры типов, ограничения, декларации переменных.
+>   Старые комбинаторные `Expressions.cs`, `Patterns.cs`, `Statements.cs` удалены.
+> - **Оракул:** в `RoslynOracle` добавлено структурное сравнение. `SyntaxFactory.AreEquivalent` ложно различает деревья,
+>   если Roslyn хранит список из одного оператора то как сам узел, то как список (зависит от trivia).
+>   Проверка работает на уровне красного дерева: `ChildNodesAndTokens` и правила Roslyn для токенов.
+> - **Проверка по операторам:** `CSharpCorpusTests.Oracle_BuiltInCorpus_Statements` оборачивает каждый оператор каждого тела метода встроенного корпуса в метод
+>   и прогоняет оракул. Так этапы 2–5 измеряются независимо от объявлений (этап 6). Итог: **7880/7880**.
+>   Операторы с директивами препроцессора пропускаются до этапа 7.
+>   Такой же прогон по ~60 тыс. строк исходников Roslyn, dotnet/runtime и ASP.NET Core проходит полностью, кроме операторов с директивами.
+> - **Оракул по файлам:** 19/177 (было 2/165). Остальные файлы упираются в объявления (этап 6) и препроцессор (этап 7).
+> - Новые файлы корпуса: `18-Types.cs`, `19-ExpressionsAndLambdas.cs`, `20-PatternsAndStatements.cs`.
+>   Юнит-тесты: `TypeTests.cs`, `ExpressionTests.cs`, `PatternTests.cs`, `StatementTests.cs` (AST и оракул на фрагментах).
+> - Позиции (span) в AST не добавлялись: это этап 8.
+
 ### Этап 2. Имена и типы (`Names.cs`, `Types.cs`)
+
+> **Статус: выполнен** (`Parser/SyntaxParser.Types.cs`).
+> - Типы: predefined, именованные с `alias::`, generic и квалификатором (`NamedTypeReference.Qualifier` для `A<B>.C<D>`).
+>   Также nullable на любом типе (`NullableTypeReference` для массивов и кортежей), массивы, указатели, `delegate*` с соглашениями о вызове.
+>   Кортежи, `ref`/`ref readonly` (`RefTypeReference`), `scoped` (`ScopedTypeReference`), unbound generic в `typeof` и `nameof` (`OmittedTypeReference`).
+> - **Отклонение от плана:** вместо отдельных узлов `IdentifierName`/`GenericName`/`QualifiedName` имена в выражениях строятся так:
+>   `NameExpression` из одного идентификатора (с аргументами типа), цепочки `MemberAccessExpression` (тоже с аргументами типа)
+>   и `AliasQualifiedNameExpression`. Так представимы `A<B>.C<D>` и `x.Foo<int>()`.
+>   Имена namespace, using и атрибутов остаются `NameExpression(parts)`; у `NameExpression` появился `Alias`.
+> - Вместо неаллоцирующего `ScanType` используется спекулятивный `ParseType` с откатом позиции. Кэш сканирования — это кэш токенов и парных скобок.
+>   Неаллоцирующий вариант перенесён в этап 9.
+> - `<` разрешается по правилу из спецификации: после списка аргументов типа проверяется следующий токен.
+>   В режиме `TypeMode.Expression` (после `is`/`as` и в паттернах) `?` — nullable, только если за ним не может начаться выражение.
 - **Узлы имён** вместо лоссового `NameExpression(parts)`:
   - `IdentifierName`, `GenericName(name, typeArgs)`, `QualifiedName(left, right)`, `AliasQualifiedName` (`global::X`).
   - Так представимы `A<B>.C<D>` и `x.Foo<int>()`.
@@ -117,6 +152,17 @@
 - **Разрешение `<`** по правилу Roslyn: после `ScanTypeArgumentList` смотрим на следующий токен — `(`, `)`, `]`, `}`, `:`, `;`, `,`, `.`, `?`, `==`, `!=`, `|`, `^`, `&&`, `||`, `&`, `[`, `=>` и т.д. Это различает `F(G<A, B>(7))` и `a < b`.
 
 ### Этап 3. Выражения (`Expressions.cs`) — собственный Pratt-парсер `ExpressionParser : Parser<Expression>`
+
+> **Статус: выполнен** (`Parser/SyntaxParser.Expressions.cs`).
+> - Pratt-парсер с приоритетами Roslyn, все бинарные, унарные и постфиксные операторы (включая `!`, `?.`, `?[`, `->`), `switch`, `with`, диапазоны.
+> - Primary: `new` во всех формах (`InitializerExpression` для object/collection/complex/array инициализаторов,
+>   `AnonymousObjectCreationExpression`, `ImplicitArrayCreationExpression`), `stackalloc`, коллекционные выражения со `SpreadElement`.
+>   Также `typeof`, `sizeof`, `default`, `nameof`, `checked`, `__arglist`/`__makeref`/`__reftype`/`__refvalue`, анонимные методы,
+>   `throw`, `ref`, декларации (`DeclarationExpression` с `VariableDesignation`), кортежи и деконструкция.
+> - Cast, лямбды и query разбираются по правилам Roslyn. Лямбды поддерживают `static`/`async`, атрибуты, явный тип возврата,
+>   модификаторы и значения по умолчанию параметров. У query есть `into`-continuation (`QueryExpression.Continuation`).
+> - Writer печатает буквально: скобки лямбды (`HasParenthesizedParameters`), `new T { }` без скобок, висячие запятые,
+>   `ascending`, `Name = value` в атрибутах, порядок модификаторов лямбд и локальных функций.
 - **Приоритеты C# 14** (от низкого к высокому):
   - assignment (в том числе составные и `??=`, правоассоциативно)
   - lambda
@@ -154,6 +200,13 @@
 - **C# 14:** null-conditional assignment `a?.b = c`.
 
 ### Этап 4. Паттерны (`Patterns.cs`)
+
+> **Статус: выполнен** (`Parser/SyntaxParser.Patterns.cs`).
+> - Все паттерны: константный (выражение уровня shift, в том числе с cast `(byte)'a'`), type, declaration, `var` с деконструкцией, discard.
+>   Также positional с именами, property с расширенными путями `A.B:`, list и slice, relational, parenthesized.
+>   Приоритет `not` > `and` > `or` с левой ассоциативностью.
+> - После `is` простое имя — type pattern, в `case` и в ветках `switch` — константа.
+>   Пустой `{ }` и висячие запятые в property и list паттернах сохраняются.
 - Реализовать полный набор паттернов:
   - константный (любое constant-выражение, не только `primary`), type, declaration, `var` с деконструкцией `var (a, b)`, discard;
   - positional `(p1, p2)` и property `{ A.B: p }` (extended);
@@ -162,6 +215,13 @@
 - `is`-выражение на верном уровне приоритетов, `switch`-выражения с `when`.
 
 ### Этап 5. Операторы (`Statements.cs`)
+
+> **Статус: выполнен** (`Parser/SyntaxParser.Statements.cs`, `Parser/SyntaxParser.Declarations.cs`).
+> - Диспетчер по первому токену. «Объявление или выражение» решается спекулятивным разбором типа и проверкой токена после имени.
+> - Все операторы из списка ниже. Новые узлы: `EmptyStatement`, `LocalFunctionStatement`, `CheckedStatement`, `UnsafeStatement`, `FixedStatement`.
+>   Также `GotoStatement.Kind`, `ForEachStatement.Variable` для деконструкции и `LocalDeclarationStatement.IsAwait`.
+> - Атрибуты, параметры (`Parameter.Modifiers` в порядке исходника, `scoped`, `ref readonly`), параметры типов и ограничения
+>   (`DefaultConstraint`, `AllowsRefStructConstraint`) разбираются здесь же и используются также объявлениями.
 - **Диспетчер по первому токену.** Разбор «объявление или выражение» — через `ScanType` + «следующий токен — идентификатор», как `IsPossibleLocalDeclarationStatement` в Roslyn.
 - **Полный набор:**
   - block, empty `;`, labeled, local declaration (`const`, `ref`, `ref readonly`, `scoped`, `using`, `await using`);

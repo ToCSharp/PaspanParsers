@@ -270,6 +270,20 @@ public sealed class ConstructorConstraint : TypeConstraint
 {
 }
 
+/// <summary>
+/// The <c>default</c> constraint of overrides and explicit implementations.
+/// </summary>
+public sealed class DefaultConstraint : TypeConstraint
+{
+}
+
+/// <summary>
+/// The anti-constraint <c>allows ref struct</c>.
+/// </summary>
+public sealed class AllowsRefStructConstraint : TypeConstraint
+{
+}
+
 // ========================================
 // Field Declaration
 // ========================================
@@ -326,15 +340,22 @@ public sealed class ExpressionMethodBody(Expression expression) : MethodBody
     public Expression Expression { get; } = expression;
 }
 
+/// <summary>
+/// A parameter. <see cref="Type"/> is null for implicitly typed lambda parameters.
+/// <see cref="Modifiers"/> lists the modifiers in source order (<c>scoped ref</c>, <c>ref readonly</c>, <c>this in</c>);
+/// <see cref="Modifier"/> is the first one that is not <c>scoped</c> or <c>readonly</c>.
+/// </summary>
 public sealed class Parameter(
     TypeReference type,
     string name,
     ParameterModifier modifier = ParameterModifier.None,
     Expression defaultValue = null,
-    IReadOnlyList<AttributeSection> attributes = null) : ICSharpNode
+    IReadOnlyList<AttributeSection> attributes = null,
+    IReadOnlyList<ParameterModifier> modifiers = null) : ICSharpNode
 {
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public ParameterModifier Modifier { get; } = modifier;
+    public IReadOnlyList<ParameterModifier> Modifiers { get; } = modifiers ?? (modifier == ParameterModifier.None ? [] : [modifier]);
     public TypeReference Type { get; } = type;
     public string Name { get; } = name;
     public Expression DefaultValue { get; } = defaultValue;
@@ -347,7 +368,9 @@ public enum ParameterModifier
     Ref,
     Out,
     In,
-    Params
+    Params,
+    Scoped,
+    Readonly
 }
 
 // ========================================
@@ -466,8 +489,21 @@ public abstract class TypeReference : ICSharpNode
 {
 }
 
-public sealed class NamedTypeReference(NameExpression name, IReadOnlyList<TypeReference> typeArguments = null, bool isNullable = false) : TypeReference
+/// <summary>
+/// A named type: <c>List&lt;int&gt;</c>, <c>System.String</c>, <c>global::System.String</c>, <c>A&lt;B&gt;.C&lt;D&gt;</c>.
+/// <see cref="TypeArguments"/> belong to the last part of <see cref="Name"/>. When an earlier part has
+/// type arguments, everything up to it is in <see cref="Qualifier"/> (<c>A&lt;B&gt;</c> in <c>A&lt;B&gt;.C&lt;D&gt;</c>).
+/// <see cref="Alias"/> is the alias of an alias-qualified name (<c>global</c> in <c>global::System.String</c>).
+/// </summary>
+public sealed class NamedTypeReference(
+    NameExpression name,
+    IReadOnlyList<TypeReference> typeArguments = null,
+    bool isNullable = false,
+    TypeReference qualifier = null,
+    string alias = null) : TypeReference
 {
+    public TypeReference Qualifier { get; } = qualifier;
+    public string Alias { get; } = alias;
     public NameExpression Name { get; } = name;
     public IReadOnlyList<TypeReference> TypeArguments { get; } = typeArguments;
     public bool IsNullable { get; } = isNullable;
@@ -511,6 +547,69 @@ public sealed class TupleTypeReference(IReadOnlyList<TupleElement> elements) : T
     public IReadOnlyList<TupleElement> Elements { get; } = elements;
 }
 
+/// <summary>
+/// A nullable type other than a named or predefined type: <c>int[]?</c>, <c>(int, int)?</c>.
+/// Named and predefined types use their <c>IsNullable</c> flag instead.
+/// </summary>
+public sealed class NullableTypeReference(TypeReference elementType) : TypeReference
+{
+    public TypeReference ElementType { get; } = elementType;
+}
+
+/// <summary>
+/// A pointer type: <c>int*</c>, <c>void**</c>.
+/// </summary>
+public sealed class PointerTypeReference(TypeReference elementType) : TypeReference
+{
+    public TypeReference ElementType { get; } = elementType;
+}
+
+/// <summary>
+/// A function pointer type: <c>delegate*&lt;int, void&gt;</c>, <c>delegate* unmanaged[Cdecl]&lt;int, void&gt;</c>.
+/// The last parameter is the return type.
+/// </summary>
+public sealed class FunctionPointerTypeReference(
+    IReadOnlyList<FunctionPointerParameter> parameters,
+    string callingConvention = null,
+    IReadOnlyList<string> unmanagedCallingConventions = null) : TypeReference
+{
+    /// <summary><c>managed</c>, <c>unmanaged</c> or null when not specified.</summary>
+    public string CallingConvention { get; } = callingConvention;
+    /// <summary>The conventions in brackets after <c>unmanaged</c>, or null without brackets.</summary>
+    public IReadOnlyList<string> UnmanagedCallingConventions { get; } = unmanagedCallingConventions;
+    public IReadOnlyList<FunctionPointerParameter> Parameters { get; } = parameters;
+}
+
+public sealed class FunctionPointerParameter(TypeReference type, IReadOnlyList<ParameterModifier> modifiers = null) : ICSharpNode
+{
+    public IReadOnlyList<ParameterModifier> Modifiers { get; } = modifiers;
+    public TypeReference Type { get; } = type;
+}
+
+/// <summary>
+/// A by-reference type of a local or a return: <c>ref int</c>, <c>ref readonly int</c>.
+/// </summary>
+public sealed class RefTypeReference(TypeReference type, bool isReadOnly = false) : TypeReference
+{
+    public TypeReference Type { get; } = type;
+    public bool IsReadOnly { get; } = isReadOnly;
+}
+
+/// <summary>
+/// The type of a <c>scoped</c> local: <c>scoped ref int</c>, <c>scoped Span&lt;int&gt;</c>.
+/// </summary>
+public sealed class ScopedTypeReference(TypeReference type) : TypeReference
+{
+    public TypeReference Type { get; } = type;
+}
+
+/// <summary>
+/// A missing type argument of an unbound generic type: <c>Dictionary&lt;,&gt;</c> in <c>typeof</c>.
+/// </summary>
+public sealed class OmittedTypeReference : TypeReference
+{
+}
+
 public sealed class TupleElement(TypeReference type, string name = null) : ICSharpNode
 {
     public TypeReference Type { get; } = type;
@@ -535,14 +634,25 @@ public sealed class ExpressionStatement(Expression expression) : Statement
     public Expression Expression { get; } = expression;
 }
 
+public sealed class EmptyStatement : Statement
+{
+}
+
+/// <summary>
+/// A local variable declaration. <see cref="Type"/> is a <see cref="RefTypeReference"/> for
+/// <c>ref</c> locals and a <see cref="ScopedTypeReference"/> for <c>scoped</c> locals.
+/// </summary>
 public sealed class LocalDeclarationStatement(
     TypeReference type,
     IReadOnlyList<VariableDeclarator> variables,
     bool isConst = false,
-    bool isUsing = false) : Statement
+    bool isUsing = false,
+    bool isAwait = false) : Statement
 {
     public bool IsConst { get; } = isConst;
     public bool IsUsing { get; } = isUsing;
+    /// <summary><c>await using</c>.</summary>
+    public bool IsAwait { get; } = isAwait;
     public TypeReference Type { get; } = type;
     public IReadOnlyList<VariableDeclarator> Variables { get; } = variables;
 }
@@ -604,15 +714,21 @@ public sealed class ForStatement(
     public Statement Body { get; } = body;
 }
 
+/// <summary>
+/// <c>foreach (Type identifier in collection)</c>, or with deconstruction <c>foreach (var (a, b) in collection)</c>,
+/// where <see cref="Variable"/> holds the deconstruction and <see cref="Type"/> and <see cref="Identifier"/> are null.
+/// </summary>
 public sealed class ForEachStatement(
     TypeReference type,
     string identifier,
     Expression collection,
     Statement body,
-    bool isAwait = false) : Statement
+    bool isAwait = false,
+    Expression variable = null) : Statement
 {
     public TypeReference Type { get; } = type;
     public string Identifier { get; } = identifier;
+    public Expression Variable { get; } = variable;
     public Expression Collection { get; } = collection;
     public Statement Body { get; } = body;
     public bool IsAwait { get; } = isAwait;
@@ -686,9 +802,66 @@ public sealed class LabeledStatement(string label, Statement statement) : Statem
     public Statement Statement { get; } = statement;
 }
 
-public sealed class GotoStatement(string label) : Statement
+public sealed class GotoStatement(string label, GotoKind kind = GotoKind.Label, Expression caseExpression = null) : Statement
 {
+    public GotoKind Kind { get; } = kind;
     public string Label { get; } = label;
+    /// <summary>The constant of <c>goto case</c>.</summary>
+    public Expression CaseExpression { get; } = caseExpression;
+}
+
+public enum GotoKind
+{
+    Label,
+    Case,
+    Default
+}
+
+/// <summary>
+/// A <c>checked</c> or <c>unchecked</c> block.
+/// </summary>
+public sealed class CheckedStatement(bool isChecked, BlockStatement block) : Statement
+{
+    public bool IsChecked { get; } = isChecked;
+    public BlockStatement Block { get; } = block;
+}
+
+public sealed class UnsafeStatement(BlockStatement block) : Statement
+{
+    public BlockStatement Block { get; } = block;
+}
+
+public sealed class FixedStatement(TypeReference type, IReadOnlyList<VariableDeclarator> variables, Statement body) : Statement
+{
+    public TypeReference Type { get; } = type;
+    public IReadOnlyList<VariableDeclarator> Variables { get; } = variables;
+    public Statement Body { get; } = body;
+}
+
+/// <summary>
+/// A local function. <see cref="Modifiers"/> lists the modifiers in source order.
+/// The body is either <see cref="Body"/> or <see cref="ExpressionBody"/>.
+/// </summary>
+public sealed class LocalFunctionStatement(
+    TypeReference returnType,
+    string name,
+    IReadOnlyList<Parameter> parameters,
+    BlockStatement body = null,
+    Expression expressionBody = null,
+    IReadOnlyList<Modifiers> modifiers = null,
+    IReadOnlyList<TypeParameter> typeParameters = null,
+    IReadOnlyList<TypeParameterConstraint> constraints = null,
+    IReadOnlyList<AttributeSection> attributes = null) : Statement
+{
+    public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
+    public IReadOnlyList<Modifiers> Modifiers { get; } = modifiers ?? [];
+    public TypeReference ReturnType { get; } = returnType;
+    public string Name { get; } = name;
+    public IReadOnlyList<TypeParameter> TypeParameters { get; } = typeParameters;
+    public IReadOnlyList<Parameter> Parameters { get; } = parameters;
+    public IReadOnlyList<TypeParameterConstraint> Constraints { get; } = constraints;
+    public BlockStatement Body { get; } = body;
+    public Expression ExpressionBody { get; } = expressionBody;
 }
 
 // ========================================
@@ -763,10 +936,42 @@ public sealed class Interpolation(Expression expression, Expression alignment = 
     public string Format { get; } = format;
 }
 
-public sealed class NameExpression(IReadOnlyList<string> parts, IReadOnlyList<TypeReference> typeArguments = null) : Expression
+/// <summary>
+/// A name. In expressions it is a single identifier, optionally generic (<c>F&lt;int&gt;</c>);
+/// qualified names in expressions are <see cref="MemberAccessExpression"/> chains.
+/// Namespace, using and attribute names keep all their parts here.
+/// </summary>
+public sealed class NameExpression(IReadOnlyList<string> parts, IReadOnlyList<TypeReference> typeArguments = null, string alias = null) : Expression
 {
+    /// <summary>The alias of an alias-qualified name: <c>global</c> in <c>global::System.Obsolete</c>.</summary>
+    public string Alias { get; } = alias;
     public IReadOnlyList<string> Parts { get; } = parts;
     public IReadOnlyList<TypeReference> TypeArguments { get; } = typeArguments;
+}
+
+/// <summary>
+/// An alias-qualified name: <c>global::System</c>.
+/// </summary>
+public sealed class AliasQualifiedNameExpression(string alias, NameExpression name) : Expression
+{
+    public string Alias { get; } = alias;
+    public NameExpression Name { get; } = name;
+}
+
+public sealed class ThisExpression : Expression
+{
+}
+
+public sealed class BaseExpression : Expression
+{
+}
+
+/// <summary>
+/// A predefined type used as an expression: <c>int</c> in <c>int.Parse(s)</c>.
+/// </summary>
+public sealed class PredefinedTypeExpression(PredefinedType type) : Expression
+{
+    public PredefinedType Type { get; } = type;
 }
 
 public sealed class BinaryExpression(Expression left, BinaryOperator op, Expression right) : Expression
@@ -804,7 +1009,9 @@ public enum UnaryOperator
 {
     Plus, Minus, Not, BitwiseNot,
     Increment, Decrement,
-    AddressOf, Dereference, Index
+    AddressOf, Dereference, Index,
+    /// <summary>The postfix null-forgiving operator <c>x!</c>.</summary>
+    NullForgiving
 }
 
 public sealed class ConditionalExpression(Expression condition, Expression trueExpr, Expression falseExpr) : Expression
@@ -820,9 +1027,14 @@ public sealed class InvocationExpression(Expression expression, IReadOnlyList<Ar
     public IReadOnlyList<Argument> Arguments { get; } = arguments;
 }
 
-public sealed class Argument(Expression expression, string name = null, RefKind refKind = RefKind.None) : ICSharpNode
+/// <summary>
+/// An argument: <c>x</c>, <c>name: x</c>, <c>ref x</c>, <c>out var x</c>. Attribute arguments can also
+/// be written <c>Name = x</c>, which sets <see cref="IsNameEquals"/>.
+/// </summary>
+public sealed class Argument(Expression expression, string name = null, RefKind refKind = RefKind.None, bool isNameEquals = false) : ICSharpNode
 {
     public string Name { get; } = name;
+    public bool IsNameEquals { get; } = isNameEquals;
     public RefKind RefKind { get; } = refKind;
     public Expression Expression { get; } = expression;
 }
@@ -835,11 +1047,30 @@ public enum RefKind
     In
 }
 
-public sealed class MemberAccessExpression(string memberName, Expression target = null, bool isConditional = false) : Expression
+/// <summary>
+/// <c>target.Member</c>, <c>target?.Member</c> (<see cref="IsConditional"/>) or
+/// <c>pointer-&gt;Member</c> (<see cref="IsPointerAccess"/>), optionally with type arguments.
+/// </summary>
+public sealed class MemberAccessExpression(
+    string memberName,
+    Expression target = null,
+    bool isConditional = false,
+    IReadOnlyList<TypeReference> typeArguments = null,
+    bool isPointerAccess = false) : Expression
 {
     public Expression Target { get; } = target;
     public string MemberName { get; } = memberName;
+    public IReadOnlyList<TypeReference> TypeArguments { get; } = typeArguments;
     public bool IsConditional { get; } = isConditional;
+    public bool IsPointerAccess { get; } = isPointerAccess;
+}
+
+/// <summary>
+/// <c>[arguments]</c> on the left of an assignment in an object initializer.
+/// </summary>
+public sealed class ImplicitElementAccessExpression(IReadOnlyList<Argument> arguments) : Expression
+{
+    public IReadOnlyList<Argument> Arguments { get; } = arguments;
 }
 
 public sealed class ElementAccessExpression(Expression target, IReadOnlyList<Argument> arguments, bool isConditional = false) : Expression
@@ -849,40 +1080,106 @@ public sealed class ElementAccessExpression(Expression target, IReadOnlyList<Arg
     public bool IsConditional { get; } = isConditional;
 }
 
+/// <summary>
+/// <c>new T(arguments) { initializer }</c>. <see cref="Type"/> is null for target-typed <c>new()</c>;
+/// <see cref="Arguments"/> is null when the parentheses are omitted (<c>new T { A = 1 }</c>).
+/// </summary>
 public sealed class ObjectCreationExpression(
     TypeReference type,
     IReadOnlyList<Argument> arguments = null,
-    ObjectInitializer initializer = null) : Expression
+    InitializerExpression initializer = null) : Expression
 {
     public TypeReference Type { get; } = type;
     public IReadOnlyList<Argument> Arguments { get; } = arguments;
-    public ObjectInitializer Initializer { get; } = initializer;
+    public InitializerExpression Initializer { get; } = initializer;
 }
 
-public sealed class ObjectInitializer(IReadOnlyList<MemberInitializer> members) : ICSharpNode
+/// <summary>
+/// An initializer in braces. Object initializer members are assignments (<c>A = 1</c>, <c>[0] = 2</c>),
+/// collection elements are expressions or <see cref="InitializerKind.ComplexElement"/> initializers
+/// (<c>{ "a", 1 }</c>), and array initializers nest for multi-dimensional arrays.
+/// </summary>
+public sealed class InitializerExpression(InitializerKind kind, IReadOnlyList<Expression> expressions, bool hasTrailingComma = false) : Expression
 {
-    public IReadOnlyList<MemberInitializer> Members { get; } = members;
+    public InitializerKind Kind { get; } = kind;
+    public IReadOnlyList<Expression> Expressions { get; } = expressions;
+    public bool HasTrailingComma { get; } = hasTrailingComma;
 }
 
-public sealed class MemberInitializer(string name, Expression value) : ICSharpNode
+public enum InitializerKind
+{
+    Object,
+    Collection,
+    ComplexElement,
+    Array
+}
+
+/// <summary>
+/// <c>new { Name = x, y }</c>.
+/// </summary>
+public sealed class AnonymousObjectCreationExpression(IReadOnlyList<AnonymousObjectMember> members, bool hasTrailingComma = false) : Expression
+{
+    public IReadOnlyList<AnonymousObjectMember> Members { get; } = members;
+    public bool HasTrailingComma { get; } = hasTrailingComma;
+}
+
+public sealed class AnonymousObjectMember(Expression expression, string name = null) : ICSharpNode
 {
     public string Name { get; } = name;
-    public Expression Value { get; } = value;
+    public Expression Expression { get; } = expression;
 }
 
+/// <summary>
+/// <c>new T[size, size][]{ ... }</c>. <see cref="Sizes"/> holds the first rank specifier, with null for
+/// omitted sizes (<c>new int[,] { ... }</c>); <see cref="AdditionalRanks"/> holds the ranks of the
+/// following rank specifiers (<c>new int[2][]</c>).
+/// </summary>
 public sealed class ArrayCreationExpression(
     TypeReference elementType,
     IReadOnlyList<Expression> sizes = null,
-    ArrayInitializer initializer = null) : Expression
+    InitializerExpression initializer = null,
+    IReadOnlyList<int> additionalRanks = null) : Expression
 {
     public TypeReference ElementType { get; } = elementType;
     public IReadOnlyList<Expression> Sizes { get; } = sizes;
-    public ArrayInitializer Initializer { get; } = initializer;
+    public IReadOnlyList<int> AdditionalRanks { get; } = additionalRanks;
+    public InitializerExpression Initializer { get; } = initializer;
 }
 
-public sealed class ArrayInitializer(IReadOnlyList<Expression> elements) : ICSharpNode
+/// <summary>
+/// <c>new[] { ... }</c> or <c>new[,] { ... }</c>.
+/// </summary>
+public sealed class ImplicitArrayCreationExpression(InitializerExpression initializer, int rank = 1) : Expression
+{
+    public int Rank { get; } = rank;
+    public InitializerExpression Initializer { get; } = initializer;
+}
+
+/// <summary>
+/// <c>stackalloc T[size]</c>, <c>stackalloc T[] { ... }</c> or <c>stackalloc[] { ... }</c> (no <see cref="ElementType"/>).
+/// </summary>
+public sealed class StackAllocExpression(TypeReference elementType, Expression size = null, InitializerExpression initializer = null) : Expression
+{
+    public TypeReference ElementType { get; } = elementType;
+    public Expression Size { get; } = size;
+    public InitializerExpression Initializer { get; } = initializer;
+}
+
+/// <summary>
+/// A collection expression: <c>[1, 2, ..rest]</c>.
+/// </summary>
+public sealed class CollectionExpression(IReadOnlyList<Expression> elements, bool hasTrailingComma = false) : Expression
 {
     public IReadOnlyList<Expression> Elements { get; } = elements;
+    public bool HasTrailingComma { get; } = hasTrailingComma;
+}
+
+/// <summary>
+/// A spread element of a collection expression: <c>..rest</c>.
+/// </summary>
+public sealed class SpreadElement(Expression expression) : Expression
+{
+    public Expression Expression { get; } = expression;
 }
 
 public sealed class CastExpression(TypeReference type, Expression expression) : Expression
@@ -903,11 +1200,41 @@ public sealed class AsExpression(Expression expression, TypeReference type) : Ex
     public TypeReference Type { get; } = type;
 }
 
-public sealed class LambdaExpression(LambdaBody body, IReadOnlyList<Parameter> parameters = null, bool isAsync = false) : Expression
+/// <summary>
+/// A lambda. <see cref="Modifiers"/> lists <c>async</c> and <c>static</c> in source order.
+/// <see cref="HasParenthesizedParameters"/> is false for <c>x =&gt; ...</c>; when null, a single
+/// untyped parameter is written without parentheses.
+/// </summary>
+public sealed class LambdaExpression(
+    LambdaBody body,
+    IReadOnlyList<Parameter> parameters = null,
+    bool isAsync = false,
+    IReadOnlyList<Modifiers> modifiers = null,
+    TypeReference returnType = null,
+    IReadOnlyList<AttributeSection> attributes = null,
+    bool? hasParenthesizedParameters = null) : Expression
 {
+    public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
+    public IReadOnlyList<Modifiers> Modifiers { get; } = modifiers ?? (isAsync ? [CSharp.Modifiers.Async] : []);
+    public TypeReference ReturnType { get; } = returnType;
     public IReadOnlyList<Parameter> Parameters { get; } = parameters;
+    public bool? HasParenthesizedParameters { get; } = hasParenthesizedParameters;
     public LambdaBody Body { get; } = body;
     public bool IsAsync { get; } = isAsync;
+    public bool IsStatic => Modifiers.Contains(CSharp.Modifiers.Static);
+}
+
+/// <summary>
+/// <c>delegate (parameters) { ... }</c>; <see cref="Parameters"/> is null when the parameter list is omitted.
+/// </summary>
+public sealed class AnonymousMethodExpression(
+    BlockStatement block,
+    IReadOnlyList<Parameter> parameters = null,
+    IReadOnlyList<Modifiers> modifiers = null) : Expression
+{
+    public IReadOnlyList<Modifiers> Modifiers { get; } = modifiers ?? [];
+    public IReadOnlyList<Parameter> Parameters { get; } = parameters;
+    public BlockStatement Block { get; } = block;
 }
 
 public abstract class LambdaBody : ICSharpNode
@@ -927,11 +1254,14 @@ public sealed class BlockLambdaBody(BlockStatement block) : LambdaBody
 public sealed class QueryExpression(
     FromClause fromClause,
     IReadOnlyList<QueryClause> bodyClauses,
-    SelectOrGroupClause selectOrGroupClause) : Expression
+    SelectOrGroupClause selectOrGroupClause,
+    QueryContinuation continuation = null) : Expression
 {
     public FromClause FromClause { get; } = fromClause;
     public IReadOnlyList<QueryClause> BodyClauses { get; } = bodyClauses;
     public SelectOrGroupClause SelectOrGroupClause { get; } = selectOrGroupClause;
+    /// <summary><c>into identifier</c> and the query body that follows it.</summary>
+    public QueryContinuation Continuation { get; } = continuation;
 }
 
 public sealed class FromClause(string identifier, Expression expression, TypeReference type = null) : QueryClause
@@ -977,10 +1307,15 @@ public sealed class OrderByClause(IReadOnlyList<Ordering> orderings) : QueryClau
     public IReadOnlyList<Ordering> Orderings { get; } = orderings;
 }
 
-public sealed class Ordering(Expression expression, OrderDirection direction = OrderDirection.Ascending) : ICSharpNode
+/// <summary>
+/// An ordering of an orderby clause. <see cref="HasExplicitDirection"/> is true when
+/// <c>ascending</c> or <c>descending</c> is written.
+/// </summary>
+public sealed class Ordering(Expression expression, OrderDirection direction = OrderDirection.Ascending, bool hasExplicitDirection = false) : ICSharpNode
 {
     public Expression Expression { get; } = expression;
     public OrderDirection Direction { get; } = direction;
+    public bool HasExplicitDirection { get; } = hasExplicitDirection || direction == OrderDirection.Descending;
 }
 
 public abstract class SelectOrGroupClause : ICSharpNode
@@ -1001,11 +1336,13 @@ public sealed class GroupClause(Expression groupExpression, Expression byExpress
 public sealed class QueryContinuation(
     string identifier,
     IReadOnlyList<QueryClause> bodyClauses,
-    SelectOrGroupClause selectOrGroupClause) : ICSharpNode
+    SelectOrGroupClause selectOrGroupClause,
+    QueryContinuation continuation = null) : ICSharpNode
 {
     public string Identifier { get; } = identifier;
     public IReadOnlyList<QueryClause> BodyClauses { get; } = bodyClauses;
     public SelectOrGroupClause SelectOrGroupClause { get; } = selectOrGroupClause;
+    public QueryContinuation Continuation { get; } = continuation;
 }
 
 public enum OrderDirection
@@ -1014,10 +1351,11 @@ public enum OrderDirection
     Descending
 }
 
-public sealed class SwitchExpression(Expression governingExpression, IReadOnlyList<SwitchExpressionArm> arms) : Expression
+public sealed class SwitchExpression(Expression governingExpression, IReadOnlyList<SwitchExpressionArm> arms, bool hasTrailingComma = false) : Expression
 {
     public Expression GoverningExpression { get; } = governingExpression;
     public IReadOnlyList<SwitchExpressionArm> Arms { get; } = arms;
+    public bool HasTrailingComma { get; } = hasTrailingComma;
 }
 
 public sealed class SwitchExpressionArm(Pattern pattern, Expression expression, Expression guard = null) : ICSharpNode
@@ -1079,10 +1417,88 @@ public sealed class RangeExpression(Expression start = null, Expression end = nu
     public Expression End { get; } = end;
 }
 
-public sealed class WithExpression(Expression expression, ObjectInitializer initializer) : Expression
+public sealed class WithExpression(Expression expression, InitializerExpression initializer) : Expression
 {
     public Expression Expression { get; } = expression;
-    public ObjectInitializer Initializer { get; } = initializer;
+    public InitializerExpression Initializer { get; } = initializer;
+}
+
+/// <summary>
+/// <c>checked(expression)</c> or <c>unchecked(expression)</c>.
+/// </summary>
+public sealed class CheckedExpression(bool isChecked, Expression expression) : Expression
+{
+    public bool IsChecked { get; } = isChecked;
+    public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// <c>ref expression</c>: a by-reference initializer, return value, argument of a conditional or assignment.
+/// </summary>
+public sealed class RefExpression(Expression expression) : Expression
+{
+    public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// A declaration in an expression: <c>out var x</c>, <c>out int x</c>, <c>var (a, b)</c> in deconstruction,
+/// <c>int x</c> inside a deconstructing tuple.
+/// </summary>
+public sealed class DeclarationExpression(TypeReference type, VariableDesignation designation) : Expression
+{
+    public TypeReference Type { get; } = type;
+    public VariableDesignation Designation { get; } = designation;
+}
+
+public abstract class VariableDesignation : ICSharpNode
+{
+}
+
+public sealed class SingleVariableDesignation(string identifier) : VariableDesignation
+{
+    public string Identifier { get; } = identifier;
+}
+
+public sealed class DiscardDesignation : VariableDesignation
+{
+}
+
+public sealed class ParenthesizedVariableDesignation(IReadOnlyList<VariableDesignation> variables) : VariableDesignation
+{
+    public IReadOnlyList<VariableDesignation> Variables { get; } = variables;
+}
+
+/// <summary>
+/// <c>__arglist</c>, or <c>__arglist(arguments)</c> in an argument list.
+/// </summary>
+public sealed class ArgListExpression(IReadOnlyList<Argument> arguments = null) : Expression
+{
+    public IReadOnlyList<Argument> Arguments { get; } = arguments;
+}
+
+/// <summary>
+/// <c>__makeref(expression)</c>.
+/// </summary>
+public sealed class MakeRefExpression(Expression expression) : Expression
+{
+    public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// <c>__reftype(expression)</c>.
+/// </summary>
+public sealed class RefTypeExpression(Expression expression) : Expression
+{
+    public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// <c>__refvalue(expression, Type)</c>.
+/// </summary>
+public sealed class RefValueExpression(Expression expression, TypeReference type) : Expression
+{
+    public Expression Expression { get; } = expression;
+    public TypeReference Type { get; } = type;
 }
 
 // ========================================
@@ -1103,9 +1519,24 @@ public sealed class ConstantPattern(Expression expression) : Pattern
     public Expression Expression { get; } = expression;
 }
 
-public sealed class VarPattern(string identifier) : Pattern
+/// <summary>
+/// <c>var x</c>, <c>var _</c> or <c>var (a, b)</c>. <see cref="Identifier"/> is the name of a single variable.
+/// </summary>
+public sealed class VarPattern : Pattern
 {
-    public string Identifier { get; } = identifier;
+    public VarPattern(string identifier)
+        : this(identifier == "_" ? new DiscardDesignation() : new SingleVariableDesignation(identifier))
+    {
+    }
+
+    public VarPattern(VariableDesignation designation)
+    {
+        Designation = designation;
+        Identifier = designation is SingleVariableDesignation single ? single.Identifier : null;
+    }
+
+    public string Identifier { get; }
+    public VariableDesignation Designation { get; }
 }
 
 public sealed class DiscardPattern : Pattern
@@ -1118,26 +1549,62 @@ public sealed class DeclarationPattern(TypeReference type, string identifier = n
     public string Identifier { get; } = identifier;
 }
 
+/// <summary>
+/// <c>Type (positional) { properties } designation</c> with each part optional.
+/// A present but empty clause is an empty list (<c>{ }</c>), an absent clause is null.
+/// </summary>
 public sealed class RecursivePattern(
     TypeReference type = null,
     IReadOnlyList<SubPattern> positionalPatterns = null,
     IReadOnlyList<PropertySubPattern> propertyPatterns = null,
-    string designation = null) : Pattern
+    string designation = null,
+    bool propertyPatternsHaveTrailingComma = false) : Pattern
 {
+    public bool PropertyPatternsHaveTrailingComma { get; } = propertyPatternsHaveTrailingComma;
     public TypeReference Type { get; } = type;
     public IReadOnlyList<SubPattern> PositionalPatterns { get; } = positionalPatterns;
     public IReadOnlyList<PropertySubPattern> PropertyPatterns { get; } = propertyPatterns;
     public string Designation { get; } = designation;
 }
 
-public sealed class SubPattern(Pattern pattern) : ICSharpNode
+/// <summary>
+/// A positional subpattern, optionally named: <c>X: 0</c>.
+/// </summary>
+public sealed class SubPattern(Pattern pattern, string name = null) : ICSharpNode
+{
+    public string Name { get; } = name;
+    public Pattern Pattern { get; } = pattern;
+}
+
+/// <summary>
+/// A property subpattern. <see cref="PropertyName"/> may be an extended property path: <c>A.B</c>.
+/// </summary>
+public sealed class PropertySubPattern(string propertyName, Pattern pattern) : ICSharpNode
+{
+    public string PropertyName { get; } = propertyName;
+    public Pattern Pattern { get; } = pattern;
+}
+
+public sealed class ParenthesizedPattern(Pattern pattern) : Pattern
 {
     public Pattern Pattern { get; } = pattern;
 }
 
-public sealed class PropertySubPattern(string propertyName, Pattern pattern) : ICSharpNode
+/// <summary>
+/// A list pattern: <c>[1, .., var last] designation</c>.
+/// </summary>
+public sealed class ListPattern(IReadOnlyList<Pattern> patterns, string designation = null, bool hasTrailingComma = false) : Pattern
 {
-    public string PropertyName { get; } = propertyName;
+    public IReadOnlyList<Pattern> Patterns { get; } = patterns;
+    public bool HasTrailingComma { get; } = hasTrailingComma;
+    public string Designation { get; } = designation;
+}
+
+/// <summary>
+/// A slice pattern in a list pattern: <c>..</c> or <c>.. var rest</c>.
+/// </summary>
+public sealed class SlicePattern(Pattern pattern = null) : Pattern
+{
     public Pattern Pattern { get; } = pattern;
 }
 
@@ -1189,9 +1656,13 @@ public enum AttributeTarget
     Param,
     Property,
     Return,
-    Type
+    Type,
+    TypeVar
 }
 
+/// <summary>
+/// An attribute; <see cref="Arguments"/> is null without parentheses and empty for <c>Name()</c>.
+/// </summary>
 public sealed class AttributeNode(NameExpression name, IReadOnlyList<Argument> arguments = null) : ICSharpNode
 {
     public NameExpression Name { get; } = name;

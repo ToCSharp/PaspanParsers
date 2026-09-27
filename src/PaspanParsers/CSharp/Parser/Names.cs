@@ -3,12 +3,11 @@ using static Paspan.Fluent.Parsers;
 
 namespace PaspanParsers.CSharp;
 
-// Identifiers and names.
+// Identifiers and the dotted names of namespaces and using directives.
 public partial class CSharpParser
 {
     private static Parser<string> identifier, anyIdentifier;
     private static Parser<List<string>> qualifiedName;
-    private static Parser<Expression> nameExpr;
 
     private static void InitializeNames()
     {
@@ -18,9 +17,7 @@ public partial class CSharpParser
 
         anyIdentifier = identifier;
 
-        // Qualified name (for namespaces and types)
+        // Qualified name (for namespaces and using directives)
         qualifiedName = Separated(DOT, anyIdentifier);
-
-        nameExpr = qualifiedName.Then<Expression>(parts => new NameExpression(parts));
     }
 }

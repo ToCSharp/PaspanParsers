@@ -5,24 +5,21 @@ using static Paspan.Fluent.Parsers;
 namespace PaspanParsers.CSharp;
 
 /// <summary>
-/// C# parser built from Paspan combinators. The grammar is split into partial files
-/// under <c>CSharp/Parser/</c>; this file wires them together and exposes the entry points.
+/// C# parser. Declarations and the compilation unit are built from Paspan combinators in the
+/// partial files under <c>CSharp/Parser/</c>; names, types, expressions, patterns and statements
+/// are parsed by the hand-written <see cref="SyntaxParser"/>, wired in here as combinator parsers.
 /// </summary>
 public partial class CSharpParser
 {
     public static readonly Parser<CompilationUnit> CompilationUnitParser;
 
-    // Forward references shared between the grammar parts
-    private static readonly Deferred<Expression> expression = Deferred<Expression>();
-    private static readonly Deferred<Statement> statement = Deferred<Statement>();
-    private static readonly Deferred<BlockStatement> block = Deferred<BlockStatement>();
-    private static readonly Deferred<TypeReference> typeReference = Deferred<TypeReference>();
-    private static readonly Deferred<TypeConstraint> typeConstraint = Deferred<TypeConstraint>();
+    // Grammar parts implemented by SyntaxParser
+    private static readonly Parser<Expression> expression = new SyntaxRuleParser<Expression>(SyntaxParser.ParseExpressionRule);
+    private static readonly Parser<BlockStatement> block = new SyntaxRuleParser<BlockStatement>(SyntaxParser.ParseBlockRule);
+    private static readonly Parser<TypeReference> typeReference = new SyntaxRuleParser<TypeReference>(SyntaxParser.ParseTypeRule);
+    private static readonly Parser<TypeReference> returnType = new SyntaxRuleParser<TypeReference>(SyntaxParser.ParseReturnTypeRule);
+
     private static readonly Deferred<MemberDeclaration> memberDeclaration = Deferred<MemberDeclaration>();
-    private static readonly Deferred<Pattern> pattern = Deferred<Pattern>();
-    private static readonly Deferred<SwitchExpressionArm> switchExpressionArm = Deferred<SwitchExpressionArm>();
-    private static readonly Deferred<Expression> isExpression = Deferred<Expression>();
-    private static readonly Deferred<LambdaBody> lambdaBody = Deferred<LambdaBody>();
 
     static CSharpParser()
     {
@@ -30,11 +27,7 @@ public partial class CSharpParser
         InitializeNames();
         InitializeTypes();
         InitializeAttributesAndModifiers();
-        InitializeExpressions();
-        InitializePatterns();
-        InitializeStatements();
         InitializeParameters();
-        InitializeLambdasAndQueries();
         InitializeDeclarations();
 
         CompilationUnitParser = WithTrivia(InitializeCompilationUnit());
@@ -55,7 +48,7 @@ public partial class CSharpParser
         input ??= string.Empty;
 
         // A byte order mark is not part of the source text
-        if (input.Length > 0 && input[0] == '﻿')
+        if (input.Length > 0 && input[0] == '\uFEFF')
         {
             input = input[1..];
         }

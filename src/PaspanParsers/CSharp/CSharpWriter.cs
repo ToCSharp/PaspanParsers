@@ -838,6 +838,12 @@ public class CSharpWriter(string indentString = "    ")
             case ConstructorConstraint:
                 Write("new()");
                 break;
+            case DefaultConstraint:
+                Write("default");
+                break;
+            case AllowsRefStructConstraint:
+                Write("allows ref struct");
+                break;
         }
     }
 
@@ -845,27 +851,22 @@ public class CSharpWriter(string indentString = "    ")
     {
         WriteAttributes(param.Attributes);
 
-        switch (param.Modifier)
+        foreach (var modifier in param.Modifiers)
         {
-            case ParameterModifier.This:
-                Write("this ");
-                break;
-            case ParameterModifier.Ref:
-                Write("ref ");
-                break;
-            case ParameterModifier.Out:
-                Write("out ");
-                break;
-            case ParameterModifier.In:
-                Write("in ");
-                break;
-            case ParameterModifier.Params:
-                Write("params ");
-                break;
+            Write(GetParameterModifierString(modifier));
+            Write(" ");
         }
 
-        WriteTypeReference(param.Type);
-        Write($" {Id(param.Name)}");
+        if (param.Type == null)
+        {
+            // Implicitly typed lambda parameter, or __arglist
+            Write(param.Name == "__arglist" ? "__arglist" : Id(param.Name));
+        }
+        else
+        {
+            WriteTypeReference(param.Type);
+            Write($" {Id(param.Name)}");
+        }
 
         if (param.DefaultValue != null)
         {
@@ -873,6 +874,18 @@ public class CSharpWriter(string indentString = "    ")
             WriteExpression(param.DefaultValue);
         }
     }
+
+    private static string GetParameterModifierString(ParameterModifier modifier) => modifier switch
+    {
+        ParameterModifier.This => "this",
+        ParameterModifier.Ref => "ref",
+        ParameterModifier.Out => "out",
+        ParameterModifier.In => "in",
+        ParameterModifier.Params => "params",
+        ParameterModifier.Scoped => "scoped",
+        ParameterModifier.Readonly => "readonly",
+        _ => throw new ArgumentException($"Unknown parameter modifier: {modifier}")
+    };
 
     // ========================================
     // Type References
@@ -883,6 +896,15 @@ public class CSharpWriter(string indentString = "    ")
         switch (type)
         {
             case NamedTypeReference named:
+                if (named.Qualifier != null)
+                {
+                    WriteTypeReference(named.Qualifier);
+                    Write(".");
+                }
+                if (named.Alias != null)
+                {
+                    Write($"{Id(named.Alias)}::");
+                }
                 WriteNameExpression(named.Name);
                 if (named.TypeArguments != null && named.TypeArguments.Count > 0)
                 {
@@ -932,6 +954,55 @@ public class CSharpWriter(string indentString = "    ")
                 Write("(");
                 WriteList(tuple.Elements, WriteTupleElement);
                 Write(")");
+                break;
+
+            case NullableTypeReference nullable:
+                WriteTypeReference(nullable.ElementType);
+                Write("?");
+                break;
+
+            case PointerTypeReference pointer:
+                WriteTypeReference(pointer.ElementType);
+                Write("*");
+                break;
+
+            case FunctionPointerTypeReference functionPointer:
+                Write("delegate*");
+                if (functionPointer.CallingConvention != null)
+                {
+                    Write($" {functionPointer.CallingConvention}");
+                    if (functionPointer.UnmanagedCallingConventions != null)
+                    {
+                        Write($"[{string.Join(", ", functionPointer.UnmanagedCallingConventions.Select(Id))}]");
+                    }
+                }
+                Write("<");
+                WriteList(functionPointer.Parameters, parameter =>
+                {
+                    if (parameter.Modifiers != null)
+                    {
+                        foreach (var modifier in parameter.Modifiers)
+                        {
+                            Write(GetParameterModifierString(modifier));
+                            Write(" ");
+                        }
+                    }
+                    WriteTypeReference(parameter.Type);
+                });
+                Write(">");
+                break;
+
+            case RefTypeReference reference:
+                Write(reference.IsReadOnly ? "ref readonly " : "ref ");
+                WriteTypeReference(reference.Type);
+                break;
+
+            case ScopedTypeReference scoped:
+                Write("scoped ");
+                WriteTypeReference(scoped.Type);
+                break;
+
+            case OmittedTypeReference:
                 break;
         }
     }
@@ -1014,8 +1085,87 @@ public class CSharpWriter(string indentString = "    ")
                 WriteLabeledStatement(labeled);
                 break;
             case GotoStatement gotoStmt:
-                WriteLine($"goto {Id(gotoStmt.Label)};");
+                switch (gotoStmt.Kind)
+                {
+                    case GotoKind.Case:
+                        Write("goto case ");
+                        WriteExpression(gotoStmt.CaseExpression);
+                        WriteLine(";");
+                        break;
+                    case GotoKind.Default:
+                        WriteLine("goto default;");
+                        break;
+                    default:
+                        WriteLine($"goto {Id(gotoStmt.Label)};");
+                        break;
+                }
                 break;
+            case EmptyStatement:
+                WriteLine(";");
+                break;
+            case CheckedStatement checkedStmt:
+                WriteLine(checkedStmt.IsChecked ? "checked" : "unchecked");
+                WriteBlockStatement(checkedStmt.Block);
+                break;
+            case UnsafeStatement unsafeStmt:
+                WriteLine("unsafe");
+                WriteBlockStatement(unsafeStmt.Block);
+                break;
+            case FixedStatement fixedStmt:
+                Write("fixed (");
+                WriteTypeReference(fixedStmt.Type);
+                Write(" ");
+                WriteList(fixedStmt.Variables, WriteVariableDeclarator);
+                WriteLine(")");
+                WriteStatement(fixedStmt.Body);
+                break;
+            case LocalFunctionStatement localFunction:
+                WriteLocalFunctionStatement(localFunction);
+                break;
+        }
+    }
+
+    private void WriteLocalFunctionStatement(LocalFunctionStatement function)
+    {
+        WriteAttributes(function.Attributes);
+        WriteModifierList(function.Modifiers);
+        WriteTypeReference(function.ReturnType);
+        Write($" {Id(function.Name)}");
+
+        if (function.TypeParameters != null && function.TypeParameters.Count > 0)
+        {
+            Write("<");
+            WriteList(function.TypeParameters, WriteTypeParameter);
+            Write(">");
+        }
+
+        Write("(");
+        WriteList(function.Parameters, WriteParameter);
+        Write(")");
+
+        if (function.Constraints != null)
+        {
+            foreach (var constraint in function.Constraints)
+            {
+                Write(" ");
+                WriteTypeParameterConstraint(constraint);
+            }
+        }
+
+        if (function.Body != null)
+        {
+            WriteLine();
+            WriteBlockStatement(function.Body);
+        }
+        else if (function.ExpressionBody != null)
+        {
+            Write(" => ");
+            WriteExpression(function.ExpressionBody);
+            WriteLine(";");
+        }
+        else
+        {
+            WriteLine(";");
         }
     }
 
@@ -1038,6 +1188,8 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteLocalDeclarationStatement(LocalDeclarationStatement local)
     {
+        if (local.IsAwait)
+            Write("await ");
         if (local.IsUsing)
             Write("using ");
         if (local.IsConst)
@@ -1094,9 +1246,19 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteSwitchStatement(SwitchStatement switchStmt)
     {
-        Write("switch (");
-        WriteExpression(switchStmt.Expression);
-        WriteLine(")");
+        if (switchStmt.Expression is TupleExpression)
+        {
+            // switch (a, b): the tuple's parentheses are the statement's
+            Write("switch ");
+            WriteExpression(switchStmt.Expression);
+            WriteLine();
+        }
+        else
+        {
+            Write("switch (");
+            WriteExpression(switchStmt.Expression);
+            WriteLine(")");
+        }
         WriteLine("{");
         Indent();
 
@@ -1211,12 +1373,19 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteForEachStatement(ForEachStatement forEachStmt)
     {
-        Write("foreach");
         if (forEachStmt.IsAwait)
-            Write(" await");
-        Write(" (");
-        WriteTypeReference(forEachStmt.Type);
-        Write($" {Id(forEachStmt.Identifier)} in ");
+            Write("await ");
+        Write("foreach (");
+        if (forEachStmt.Variable != null)
+        {
+            WriteExpression(forEachStmt.Variable);
+            Write(" in ");
+        }
+        else
+        {
+            WriteTypeReference(forEachStmt.Type);
+            Write($" {Id(forEachStmt.Identifier)} in ");
+        }
         WriteExpression(forEachStmt.Collection);
         WriteLine(")");
         WriteStatement(forEachStmt.Body);
@@ -1292,10 +1461,9 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteUsingStatement(UsingStatement usingStmt)
     {
-        Write("using");
         if (usingStmt.IsAwait)
-            Write(" await");
-        Write(" (");
+            Write("await ");
+        Write("using (");
 
         if (usingStmt.ResourceAcquisition is LocalDeclarationStatement local)
         {
@@ -1425,7 +1593,172 @@ public class CSharpWriter(string indentString = "    ")
             case WithExpression withExpr:
                 WriteWithExpression(withExpr);
                 break;
+            case AliasQualifiedNameExpression aliasQualified:
+                Write($"{Id(aliasQualified.Alias)}::");
+                WriteNameExpression(aliasQualified.Name);
+                break;
+            case ThisExpression:
+                Write("this");
+                break;
+            case BaseExpression:
+                Write("base");
+                break;
+            case PredefinedTypeExpression predefinedType:
+                WriteTypeReference(new PredefinedTypeReference(predefinedType.Type));
+                break;
+            case ImplicitElementAccessExpression implicitElementAccess:
+                Write("[");
+                WriteList(implicitElementAccess.Arguments, WriteArgument);
+                Write("]");
+                break;
+            case InitializerExpression initializer:
+                WriteInitializerExpression(initializer);
+                break;
+            case AnonymousObjectCreationExpression anonymousObject:
+                WriteAnonymousObjectCreationExpression(anonymousObject);
+                break;
+            case ImplicitArrayCreationExpression implicitArray:
+                Write("new[");
+                Write(new string(',', implicitArray.Rank - 1));
+                Write("] ");
+                WriteInitializerExpression(implicitArray.Initializer);
+                break;
+            case StackAllocExpression stackAlloc:
+                WriteStackAllocExpression(stackAlloc);
+                break;
+            case CollectionExpression collection:
+                Write("[");
+                WriteList(collection.Elements, WriteExpression);
+                if (collection.HasTrailingComma)
+                    Write(",");
+                Write("]");
+                break;
+            case SpreadElement spread:
+                Write("..");
+                WriteExpression(spread.Expression);
+                break;
+            case AnonymousMethodExpression anonymousMethod:
+                WriteAnonymousMethodExpression(anonymousMethod);
+                break;
+            case CheckedExpression checkedExpr:
+                Write(checkedExpr.IsChecked ? "checked(" : "unchecked(");
+                WriteExpression(checkedExpr.Expression);
+                Write(")");
+                break;
+            case RefExpression refExpr:
+                Write("ref ");
+                WriteExpression(refExpr.Expression);
+                break;
+            case DeclarationExpression declaration:
+                WriteTypeReference(declaration.Type);
+                Write(" ");
+                WriteVariableDesignation(declaration.Designation);
+                break;
+            case ArgListExpression argList:
+                Write("__arglist");
+                if (argList.Arguments != null)
+                {
+                    Write("(");
+                    WriteList(argList.Arguments, WriteArgument);
+                    Write(")");
+                }
+                break;
+            case MakeRefExpression makeRef:
+                Write("__makeref(");
+                WriteExpression(makeRef.Expression);
+                Write(")");
+                break;
+            case RefTypeExpression refType:
+                Write("__reftype(");
+                WriteExpression(refType.Expression);
+                Write(")");
+                break;
+            case RefValueExpression refValue:
+                Write("__refvalue(");
+                WriteExpression(refValue.Expression);
+                Write(", ");
+                WriteTypeReference(refValue.Type);
+                Write(")");
+                break;
         }
+    }
+
+    private void WriteVariableDesignation(VariableDesignation designation)
+    {
+        switch (designation)
+        {
+            case SingleVariableDesignation single:
+                Write(Id(single.Identifier));
+                break;
+            case DiscardDesignation:
+                Write("_");
+                break;
+            case ParenthesizedVariableDesignation parenthesized:
+                Write("(");
+                WriteList(parenthesized.Variables, WriteVariableDesignation);
+                Write(")");
+                break;
+        }
+    }
+
+    private void WriteInitializerExpression(InitializerExpression initializer)
+    {
+        Write("{ ");
+        WriteList(initializer.Expressions, WriteExpression);
+        if (initializer.HasTrailingComma)
+            Write(",");
+        Write(" }");
+    }
+
+    private void WriteAnonymousObjectCreationExpression(AnonymousObjectCreationExpression anonymousObject)
+    {
+        Write("new { ");
+        WriteList(anonymousObject.Members, member =>
+        {
+            if (member.Name != null)
+            {
+                Write($"{Id(member.Name)} = ");
+            }
+            WriteExpression(member.Expression);
+        });
+        if (anonymousObject.HasTrailingComma)
+            Write(",");
+        Write(" }");
+    }
+
+    private void WriteStackAllocExpression(StackAllocExpression stackAlloc)
+    {
+        Write("stackalloc");
+        if (stackAlloc.ElementType != null)
+        {
+            Write(" ");
+            WriteTypeReference(stackAlloc.ElementType);
+        }
+        Write("[");
+        if (stackAlloc.Size != null)
+        {
+            WriteExpression(stackAlloc.Size);
+        }
+        Write("]");
+        if (stackAlloc.Initializer != null)
+        {
+            Write(" ");
+            WriteInitializerExpression(stackAlloc.Initializer);
+        }
+    }
+
+    private void WriteAnonymousMethodExpression(AnonymousMethodExpression anonymousMethod)
+    {
+        WriteModifierList(anonymousMethod.Modifiers);
+        Write("delegate");
+        if (anonymousMethod.Parameters != null)
+        {
+            Write(" (");
+            WriteList(anonymousMethod.Parameters, WriteParameter);
+            Write(")");
+        }
+        WriteLine();
+        WriteBlockStatement(anonymousMethod.Block);
     }
 
     /// <summary>
@@ -1560,6 +1893,10 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteNameExpression(NameExpression name)
     {
+        if (name.Alias != null)
+        {
+            Write($"{Id(name.Alias)}::");
+        }
         Write(string.Join(".", name.Parts.Select(Id)));
         if (name.TypeArguments != null && name.TypeArguments.Count > 0)
         {
@@ -1621,7 +1958,17 @@ public class CSharpWriter(string indentString = "    ")
     {
         if (unary.IsPrefix)
         {
-            Write(GetUnaryOperatorString(unary.Operator));
+            var op = GetUnaryOperatorString(unary.Operator);
+            Write(op);
+
+            // Keep "- -x" and "- --x" apart: "--x" and "---x" would lex differently
+            if (unary.Operand is UnaryExpression { IsPrefix: true } inner
+                && GetUnaryOperatorString(inner.Operator)[0] == op[^1]
+                && op[^1] is '+' or '-' or '&')
+            {
+                Write(" ");
+            }
+
             WriteExpression(unary.Operand);
         }
         else
@@ -1644,6 +1991,7 @@ public class CSharpWriter(string indentString = "    ")
             UnaryOperator.AddressOf => "&",
             UnaryOperator.Dereference => "*",
             UnaryOperator.Index => "^",
+            UnaryOperator.NullForgiving => "!",
             _ => throw new ArgumentException($"Unknown unary operator: {op}")
         };
     }
@@ -1669,7 +2017,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         if (!string.IsNullOrEmpty(arg.Name))
         {
-            Write($"{Id(arg.Name)}: ");
+            Write(arg.IsNameEquals ? $"{Id(arg.Name)} = " : $"{Id(arg.Name)}: ");
         }
 
         switch (arg.RefKind)
@@ -1693,9 +2041,15 @@ public class CSharpWriter(string indentString = "    ")
         if (memberAccess.Target != null)
         {
             WriteExpression(memberAccess.Target);
-            Write(memberAccess.IsConditional ? "?." : ".");
+            Write(memberAccess.IsPointerAccess ? "->" : memberAccess.IsConditional ? "?." : ".");
         }
         Write(Id(memberAccess.MemberName));
+        if (memberAccess.TypeArguments != null && memberAccess.TypeArguments.Count > 0)
+        {
+            Write("<");
+            WriteList(memberAccess.TypeArguments, WriteTypeReference);
+            Write(">");
+        }
     }
 
     private void WriteElementAccessExpression(ElementAccessExpression elementAccess)
@@ -1708,30 +2062,26 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteObjectCreationExpression(ObjectCreationExpression objCreation)
     {
-        Write("new ");
-        WriteTypeReference(objCreation.Type);
-        Write("(");
-        WriteList(objCreation.Arguments, WriteArgument);
-        Write(")");
+        Write("new");
+        if (objCreation.Type != null)
+        {
+            Write(" ");
+            WriteTypeReference(objCreation.Type);
+        }
+
+        // Without an initializer the argument list is required
+        if (objCreation.Arguments != null || objCreation.Initializer == null)
+        {
+            Write("(");
+            WriteList(objCreation.Arguments, WriteArgument);
+            Write(")");
+        }
 
         if (objCreation.Initializer != null)
         {
             Write(" ");
-            WriteObjectInitializer(objCreation.Initializer);
+            WriteInitializerExpression(objCreation.Initializer);
         }
-    }
-
-    private void WriteObjectInitializer(ObjectInitializer initializer)
-    {
-        Write("{ ");
-        WriteList(initializer.Members, WriteMemberInitializer);
-        Write(" }");
-    }
-
-    private void WriteMemberInitializer(MemberInitializer member)
-    {
-        Write($"{Id(member.Name)} = ");
-        WriteExpression(member.Value);
     }
 
     private void WriteArrayCreationExpression(ArrayCreationExpression arrayCreation)
@@ -1739,21 +2089,31 @@ public class CSharpWriter(string indentString = "    ")
         Write("new ");
         WriteTypeReference(arrayCreation.ElementType);
         Write("[");
-        WriteList(arrayCreation.Sizes, WriteExpression);
+        if (arrayCreation.Sizes != null)
+        {
+            for (int i = 0; i < arrayCreation.Sizes.Count; i++)
+            {
+                if (i > 0)
+                    Write(",");
+                if (arrayCreation.Sizes[i] != null)
+                    WriteExpression(arrayCreation.Sizes[i]);
+            }
+        }
         Write("]");
+
+        if (arrayCreation.AdditionalRanks != null)
+        {
+            foreach (var rank in arrayCreation.AdditionalRanks)
+            {
+                Write("[" + new string(',', rank - 1) + "]");
+            }
+        }
 
         if (arrayCreation.Initializer != null)
         {
             Write(" ");
-            WriteArrayInitializer(arrayCreation.Initializer);
+            WriteInitializerExpression(arrayCreation.Initializer);
         }
-    }
-
-    private void WriteArrayInitializer(ArrayInitializer initializer)
-    {
-        Write("{ ");
-        WriteList(initializer.Elements, WriteExpression);
-        Write(" }");
     }
 
     private void WriteCastExpression(CastExpression cast)
@@ -1780,14 +2140,24 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteLambdaExpression(LambdaExpression lambda)
     {
-        if (lambda.IsAsync)
-            Write("async ");
+        WriteAttributes(lambda.Attributes);
+        WriteModifierList(lambda.Modifiers);
+
+        if (lambda.ReturnType != null)
+        {
+            WriteTypeReference(lambda.ReturnType);
+            Write(" ");
+        }
+
+        var isSimple = lambda.HasParenthesizedParameters == false
+            || (lambda.HasParenthesizedParameters == null && lambda.ReturnType == null
+                && lambda.Parameters is [{ Type: null, DefaultValue: null, Attributes: null, Modifiers.Count: 0 }]);
 
         if (lambda.Parameters == null || lambda.Parameters.Count == 0)
         {
             Write("()");
         }
-        else if (lambda.Parameters.Count == 1 && lambda.Parameters[0].Type == null)
+        else if (isSimple)
         {
             Write(Id(lambda.Parameters[0].Name));
         }
@@ -1814,10 +2184,14 @@ public class CSharpWriter(string indentString = "    ")
     private void WriteQueryExpression(QueryExpression query)
     {
         WriteFromClause(query.FromClause);
+        WriteQueryBody(query.BodyClauses, query.SelectOrGroupClause, query.Continuation);
+    }
 
-        if (query.BodyClauses != null)
+    private void WriteQueryBody(IReadOnlyList<QueryClause> clauses, SelectOrGroupClause selectOrGroup, QueryContinuation continuation)
+    {
+        if (clauses != null)
         {
-            foreach (var clause in query.BodyClauses)
+            foreach (var clause in clauses)
             {
                 WriteLine();
                 WriteQueryClause(clause);
@@ -1825,7 +2199,13 @@ public class CSharpWriter(string indentString = "    ")
         }
 
         WriteLine();
-        WriteSelectOrGroupClause(query.SelectOrGroupClause);
+        WriteSelectOrGroupClause(selectOrGroup);
+
+        if (continuation != null)
+        {
+            Write($" into {Id(continuation.Identifier)}");
+            WriteQueryBody(continuation.BodyClauses, continuation.SelectOrGroupClause, continuation.Continuation);
+        }
     }
 
     private void WriteFromClause(FromClause fromClause)
@@ -1893,6 +2273,10 @@ public class CSharpWriter(string indentString = "    ")
         {
             Write(" descending");
         }
+        else if (ordering.HasExplicitDirection)
+        {
+            Write(" ascending");
+        }
     }
 
     private void WriteSelectOrGroupClause(SelectOrGroupClause clause)
@@ -1917,6 +2301,8 @@ public class CSharpWriter(string indentString = "    ")
         WriteExpression(switchExpr.GoverningExpression);
         Write(" switch { ");
         WriteList(switchExpr.Arms, WriteSwitchExpressionArm);
+        if (switchExpr.HasTrailingComma)
+            Write(",");
         Write(" }");
     }
 
@@ -1979,7 +2365,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         WriteExpression(withExpr.Expression);
         Write(" with ");
-        WriteObjectInitializer(withExpr.Initializer);
+        WriteInitializerExpression(withExpr.Initializer);
     }
 
     // ========================================
@@ -1997,7 +2383,32 @@ public class CSharpWriter(string indentString = "    ")
                 WriteExpression(constant.Expression);
                 break;
             case VarPattern varPattern:
-                Write($"var {Id(varPattern.Identifier)}");
+                Write("var ");
+                WriteVariableDesignation(varPattern.Designation);
+                break;
+            case ParenthesizedPattern parenthesized:
+                Write("(");
+                WritePattern(parenthesized.Pattern);
+                Write(")");
+                break;
+            case ListPattern list:
+                Write("[");
+                WriteList(list.Patterns, WritePattern);
+                if (list.HasTrailingComma)
+                    Write(",");
+                Write("]");
+                if (!string.IsNullOrEmpty(list.Designation))
+                {
+                    Write($" {Id(list.Designation)}");
+                }
+                break;
+            case SlicePattern slice:
+                Write("..");
+                if (slice.Pattern != null)
+                {
+                    Write(" ");
+                    WritePattern(slice.Pattern);
+                }
                 break;
             case DiscardPattern:
                 Write("_");
@@ -2037,17 +2448,26 @@ public class CSharpWriter(string indentString = "    ")
             Write(" ");
         }
 
-        if (pattern.PositionalPatterns != null && pattern.PositionalPatterns.Count > 0)
+        if (pattern.PositionalPatterns != null)
         {
             Write("(");
-            WriteList(pattern.PositionalPatterns, p => WritePattern(p.Pattern));
+            WriteList(pattern.PositionalPatterns, p =>
+            {
+                if (p.Name != null)
+                {
+                    Write($"{Id(p.Name)}: ");
+                }
+                WritePattern(p.Pattern);
+            });
             Write(")");
         }
 
-        if (pattern.PropertyPatterns != null && pattern.PropertyPatterns.Count > 0)
+        if (pattern.PropertyPatterns != null)
         {
             Write("{ ");
             WriteList(pattern.PropertyPatterns, WritePropertySubPattern);
+            if (pattern.PropertyPatternsHaveTrailingComma)
+                Write(",");
             Write(" }");
         }
 
@@ -2059,7 +2479,12 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WritePropertySubPattern(PropertySubPattern subPattern)
     {
-        Write($"{Id(subPattern.PropertyName)}: ");
+        if (subPattern.PropertyName != null)
+        {
+            // An extended property pattern names a path: A.B.C
+            Write(string.Join(".", subPattern.PropertyName.Split('.').Select(Id)));
+            Write(": ");
+        }
         WritePattern(subPattern.Pattern);
     }
 
@@ -2116,6 +2541,7 @@ public class CSharpWriter(string indentString = "    ")
                 AttributeTarget.Property => "property",
                 AttributeTarget.Return => "return",
                 AttributeTarget.Type => "type",
+                AttributeTarget.TypeVar => "typevar",
                 _ => throw new ArgumentException($"Unknown attribute target: {section.Target}")
             });
             Write(": ");
@@ -2128,7 +2554,7 @@ public class CSharpWriter(string indentString = "    ")
     private void WriteAttributeNode(AttributeNode attr)
     {
         WriteNameExpression(attr.Name);
-        if (attr.Arguments != null && attr.Arguments.Count > 0)
+        if (attr.Arguments != null)
         {
             Write("(");
             WriteList(attr.Arguments, WriteArgument);
@@ -2139,6 +2565,20 @@ public class CSharpWriter(string indentString = "    ")
     // ========================================
     // Modifiers
     // ========================================
+
+    /// <summary>
+    /// Modifiers in the given order, for nodes that keep the source order.
+    /// </summary>
+    private void WriteModifierList(IReadOnlyList<Modifiers> modifiers)
+    {
+        if (modifiers == null)
+            return;
+
+        foreach (var modifier in modifiers)
+        {
+            WriteModifiers(modifier);
+        }
+    }
 
     private void WriteModifiers(Modifiers modifiers)
     {

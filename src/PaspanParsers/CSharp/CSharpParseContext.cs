@@ -13,4 +13,9 @@ public sealed class CSharpParseContext(CSharpParseOptions options) : ParseContex
     /// Preprocessor symbols currently defined; <c>#define</c>/<c>#undef</c> update this set.
     /// </summary>
     public HashSet<string> DefinedSymbols { get; } = new(options?.PreprocessorSymbols ?? [], StringComparer.Ordinal);
+
+    /// <summary>
+    /// Tokens and lookahead results of the input being parsed, by position.
+    /// </summary>
+    internal SyntaxCache SyntaxCache { get; } = new();
 }

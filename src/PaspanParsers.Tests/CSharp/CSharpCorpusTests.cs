@@ -1,4 +1,7 @@
 using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace PaspanParsers.Tests.CSharp;
 
@@ -64,6 +67,51 @@ public class CSharpCorpusTests
         {
             TestContext.WriteLine("Newly passing (run with UPDATE_ORACLE_BASELINE=1 to record):\n  " + string.Join("\n  ", newlyPassing));
         }
+    }
+
+    /// <summary>
+    /// Every statement of every method and accessor body in the built-in corpus, on its own in a
+    /// method, must pass the oracle. This measures types, expressions, patterns and statements
+    /// independently of the declarations around them. Statements with preprocessor directives are
+    /// skipped until directives are supported.
+    /// </summary>
+    [TestMethod]
+    public void Oracle_BuiltInCorpus_Statements()
+    {
+        var options = new Microsoft.CodeAnalysis.CSharp.CSharpParseOptions(LanguageVersion.CSharp14);
+        var failures = new List<string>();
+        var checkedCount = 0;
+
+        foreach (var (name, path) in BuiltInCorpus())
+        {
+            var root = CSharpSyntaxTree.ParseText(File.ReadAllText(path), options).GetRoot();
+            var bodies = root.DescendantNodes().OfType<BlockSyntax>()
+                .Where(block => block.Parent is BaseMethodDeclarationSyntax or AccessorDeclarationSyntax);
+
+            foreach (var statement in bodies.SelectMany(body => body.Statements))
+            {
+                if (statement.ContainsDirectives || statement.GetLeadingTrivia().Any(trivia => trivia.IsDirective))
+                {
+                    continue;
+                }
+
+                var result = RoslynOracle.Check(SyntaxTestHelper.InMethod(statement.ToString()));
+                if (result.Status == OracleStatus.Invalid)
+                {
+                    continue;
+                }
+
+                checkedCount++;
+                if (result.Status != OracleStatus.Passed)
+                {
+                    var line = statement.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    failures.Add($"{name}:{line}: {result.Status} {result.Detail}");
+                }
+            }
+        }
+
+        TestContext.WriteLine($"Statements: {checkedCount - failures.Count}/{checkedCount} pass");
+        Assert.IsEmpty(failures, "Statements that do not pass the oracle:\n" + string.Join("\n", failures));
     }
 
     [TestMethod]

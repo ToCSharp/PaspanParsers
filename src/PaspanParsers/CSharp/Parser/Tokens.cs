@@ -4,8 +4,9 @@ using Paspan.Fluent;
 
 namespace PaspanParsers.CSharp;
 
-// Token parsers. They read one C# token at the current position and do not skip
-// trivia themselves: CSharpParser wraps them with Parsers.SkipWhiteSpace.
+// Token parsers of the combinator grammar. They read one C# token at the current position and
+// do not skip trivia themselves: CSharpParser wraps them with Parsers.SkipWhiteSpace.
+// SyntaxParser scans the tokens of types, expressions and statements itself.
 
 /// <summary>
 /// White space, new lines and comments between tokens.
@@ -124,77 +125,6 @@ internal sealed class PunctuatorToken : Parser<string>
     }
 
     public override string ToString() => $"'{_text}'";
-}
-
-/// <summary>
-/// Integer and real literals: decimal, hexadecimal and binary, '_' separators, type suffixes.
-/// </summary>
-internal sealed class NumericLiteralToken : Parser<Expression>
-{
-    public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<Expression> result)
-    {
-        var s = reader.GetRemaining();
-        var length = Lexer.ScanNumericLiteral(s, out var value, out var kind);
-        if (length == 0)
-        {
-            return false;
-        }
-
-        var start = reader.GetCurrentPosition();
-        var text = Encoding.UTF8.GetString(s[..length]);
-        reader.Read(length);
-        result.Set(start, start + length, new LiteralExpression(value, kind, text));
-        return true;
-    }
-}
-
-/// <summary>
-/// Character literals with all escape sequences.
-/// </summary>
-internal sealed class CharacterLiteralToken : Parser<Expression>
-{
-    public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<Expression> result)
-    {
-        var s = reader.GetRemaining();
-        var length = Lexer.ScanCharacterLiteral(s, out var value);
-        if (length == 0)
-        {
-            return false;
-        }
-
-        var start = reader.GetCurrentPosition();
-        var text = Encoding.UTF8.GetString(s[..length]);
-        reader.Read(length);
-        result.Set(start, start + length, new LiteralExpression(value, LiteralKind.Character, text));
-        return true;
-    }
-}
-
-/// <summary>
-/// Regular, verbatim and raw string literals, optionally with the u8 suffix.
-/// </summary>
-internal sealed class StringLiteralToken : Parser<Expression>
-{
-    public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<Expression> result)
-    {
-        var s = reader.GetRemaining();
-        var length = Lexer.ScanStringLiteral(s, out var value, out var isUtf8);
-        if (length == 0)
-        {
-            return false;
-        }
-
-        var start = reader.GetCurrentPosition();
-        var text = Encoding.UTF8.GetString(s[..length]);
-        reader.Read(length);
-
-        var literal = isUtf8
-            ? new LiteralExpression(Encoding.UTF8.GetBytes(value), LiteralKind.Utf8String, text)
-            : new LiteralExpression(value, LiteralKind.String, text);
-
-        result.Set(start, start + length, literal);
-        return true;
-    }
 }
 
 /// <summary>
