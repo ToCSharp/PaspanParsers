@@ -138,10 +138,10 @@ public abstract partial class Parser<T>
     /// </summary>
     public Parser<T> Else(T value) => new Else<T>(this, value);
 
-    ///// <summary>
-    ///// Builds a parser that returns a default value computed by a function if the previous parser fails.
-    ///// </summary>
-    //public Parser<T> Else(Func<ParseContext, T> func) => new Else<T>(this, func);
+    /// <summary>
+    /// Builds a parser that returns a default value computed by a function if the previous parser fails.
+    /// </summary>
+    public Parser<T> Else(Func<ParseContext, T> func) => new Else<T>(this, func);
 
     ///// <summary>
     ///// Builds a parser that lists all possible matches to improve performance.
