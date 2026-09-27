@@ -131,21 +131,29 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private readonly T Finish<T>(T node, int start) where T : CppNode
     {
-        if (node != null)
+        return node == null ? null : Finish(node, start, Math.Max(start, _position));
+    }
+
+    /// <summary>
+    /// Sets the span of <paramref name="node"/> and its leading directives, and returns the node.
+    /// </summary>
+    private readonly T Finish<T>(T node, int start, int end) where T : CppNode
+    {
+        node.Span = new TextSpan(start, end);
+        if (_cache.LeadingDirectives.Count != 0)
         {
-            node.Span = new TextSpan(start, Math.Max(start, _position));
+            node.LeadingDirectives = _cache.LeadingDirectives.GetValueOrDefault(start);
         }
 
         return node;
     }
 
     /// <summary>
-    /// Sets the span of <paramref name="node"/> and returns the node.
+    /// The directives before <paramref name="token"/> that the writer writes back, or null.
     /// </summary>
-    private static T Finish<T>(T node, int start, int end) where T : CppNode
+    private IReadOnlyList<PreprocessorDirective> DirectivesBefore(SyntaxToken token)
     {
-        node.Span = new TextSpan(start, end);
-        return node;
+        return _cache.LeadingDirectives.GetValueOrDefault(token.Start);
     }
 
     /// <summary>
@@ -169,35 +177,40 @@ internal ref partial struct SyntaxParser
     // Scanning
     // ========================================
 
-    private static readonly string[] Punctuators =
-    [
-        // Longest first; '>>', '>=' and '>>=' are composed by the parser
-        "%:%:", "...", "<=>", "<<=", "->*",
-        "::", ".*", "->", "++", "--", "<<", "<=", "==", "!=", "&&", "||", "+=", "-=", "*=", "/=", "%=",
-        "&=", "|=", "^=", "##", "<:", ":>", "<%", "%>", "%:",
-        "{", "}", "[", "]", "(", ")", ";", ":", "?", ".", ",", "+", "-", "*", "/", "%", "^", "&", "|",
-        "~", "!", "=", "<", ">", "#",
-    ];
-
-    private static readonly byte[][] PunctuatorBytes = Punctuators.Select(Encoding.UTF8.GetBytes).ToArray();
-
     /// <summary>
-    /// Digraphs ([lex.digraph]) and the punctuators they stand for.
+    /// Scans the trivia at <paramref name="position"/>, including directives and inactive branches, and the
+    /// token after it. The directives that the writer writes back are kept as the leading directives of
+    /// the token.
     /// </summary>
-    private static readonly Dictionary<string, string> Digraphs = new(StringComparer.Ordinal)
-    {
-        ["<:"] = "[",
-        [":>"] = "]",
-        ["<%"] = "{",
-        ["%>"] = "}",
-        ["%:"] = "#",
-        ["%:%:"] = "##",
-    };
-
     private SyntaxToken ScanToken(int position)
     {
-        var start = position + Lexer.ScanTrivia(_source[position..]);
-        return ScanTokenAt(start);
+        var preprocessor = _cache.Preprocessor(_source);
+        var start = position;
+        List<PreprocessorDirective> directives = null;
+        while (true)
+        {
+            start += Lexer.ScanTrivia(_source[start..]);
+            if (start >= _source.Length || _source[start] is not ((byte)'#' or (byte)'%')
+                || !preprocessor.TryGetDirective(start, out var next, out var directive))
+            {
+                break;
+            }
+
+            if (!directive.IsConditional)
+            {
+                (directives ??= []).Add(directive);
+            }
+
+            start = next;
+        }
+
+        var token = ScanTokenAt(start);
+        if (directives != null)
+        {
+            _cache.LeadingDirectives[token.Start] = directives;
+        }
+
+        return token;
     }
 
     /// <summary>
@@ -271,14 +284,10 @@ internal ref partial struct SyntaxParser
             return TokenKind.Punctuator;
         }
 
-        for (var i = 0; i < PunctuatorBytes.Length; i++)
+        length = Lexer.ScanPunctuator(s, out text);
+        if (length > 0)
         {
-            if (s.StartsWith(PunctuatorBytes[i]))
-            {
-                length = PunctuatorBytes[i].Length;
-                text = Digraphs.GetValueOrDefault(Punctuators[i], Punctuators[i]);
-                return TokenKind.Punctuator;
-            }
+            return TokenKind.Punctuator;
         }
 
         length = 1;
@@ -322,9 +331,21 @@ internal ref partial struct SyntaxParser
 /// <summary>
 /// Token caches shared by all <see cref="SyntaxParser"/> runs over the same input.
 /// </summary>
-internal sealed class SyntaxCache
+internal sealed class SyntaxCache(CppParseOptions options)
 {
     public Dictionary<int, SyntaxToken> Tokens { get; } = [];
+
+    /// <summary>
+    /// The directives that the writer writes back before a token, by the start of the token.
+    /// </summary>
+    public Dictionary<int, List<PreprocessorDirective>> LeadingDirectives { get; } = [];
+
+    private Preprocessor _preprocessor;
+
+    /// <summary>
+    /// The directives of <paramref name="source"/>, processed before its first token is scanned.
+    /// </summary>
+    public Preprocessor Preprocessor(ReadOnlySpan<byte> source) => _preprocessor ??= Cpp.Preprocessor.Run(source, options);
 
     /// <summary>
     /// The end of the furthest token consumed, for the error position of a failed parse.
@@ -363,7 +384,7 @@ internal sealed class SyntaxCache
     {
         // A CppParseContext is created for one input; any other context may be reused
         // for different inputs, so its runs do not share caches.
-        return context is CppParseContext cpp ? cpp.SyntaxCache : new SyntaxCache();
+        return context is CppParseContext cpp ? cpp.SyntaxCache : new SyntaxCache(CppParseOptions.Default);
     }
 }
 

@@ -39,6 +39,9 @@ public static class CppKindMap
 
     public static KindRule RuleFor(ICppNode node, ICppNode parent) => node switch
     {
+        // Clang has no nodes for directives; raw tokens include those of directive lines
+        PreprocessorDirective => Tokens,
+
         // Declarations
         FunctionDefinition => new ExactRule(FunctionKinds),
         SimpleDeclaration => Tokens,

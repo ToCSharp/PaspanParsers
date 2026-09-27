@@ -12,7 +12,7 @@ public sealed class CppParseContext(CppParseOptions options) : ParseContext
     /// <summary>
     /// Tokens and lookahead results of the input being parsed, by position.
     /// </summary>
-    internal SyntaxCache SyntaxCache => _syntaxCache ??= new SyntaxCache();
+    internal SyntaxCache SyntaxCache => _syntaxCache ??= new SyntaxCache(Options);
 
     private SyntaxCache _syntaxCache;
 }

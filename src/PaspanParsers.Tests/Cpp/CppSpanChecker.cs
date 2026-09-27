@@ -28,7 +28,8 @@ public static class CppSpanChecker
         var byName = clangNodes.Where(n => n.NameOffset >= 0).ToLookup(n => n.NameOffset);
         var tokenStarts = tokens.Select(t => t.Start).ToHashSet();
         var tokenEnds = tokens.Select(t => t.End).ToHashSet();
-        var sortedEnds = tokenEnds.Order().ToArray();
+        var sortedEnds = CodeTokenEnds(tokenEnds, unit);
+        var macroUses = new MacroUses(clangNodes.Where(n => n.InMacro).Select(n => n.Span));
 
         if (unit.Span != new TextSpan(0, utf8.Length))
         {
@@ -60,6 +61,9 @@ public static class CppSpanChecker
             var problem = rule switch
             {
                 null => $"no rule in {nameof(CppKindMap)} for {node.GetType().Name}",
+
+                // Clang's nodes from a macro use all have the span of the use: the parts of the use are not checked
+                _ when macroUses.StrictlyContain(span) => null,
                 ExactRule exact => CheckExact(exact, span, bySpan, utf8, sortedEnds),
                 DeclarationRule declaration => CheckDeclaration(declaration, node, byName),
                 TokensRule => tokenStarts.Contains(span.Start) && tokenEnds.Contains(span.End)
@@ -133,6 +137,86 @@ public static class CppSpanChecker
         return kinds.Count == 0 ? "" : $" (found {string.Join(", ", kinds)})";
     }
 
+    /// <summary>
+    /// The sorted ends of the tokens of the code: not those of directives and inactive branches, which
+    /// clang's raw tokens include.
+    /// </summary>
+    private static int[] CodeTokenEnds(IEnumerable<int> tokenEnds, TranslationUnit unit)
+    {
+        // Directives are in source order; an inactive branch ends at the next processed directive
+        var nonCode = new List<TextSpan>();
+        var directives = unit.Directives;
+        for (var i = 0; i < directives.Count; i++)
+        {
+            var directive = directives[i];
+            var startsInactiveBranch = directive.IsConditional && directive.Kind != PreprocessorDirectiveKind.Endif && !directive.IsBranchTaken;
+            var end = startsInactiveBranch
+                ? (i + 1 < directives.Count ? directives[i + 1].Span.Start : unit.Span.End)
+                : directive.Span.End;
+            nonCode.Add(new TextSpan(directive.Span.Start, end));
+        }
+
+        var result = new List<int>();
+        var range = 0;
+        foreach (var end in tokenEnds.Order())
+        {
+            while (range < nonCode.Count && nonCode[range].End < end)
+            {
+                range++;
+            }
+
+            if (range >= nonCode.Count || end <= nonCode[range].Start)
+            {
+                result.Add(end);
+            }
+        }
+
+        return result.ToArray();
+    }
+
+    /// <summary>
+    /// The spans of the macro uses in the source.
+    /// </summary>
+    private sealed class MacroUses
+    {
+        private readonly int[] _starts;
+        private readonly int[] _maxEnds;
+        private readonly Dictionary<int, int> _maxEndByStart = [];
+
+        public MacroUses(IEnumerable<TextSpan> spans)
+        {
+            var sorted = spans.Distinct().OrderBy(s => s.Start).ToArray();
+            _starts = sorted.Select(s => s.Start).ToArray();
+            _maxEnds = new int[sorted.Length];
+            for (var i = 0; i < sorted.Length; i++)
+            {
+                _maxEnds[i] = Math.Max(i > 0 ? _maxEnds[i - 1] : 0, sorted[i].End);
+                _maxEndByStart[sorted[i].Start] = Math.Max(_maxEndByStart.GetValueOrDefault(sorted[i].Start), sorted[i].End);
+            }
+        }
+
+        /// <summary>
+        /// A macro use contains <paramref name="span"/> and is longer.
+        /// </summary>
+        public bool StrictlyContain(TextSpan span)
+        {
+            if (_maxEndByStart.TryGetValue(span.Start, out var end) && end > span.End)
+            {
+                return true;
+            }
+
+            // The last use that starts before the span
+            var index = Array.BinarySearch(_starts, span.Start);
+            index = index >= 0 ? index : ~index;
+            while (index > 0 && _starts[index - 1] >= span.Start)
+            {
+                index--;
+            }
+
+            return index > 0 && _maxEnds[index - 1] >= span.End;
+        }
+    }
+
     public static IEnumerable<ICppNode> Children(ICppNode node)
     {
         foreach (var property in ChildProperties.GetOrAdd(node.GetType(), FindChildProperties))
@@ -158,8 +242,9 @@ public static class CppSpanChecker
 
     private static PropertyInfo[] FindChildProperties(Type type)
     {
+        // Leading directives come before the node; they are children of the translation unit
         return type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.GetIndexParameters().Length == 0)
+            .Where(p => p.GetIndexParameters().Length == 0 && p.Name != nameof(CppNode.LeadingDirectives))
             .Where(p => typeof(ICppNode).IsAssignableFrom(p.PropertyType)
                 || (p.PropertyType != typeof(string) && typeof(IEnumerable).IsAssignableFrom(p.PropertyType)
                     && p.PropertyType.GetGenericArguments().Any(t => typeof(ICppNode).IsAssignableFrom(t))))

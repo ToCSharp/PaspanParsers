@@ -335,6 +335,54 @@ internal static class Lexer
     }
 
     // ========================================
+    // Punctuators
+    // ========================================
+
+    private static readonly string[] Punctuators =
+    [
+        // Longest first; '>>', '>=' and '>>=' are composed by the parser
+        "%:%:", "...", "<=>", "<<=", "->*",
+        "::", ".*", "->", "++", "--", "<<", "<=", "==", "!=", "&&", "||", "+=", "-=", "*=", "/=", "%=",
+        "&=", "|=", "^=", "##", "<:", ":>", "<%", "%>", "%:",
+        "{", "}", "[", "]", "(", ")", ";", ":", "?", ".", ",", "+", "-", "*", "/", "%", "^", "&", "|",
+        "~", "!", "=", "<", ">", "#",
+    ];
+
+    private static readonly byte[][] PunctuatorBytes = Punctuators.Select(Encoding.UTF8.GetBytes).ToArray();
+
+    /// <summary>
+    /// Digraphs ([lex.digraph]) and the punctuators they stand for.
+    /// </summary>
+    private static readonly Dictionary<string, string> Digraphs = new(StringComparer.Ordinal)
+    {
+        ["<:"] = "[",
+        [":>"] = "]",
+        ["<%"] = "{",
+        ["%>"] = "}",
+        ["%:"] = "#",
+        ["%:%:"] = "##",
+    };
+
+    /// <summary>
+    /// A punctuator with the longest match; <paramref name="text"/> is the punctuator a digraph stands for.
+    /// '&gt;' is always a single punctuator: '&gt;&gt;', '&gt;=' and '&gt;&gt;=' are composed by the parser.
+    /// </summary>
+    public static int ScanPunctuator(ReadOnlySpan<byte> s, out string text)
+    {
+        for (var i = 0; i < PunctuatorBytes.Length; i++)
+        {
+            if (s.StartsWith(PunctuatorBytes[i]))
+            {
+                text = Digraphs.GetValueOrDefault(Punctuators[i], Punctuators[i]);
+                return PunctuatorBytes[i].Length;
+            }
+        }
+
+        text = null;
+        return 0;
+    }
+
+    // ========================================
     // Line splices
     // ========================================
 
@@ -387,6 +435,30 @@ internal static class Lexer
         }
 
         return (bytes.ToArray(), positions.ToArray());
+    }
+
+    /// <summary>
+    /// The logical line that starts at <paramref name="start"/> in <paramref name="s"/>: its bytes without line
+    /// splices, the position in <paramref name="s"/> of each of them, and the position of the new line that
+    /// ends it (the length of <paramref name="s"/> at the end of the input).
+    /// </summary>
+    public static (byte[] Bytes, int[] Positions, int End) LogicalLine(ReadOnlySpan<byte> s, int start)
+    {
+        var (bytes, positions) = RemoveSplices(s[start..]);
+
+        // After the last byte, only line splices can come before the new line
+        var end = positions.Length == 0 ? start : start + positions[^1] + 1;
+        while (SpliceLength(s, end) is var splice and > 0)
+        {
+            end += splice;
+        }
+
+        for (var i = 0; i < positions.Length; i++)
+        {
+            positions[i] += start;
+        }
+
+        return (bytes, positions, end);
     }
 
     // ========================================

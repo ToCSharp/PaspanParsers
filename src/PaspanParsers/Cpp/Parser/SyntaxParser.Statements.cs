@@ -77,7 +77,7 @@ internal ref partial struct SyntaxParser
         }
 
         var statements = new List<Statement>();
-        while (!TryEatPunctuator("}"))
+        while (!IsPunctuator("}"))
         {
             if (Current.Kind == TokenKind.EndOfFile)
             {
@@ -93,7 +93,8 @@ internal ref partial struct SyntaxParser
             statements.Add(statement);
         }
 
-        return Finish(new CompoundStatement(statements), start);
+        var closeBraceDirectives = DirectivesBefore(EatToken());
+        return Finish(new CompoundStatement(statements) { CloseBraceDirectives = closeBraceDirectives }, start);
     }
 
     /// <summary>

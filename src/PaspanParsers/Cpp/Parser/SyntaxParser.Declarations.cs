@@ -39,7 +39,9 @@ internal ref partial struct SyntaxParser
             declarations.Add(declaration);
         }
 
-        return Finish(new TranslationUnit(declarations), 0, _source.Length);
+        var directives = _cache.Preprocessor(_source).Directives;
+        var unit = new TranslationUnit(declarations) { Directives = directives, EndDirectives = DirectivesBefore(Current) };
+        return Finish(unit, 0, _source.Length);
     }
 
     // ========================================

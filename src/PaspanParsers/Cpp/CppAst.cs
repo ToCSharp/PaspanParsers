@@ -25,6 +25,14 @@ public abstract class CppNode : ICppNode
     /// without the trivia around them. The parser sets it; nodes built in code have an empty span at 0.
     /// </summary>
     public TextSpan Span { get; set; }
+
+    /// <summary>
+    /// The directives in the trivia before the first token of the node that <see cref="CppWriter"/> writes
+    /// back: all but the conditional ones (see <see cref="PreprocessorDirective.IsConditional"/>), whose
+    /// inactive branches are not in the tree. Every node that starts at the same token has the same list;
+    /// the writer writes each directive once. Null when there are none.
+    /// </summary>
+    public IReadOnlyList<PreprocessorDirective> LeadingDirectives { get; set; }
 }
 
 // ========================================
@@ -37,6 +45,101 @@ public abstract class CppNode : ICppNode
 public sealed class TranslationUnit(IReadOnlyList<Declaration> declarations) : CppNode
 {
     public IReadOnlyList<Declaration> Declarations { get; } = declarations ?? [];
+
+    /// <summary>
+    /// Every directive the preprocessor processed, in source order: the directives of active code and the
+    /// conditional directives that end inactive branches. Directives inside inactive branches are not included.
+    /// </summary>
+    public IReadOnlyList<PreprocessorDirective> Directives { get; init; } = [];
+
+    /// <summary>
+    /// The directives after the last declaration that the writer writes back, or null.
+    /// </summary>
+    public IReadOnlyList<PreprocessorDirective> EndDirectives { get; init; }
+}
+
+// ========================================
+// Preprocessor
+// ========================================
+
+public enum PreprocessorDirectiveKind
+{
+    /// <summary>The null directive: a line with only <c>#</c>.</summary>
+    Null,
+    If,
+    Ifdef,
+    Ifndef,
+    Elif,
+    Elifdef,
+    Elifndef,
+    Else,
+    Endif,
+    Define,
+    Undef,
+    Include,
+    IncludeNext,
+    Import,
+    Embed,
+    /// <summary><c>#line 10 "file"</c>, or the line marker <c># 10 "file"</c>.</summary>
+    Line,
+    Pragma,
+    Error,
+    Warning,
+    Ident,
+    /// <summary>Any other directive, such as <c>#assert</c>.</summary>
+    Other,
+}
+
+/// <summary>
+/// A preprocessing directive: from the '#' to the end of its last token, without the comment after it.
+/// The parser does not expand macros: directives are trivia between the tokens, <c>#define</c> and
+/// <c>#undef</c> only change the macros used by conditional directives, and <c>#include</c> does not
+/// read the file.
+/// </summary>
+public sealed class PreprocessorDirective(PreprocessorDirectiveKind kind, string name, string arguments, string text) : CppNode
+{
+    public PreprocessorDirectiveKind Kind { get; } = kind;
+
+    /// <summary>The name after '#', like <c>include</c>; empty for the null directive and a line marker.</summary>
+    public string Name { get; } = name;
+
+    /// <summary>
+    /// The tokens after the name, separated by single spaces where the source has white space, comments or
+    /// line splices between them: <c>&lt;cstddef&gt;</c>, <c>VERSION &gt;= 3</c>.
+    /// </summary>
+    public string Arguments { get; } = arguments;
+
+    /// <summary>The directive as written in the source, which <see cref="CppWriter"/> writes back.</summary>
+    public string Text { get; } = text;
+
+    /// <summary>
+    /// For conditional directives other than <c>#endif</c>: the group after the directive is compiled.
+    /// </summary>
+    public bool IsBranchTaken { get; init; }
+
+    /// <summary>The macro of a <c>#define</c>, otherwise null.</summary>
+    public MacroDefinition Macro { get; init; }
+
+    /// <summary>
+    /// <c>#if</c>, <c>#ifdef</c>, <c>#ifndef</c>, <c>#elif</c>, <c>#elifdef</c>, <c>#elifndef</c>, <c>#else</c> or <c>#endif</c>.
+    /// </summary>
+    public bool IsConditional => Kind is >= PreprocessorDirectiveKind.If and <= PreprocessorDirectiveKind.Endif;
+}
+
+/// <summary>
+/// The macro defined by <c>#define</c>. <see cref="Parameters"/> is null for an object-like macro; a
+/// variadic macro has <see cref="IsVariadic"/> and its parameters do not include <c>...</c> (a named
+/// variadic parameter, <c>args...</c>, is the last one). <see cref="Replacement"/> is the replacement list,
+/// written like <see cref="PreprocessorDirective.Arguments"/>.
+/// </summary>
+public sealed class MacroDefinition(string name, IReadOnlyList<string> parameters, bool isVariadic, string replacement)
+{
+    public string Name { get; } = name;
+    public IReadOnlyList<string> Parameters { get; } = parameters;
+    public bool IsVariadic { get; } = isVariadic;
+    public string Replacement { get; } = replacement;
+
+    public bool IsFunctionLike => Parameters != null;
 }
 
 // ========================================
@@ -166,6 +269,11 @@ public abstract class Statement : CppNode
 public sealed class CompoundStatement(IReadOnlyList<Statement> statements) : Statement
 {
     public IReadOnlyList<Statement> Statements { get; } = statements ?? [];
+
+    /// <summary>
+    /// The directives before the closing brace that the writer writes back, or null.
+    /// </summary>
+    public IReadOnlyList<PreprocessorDirective> CloseBraceDirectives { get; init; }
 }
 
 /// <summary>

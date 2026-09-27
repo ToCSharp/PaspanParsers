@@ -8,11 +8,16 @@ namespace PaspanParsers.Tests.Cpp;
 /// <summary>
 /// A node of clang's AST in the main file: its kind, its source range and, for declarations, the
 /// location of the declared name. Offsets are bytes of the parsed input without the byte order mark.
-/// <see cref="FromMacro"/> is set when the range comes from a macro expansion: it is then the range of
-/// the macro use in the source. <see cref="Value"/> is the <c>value</c> of a literal and
-/// <see cref="Type"/> the type of an expression, as clang writes them.
+/// <see cref="FromMacro"/> is set when the range starts or ends in a macro expansion: clang's location there is
+/// the name of the macro in the source, and the span ends at the end of the macro use, after the arguments of
+/// a function-like macro. <see cref="InMacro"/> is set when the node comes from a single macro use, whose
+/// span it then has. <see cref="Value"/> is the <c>value</c> of a literal and <see cref="Type"/> the type of
+/// an expression, as clang writes them.
 /// </summary>
-public sealed record ClangNode(string Kind, TextSpan Span, int NameOffset, bool FromMacro, JsonNode Value = null, string Type = null);
+public sealed record ClangNode(string Kind, TextSpan Span, int NameOffset, bool FromMacro, JsonNode Value = null, string Type = null)
+{
+    public bool InMacro { get; init; }
+}
 
 /// <summary>
 /// Reads clang's JSON AST dump (<c>-Xclang -ast-dump=json</c>): the top-level declarations of the main
@@ -278,9 +283,13 @@ public sealed partial class ClangAst
                         && TryGetOffset(range["end"], out var end, out var endFromMacro))
                     {
                         var name = TryGetOffset(obj["loc"], out var nameLocation, out _) ? SkipSplices(source, nameLocation.Offset) - bomLength : -1;
-                        var span = new TextSpan(SkipSplices(source, begin.Offset) - bomLength, end.Offset + end.TokenLength - bomLength);
+                        var endOffset = endFromMacro ? MacroUseEnd(source, end.Offset, end.TokenLength) : end.Offset + end.TokenLength;
+                        var span = new TextSpan(SkipSplices(source, begin.Offset) - bomLength, endOffset - bomLength);
                         var type = obj["type"]?["qualType"]?.GetValue<string>();
-                        nodes.Add(new ClangNode(kind.GetValue<string>(), span, name, beginFromMacro || endFromMacro, obj["value"], type));
+                        nodes.Add(new ClangNode(kind.GetValue<string>(), span, name, beginFromMacro || endFromMacro, obj["value"], type)
+                        {
+                            InMacro = beginFromMacro && endFromMacro && begin.Offset == end.Offset,
+                        });
                     }
 
                     foreach (var (_, value) in obj)
@@ -304,6 +313,74 @@ public sealed partial class ClangAst
         }
 
         return nodes;
+    }
+
+    /// <summary>
+    /// The end of the macro use whose name is at <paramref name="offset"/>: after the parenthesized
+    /// arguments that follow the name, if any.
+    /// </summary>
+    private static int MacroUseEnd(byte[] source, int offset, int nameLength)
+    {
+        var end = offset + nameLength;
+        var i = end;
+        while (i < source.Length)
+        {
+            if (source[i] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' or (byte)'\v' or (byte)'\f')
+            {
+                i++;
+            }
+            else if (source[i] == '/' && i + 1 < source.Length && source[i + 1] == '*')
+            {
+                var close = source.AsSpan(i + 2).IndexOf("*/"u8);
+                i = close < 0 ? source.Length : i + close + 4;
+            }
+            else if (source[i] == '/' && i + 1 < source.Length && source[i + 1] == '/')
+            {
+                var newLine = source.AsSpan(i).IndexOf((byte)'\n');
+                i = newLine < 0 ? source.Length : i + newLine;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        if (i >= source.Length || source[i] != '(')
+        {
+            return end;
+        }
+
+        var depth = 0;
+        for (; i < source.Length; i++)
+        {
+            switch (source[i])
+            {
+                case (byte)'(':
+                    depth++;
+                    break;
+                case (byte)')':
+                    if (--depth == 0)
+                    {
+                        return i + 1;
+                    }
+
+                    break;
+                case (byte)'"' or (byte)'\'':
+                    // Skip a literal, whose parentheses do not count
+                    var quote = source[i];
+                    for (i++; i < source.Length && source[i] != quote; i++)
+                    {
+                        if (source[i] == '\\')
+                        {
+                            i++;
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        return end;
     }
 
     /// <summary>

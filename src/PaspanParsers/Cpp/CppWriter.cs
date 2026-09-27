@@ -6,7 +6,9 @@ namespace PaspanParsers.Cpp;
 /// <summary>
 /// Writes a C++ AST back as source code. The output is literal: parentheses, the forms of initializers and
 /// the order of specifiers are those of the tree, so parsing the output again builds an equivalent tree.
-/// Comments and formatting are not kept.
+/// Comments and formatting are not kept. Directives are written as they are in the source, on their own lines,
+/// before the nodes they lead (<see cref="CppNode.LeadingDirectives"/>), before closing braces and at the end;
+/// conditional directives and inactive branches are not in the tree.
 /// </summary>
 public sealed class CppWriter
 {
@@ -14,6 +16,7 @@ public sealed class CppWriter
     private readonly string _indentString;
     private int _indentLevel;
     private bool _needsIndent = true;
+    private readonly HashSet<PreprocessorDirective> _writtenDirectives = new(ReferenceEqualityComparer.Instance);
 
     public CppWriter(string indentString = "    ")
     {
@@ -91,6 +94,44 @@ public sealed class CppWriter
 
     private static void EnsureSufficientStack() => RuntimeHelpers.EnsureSufficientExecutionStack();
 
+    /// <summary>
+    /// Writes the leading directives of <paramref name="node"/> that are not written yet: nodes that start at
+    /// the same token share them.
+    /// </summary>
+    private void Directives(CppNode node)
+    {
+        Directives(node?.LeadingDirectives);
+    }
+
+    private void Directives(IReadOnlyList<PreprocessorDirective> directives)
+    {
+        if (directives == null)
+        {
+            return;
+        }
+
+        foreach (var directive in directives)
+        {
+            if (!_writtenDirectives.Add(directive))
+            {
+                continue;
+            }
+
+            if (!_needsIndent)
+            {
+                while (_builder.Length > 0 && _builder[^1] == ' ')
+                {
+                    _builder.Length--;
+                }
+
+                NewLine();
+            }
+
+            _builder.Append(directive.Text ?? $"#{directive.Name} {directive.Arguments}");
+            NewLine();
+        }
+    }
+
     // ========================================
     // Translation Unit
     // ========================================
@@ -133,6 +174,8 @@ public sealed class CppWriter
         {
             WriteDeclaration(declaration);
         }
+
+        Directives(unit.EndDirectives);
     }
 
     // ========================================
@@ -142,6 +185,7 @@ public sealed class CppWriter
     public void WriteDeclaration(Declaration declaration)
     {
         EnsureSufficientStack();
+        Directives(declaration);
         switch (declaration)
         {
             case SimpleDeclaration simple:
@@ -162,6 +206,7 @@ public sealed class CppWriter
 
     private void WriteSimpleDeclaration(SimpleDeclaration declaration)
     {
+        Directives(declaration);
         WriteDeclSpecifiers(declaration.Specifiers);
         for (var i = 0; i < declaration.Declarators.Count; i++)
         {
@@ -179,8 +224,10 @@ public sealed class CppWriter
 
     private void WriteDeclSpecifiers(DeclSpecifierSequence specifiers)
     {
+        Directives(specifiers);
         foreach (var specifier in specifiers.Specifiers)
         {
+            Directives(specifier);
             switch (specifier)
             {
                 case KeywordSpecifier keyword:
@@ -196,6 +243,7 @@ public sealed class CppWriter
 
     private void WriteInitDeclarator(InitDeclarator declarator)
     {
+        Directives(declarator);
         WriteDeclarator(declarator.Declarator);
         WriteInitializer(declarator.Initializer);
     }
@@ -207,6 +255,7 @@ public sealed class CppWriter
             case null:
                 break;
             case EqualsInitializer equals:
+                Directives(equals);
                 Space();
                 Token("=");
                 Space();
@@ -220,6 +269,7 @@ public sealed class CppWriter
     private void WriteDeclarator(Declarator declarator)
     {
         EnsureSufficientStack();
+        Directives(declarator);
         switch (declarator)
         {
             case NameDeclarator name:
@@ -248,6 +298,7 @@ public sealed class CppWriter
 
     private void WriteParameter(ParameterDeclaration parameter)
     {
+        Directives(parameter);
         WriteDeclSpecifiers(parameter.Specifiers);
         if (parameter.Declarator != null)
         {
@@ -270,6 +321,7 @@ public sealed class CppWriter
     public void WriteStatement(Statement statement)
     {
         EnsureSufficientStack();
+        Directives(statement);
         switch (statement)
         {
             case CompoundStatement compound:
@@ -343,6 +395,7 @@ public sealed class CppWriter
 
     private void WriteCompoundStatement(CompoundStatement compound)
     {
+        Directives(compound);
         Token("{");
         NewLine();
         _indentLevel++;
@@ -352,6 +405,7 @@ public sealed class CppWriter
             NewLine();
         }
 
+        Directives(compound.CloseBraceDirectives);
         _indentLevel--;
         Token("}");
     }
@@ -363,6 +417,7 @@ public sealed class CppWriter
     public void WriteExpression(Expression expression)
     {
         EnsureSufficientStack();
+        Directives(expression);
         switch (expression)
         {
             case LiteralExpression literal:
@@ -376,6 +431,7 @@ public sealed class CppWriter
                         Space();
                     }
 
+                    Directives(concatenation.Parts[i]);
                     Token(concatenation.Parts[i].Text);
                 }
 

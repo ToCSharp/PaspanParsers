@@ -143,6 +143,7 @@ src/PaspanParsers.Tests/Cpp/CppKindMap.cs
 src/PaspanParsers.Tests/Cpp/CppLexicalTests.cs
 src/PaspanParsers.Tests/Cpp/CppLiteralChecker.cs
 src/PaspanParsers.Tests/Cpp/CppParserEntryPointTests.cs
+src/PaspanParsers.Tests/Cpp/CppPreprocessorTests.cs
 src/PaspanParsers.Tests/Cpp/CppSpanChecker.cs
 src/PaspanParsers.Tests/Cpp/CppTestHelper.cs
 src/PaspanParsers.Tests/FluentTests.cs
@@ -192,6 +193,9 @@ src/PaspanParsers/Cpp/CppParser.cs
 src/PaspanParsers/Cpp/CppWriter.cs
 src/PaspanParsers/Cpp/Parser/Lexer.cs
 src/PaspanParsers/Cpp/Parser/Literals.cs
+src/PaspanParsers/Cpp/Parser/Preprocessor.Conditions.cs
+src/PaspanParsers/Cpp/Parser/Preprocessor.Macros.cs
+src/PaspanParsers/Cpp/Parser/Preprocessor.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Declarations.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Expressions.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Statements.cs

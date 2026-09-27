@@ -16,7 +16,8 @@ public static class CppLiteralChecker
     /// </summary>
     public static string Check(TranslationUnit unit, IReadOnlyList<ClangNode> clangNodes)
     {
-        var bySpan = clangNodes.ToLookup(n => n.Span);
+        // Literals in macro uses are not compared
+        var bySpan = clangNodes.Where(n => !n.FromMacro).ToLookup(n => n.Span);
         var stack = new Stack<ICppNode>([unit]);
         while (stack.Count != 0)
         {

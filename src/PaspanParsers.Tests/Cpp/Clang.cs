@@ -54,6 +54,8 @@ public static class Clang
 
     private static readonly Lazy<IReadOnlyDictionary<string, string>> Predefined = new(ReadPredefinedMacros);
 
+    private static readonly Lazy<IReadOnlyList<string>> SystemIncludes = new(ReadSystemIncludeDirectories);
+
     /// <summary>
     /// The clang executable, or null when it is not installed.
     /// </summary>
@@ -66,6 +68,11 @@ public static class Clang
     /// <c>__clang__</c>, ...), by name.
     /// </summary>
     public static IReadOnlyDictionary<string, string> PredefinedMacros => Predefined.Value;
+
+    /// <summary>
+    /// The directories clang searches for <c>#include &lt;...&gt;</c> after the <c>-I</c> options.
+    /// </summary>
+    public static IReadOnlyList<string> SystemIncludeDirectories => SystemIncludes.Value;
 
     /// <summary>
     /// Marks the test inconclusive when clang is not installed.
@@ -162,6 +169,38 @@ public static class Clang
         }
 
         return null;
+    }
+
+    private static IReadOnlyList<string> ReadSystemIncludeDirectories()
+    {
+        var directories = new List<string>();
+        if (!IsAvailable)
+        {
+            return directories;
+        }
+
+        // clang -v lists them between these lines of its standard error
+        var run = Run([], ["-E", "-v"]);
+        var inList = false;
+        foreach (var line in run.Errors.Split('\n'))
+        {
+            var text = line.TrimEnd('\r');
+            if (text.StartsWith("#include <...> search starts here:", StringComparison.Ordinal))
+            {
+                inList = true;
+            }
+            else if (text.StartsWith("End of search list.", StringComparison.Ordinal))
+            {
+                break;
+            }
+            else if (inList && text.StartsWith(' '))
+            {
+                // A macOS framework directory is followed by " (framework directory)"
+                directories.Add(System.IO.Path.GetFullPath(text.Trim().Replace(" (framework directory)", "")));
+            }
+        }
+
+        return directories;
     }
 
     private static IReadOnlyDictionary<string, string> ReadPredefinedMacros()

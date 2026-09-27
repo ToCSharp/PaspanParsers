@@ -30,7 +30,8 @@ public sealed record ClangOracleOptions(
     }
 
     /// <summary>
-    /// The macros our parser evaluates conditional directives with: clang's predefined macros and the defines.
+    /// The options our parser evaluates conditional directives with: clang's predefined macros and the
+    /// defines, and for <c>__has_include</c> the include directories and clang's system include directories.
     /// </summary>
     public CppParseOptions ParseOptions()
     {
@@ -48,7 +49,13 @@ public sealed record ClangOracleOptions(
             }
         }
 
-        return new CppParseOptions(CppLanguageVersion.Cpp23, macros);
+        var workingDirectory = WorkingDirectory ?? Environment.CurrentDirectory;
+        var includeDirectories = (IncludeDirectories ?? [])
+            .Select(directory => Path.GetFullPath(directory, workingDirectory))
+            .Concat(Clang.SystemIncludeDirectories)
+            .ToList();
+
+        return new CppParseOptions(CppLanguageVersion.Cpp23, macros, includeDirectories, workingDirectory);
     }
 }
 
