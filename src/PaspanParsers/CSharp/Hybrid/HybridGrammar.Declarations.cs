@@ -70,6 +70,11 @@ internal sealed partial class HybridGrammar
 
         public Parser<List<TypeParameter>> TypeParameterList { get; }
 
+        /// <summary>
+        /// A type parameter list or, when the next token is not '&lt;', null.
+        /// </summary>
+        public Parser<List<TypeParameter>> OptionalTypeParameterList { get; }
+
         public Parser<List<Parameter>> ParameterList { get; }
 
         /// <summary>
@@ -102,7 +107,7 @@ internal sealed partial class HybridGrammar
             var attributeName = Node(
                 ZeroOrOne(identifier.AndSkip(Punctuator("::")).Then(static t => t.Text))
                     .And(Separated(Punctuator("."), identifier))
-                    .And(ZeroOrOne(typeArgumentList))
+                    .And(WhenStartsWith(static t => t.IsPunctuator("<"), typeArgumentList, null))
                     .Then(static x => new NameExpression(x.Item2.ConvertAll(static t => t.Text), x.Item3?.Types, x.Item1)
                     {
                         CloseAngleNullableDirectives = x.Item3?.CloseDirectives,
@@ -133,8 +138,9 @@ internal sealed partial class HybridGrammar
 
             var attributeSection = Punctuator("[").And(ZeroOrOne(attributeTarget, null)).And(attributeList).AndSkip(Punctuator("]"));
 
+            // Most declarations have no attributes: then the result is a shared empty list, which callers only read
             var section = Node(attributeSection.Then(static x => new AttributeSection(x.Item3, x.Item2)));
-            AttributeSections = ZeroOrMany(section);
+            AttributeSections = WhenStartsWith(static t => t.IsPunctuator("["), ZeroOrMany(section), NoAttributes);
             GlobalAttributeSection = Node(
                 attributeSection.Then(static x => new AttributeSection(x.Item3, x.Item2) { NullableDirectives = x.Item1.NullableDirectives }));
 
@@ -193,7 +199,8 @@ internal sealed partial class HybridGrammar
             }
 
             var parameter = Parameter(allowMissingName: false);
-            Parameters = ZeroOrOne(Separated(comma, parameter)).Then(static parameters => parameters ?? []);
+            Parameters = WhenStartsWith(static t => !t.IsPunctuator(")") && !t.IsPunctuator("]"), ZeroOrOne(Separated(comma, parameter)), null)
+                .Then(static parameters => parameters ?? []);
             ParameterList = Punctuator("(").SkipAnd(Parameters).AndSkip(Punctuator(")"));
             Receiver = Parameter(allowMissingName: true);
 
@@ -207,6 +214,7 @@ internal sealed partial class HybridGrammar
                     .Then(static x => new TypeParameter(x.Item3.Text, x.Item2, x.Item1.Count != 0 ? x.Item1 : null)));
 
             TypeParameterList = Punctuator("<").SkipAnd(Separated(comma, typeParameter)).AndSkip(Punctuator(">"));
+            OptionalTypeParameterList = WhenStartsWith(static t => t.IsPunctuator("<"), TypeParameterList, null);
 
             // Constraints: (where identifier ':' constraint (',' constraint)*)*
             TokenCondition endsConstraint = static (ref SyntaxParser p) =>
@@ -227,10 +235,18 @@ internal sealed partial class HybridGrammar
                 Contextual("where").And(identifier).AndSkip(Punctuator(":")).And(Separated(comma, constraint))
                     .Then(static x => new TypeParameterConstraint(x.Item2.Text, x.Item3) { NullableDirectives = x.Item1.NullableDirectives }));
 
-            // Once 'where name :' is seen the clause must parse, like in the hand-written parser
-            ConstraintClauses = ZeroOrMany(constraintClause)
-                .AndSkip(Lookahead(static (ref SyntaxParser p) => !(p.Current.IsContextual("where") && p.Peek(1).IsIdentifier && p.Peek(2).IsPunctuator(":"))));
+            // Once 'where name :' is seen the clause must parse, like in the hand-written parser. Without 'where' the
+            // result is a shared empty list, which callers only read
+            ConstraintClauses = WhenStartsWith(
+                static t => t.IsContextual("where"),
+                ZeroOrMany(constraintClause)
+                    .AndSkip(Lookahead(static (ref SyntaxParser p) => !(p.Current.IsContextual("where") && p.Peek(1).IsIdentifier && p.Peek(2).IsPunctuator(":")))),
+                NoConstraints);
         }
+
+        private static readonly List<AttributeSection> NoAttributes = [];
+
+        private static readonly List<TypeParameterConstraint> NoConstraints = [];
 
         private static AttributeTarget? ParseAttributeTarget(string text) => text switch
         {
@@ -297,13 +313,17 @@ internal sealed partial class HybridGrammar
         var nestedExpression = Rule(SyntaxParser.ParseNestedExpressionRule);
         var type = Rule(SyntaxParser.ParseTypeRule);
         var returnType = Rule(SyntaxParser.ParseReturnTypeRule);
-        var explicitInterface = ZeroOrOne(Rule(SyntaxParser.ParseExplicitInterfaceSpecifierRule));
+        // Only a name followed by '.', '<' or '::' can start an explicit interface
+        var explicitInterface = WhenStartsWith(
+            static (ref SyntaxParser p) => p.Current.IsIdentifier && p.Peek(1) is { Kind: TokenKind.Punctuator, Text: "." or "<" or "::" },
+            ZeroOrOne(Rule(SyntaxParser.ParseExplicitInterfaceSpecifierRule)),
+            null);
         var variableInitializer = Rule(SyntaxParser.ParseVariableInitializerRule);
         var argumentList = Rule(SyntaxParser.ParseArgumentListRule);
         var bracketedArgumentList = Rule(SyntaxParser.ParseBracketedArgumentListRule);
 
         var attributeSections = parts.AttributeSections;
-        var typeParameterList = ZeroOrOne(parts.TypeParameterList);
+        var typeParameterList = parts.OptionalTypeParameterList;
         var parameterList = parts.ParameterList;
         var constraintClauses = parts.ConstraintClauses;
 
@@ -519,7 +539,7 @@ internal sealed partial class HybridGrammar
 
         // identifier ['[' size ']'] ['=' initializer] (',' ...)* ';'
         var fieldDeclarator = Node(
-            identifier.And(ZeroOrOne(bracketedArgumentList)).And(ZeroOrOne(Punctuator("=").SkipAnd(variableInitializer)))
+            identifier.And(WhenStartsWith(static t => t.IsPunctuator("["), bracketedArgumentList, null)).And(ZeroOrOne(Punctuator("=").SkipAnd(variableInitializer)))
                 .Then(static x => new VariableDeclarator(x.Item1.Text, x.Item3) { BracketedArguments = x.Item2 }));
 
         var field = Separated(comma, fieldDeclarator).AndSkip(semicolon)

@@ -36,6 +36,20 @@ internal static class SyntaxRules
     public static Parser<Unit> Lookahead(TokenCondition condition) => new LookaheadParser(condition);
 
     /// <summary>
+    /// Runs <paramref name="parser"/> only when <paramref name="firstToken"/> holds for the next token; otherwise
+    /// succeeds with <paramref name="otherwise"/> without consuming anything. For optional parts that are mostly
+    /// absent (attributes, constraints), it spares the parsers that would each fail on the first token.
+    /// </summary>
+    public static Parser<T> WhenStartsWith<T>(Func<SyntaxToken, bool> firstToken, Parser<T> parser, T otherwise) =>
+        new StartsWithParser<T>((ref SyntaxParser p) => firstToken(p.Current), parser, otherwise);
+
+    /// <summary>
+    /// Like <see cref="WhenStartsWith{T}(Func{SyntaxToken, bool}, Parser{T}, T)"/> with a condition on the next tokens.
+    /// </summary>
+    public static Parser<T> WhenStartsWith<T>(TokenCondition condition, Parser<T> parser, T otherwise) =>
+        new StartsWithParser<T>(condition, parser, otherwise);
+
+    /// <summary>
     /// Parses <paramref name="prefix"/>, then <paramref name="parser"/>, which reads the prefix with
     /// <see cref="Prefix{TPrefix}(ParseContext)"/>. A node built at the end of <paramref name="parser"/> takes the
     /// parts parsed before it (the attributes and modifiers of a member, its return type) without a closure per node.
@@ -103,6 +117,22 @@ internal static class SyntaxRules
             }
 
             result.Set(first.Start, end, statement);
+            return true;
+        }
+    }
+
+    private sealed class StartsWithParser<T>(TokenCondition condition, Parser<T> parser, T otherwise) : Parser<T>
+    {
+        public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
+        {
+            var tokens = SyntaxParser.At(ref reader, context);
+            if (condition(ref tokens))
+            {
+                return parser.Parse(ref reader, context, ref result);
+            }
+
+            var position = reader.GetCurrentPosition();
+            result.Set(position, position, otherwise);
             return true;
         }
     }

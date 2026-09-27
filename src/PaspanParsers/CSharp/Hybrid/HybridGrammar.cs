@@ -44,7 +44,7 @@ internal sealed partial class HybridGrammar
         // Attributes, modifiers, parameters and constraints, shared with the declarations
         var parts = new DeclarationParts(nestedExpression, type);
         var attributeSections = parts.AttributeSections;
-        var typeParameterList = parts.TypeParameterList;
+        var typeParameterList = parts.OptionalTypeParameterList;
         var parameterList = parts.ParameterList;
         var constraintClauses = parts.ConstraintClauses;
 
@@ -84,7 +84,7 @@ internal sealed partial class HybridGrammar
             .Or(semicolon.Then(_ => (Block: (BlockStatement)null, Expression: (Expression)null)));
 
         var localFunctionTail = identifier.WhenFollowedBy(Punctuator("(").Or(Punctuator("<")))
-            .And(ZeroOrOne(typeParameterList))
+            .And(typeParameterList)
             .And(parameterList)
             .And(constraintClauses)
             .And(functionBody)
