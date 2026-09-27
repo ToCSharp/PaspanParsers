@@ -4,8 +4,10 @@
 prints an AST back as C#. Every node knows its position in the input.
 
 **Scope:** valid code. Any file that Roslyn parses without syntax errors is expected to parse, and the
-tree is expected to match Roslyn's. There is no error recovery: invalid input makes `TryParse` return
-`false` with a `ParseError` at the token where parsing stopped (`Unexpected ';'`, with line and column).
+tree is expected to match Roslyn's. By default invalid input makes `TryParse` return `false` with a
+`ParseError` at the token where parsing stopped (`Unexpected ';'`, with line and column). With
+`CSharpParseOptions.ErrorRecovery` invalid members and statements are skipped instead, and the rest of
+the file still parses (see [Error recovery](#error-recovery)).
 
 ## How it is verified
 
@@ -97,6 +99,61 @@ Console.WriteLine(method.Span.GetText(utf8));  // int M() => a + b * c;
 
 Nodes built in code have an empty span at 0; `Span` has a setter for tools that build trees.
 
+### UTF-8 input, lines and columns
+
+Files can be parsed from their bytes, without decoding them to a string. A leading byte order mark is
+skipped, and spans are offsets into the bytes after it (`CSharpParser.GetUtf8Source(ReadOnlyMemory<byte>)`).
+`LineMap` converts offsets to 1-based lines and columns and back; columns count UTF-16 code units, like
+editors, Roslyn and the Language Server Protocol.
+
+```csharp
+var bytes = File.ReadAllBytes("Program.cs");
+if (CSharpParser.TryParse(bytes, options, out var unit, out var error))
+{
+    var utf8 = CSharpParser.GetUtf8Source(bytes);
+    var lines = new LineMap(utf8.Span);
+    var (line, column) = lines.GetLineAndColumn(unit.Members[0].Span.Start);
+    var offset = lines.GetOffset(line, column);    // back to the byte offset
+}
+```
+
+### Documentation comments
+
+`MemberDeclaration.LeadingTrivia` and `EnumMember.LeadingTrivia` are the whitespace, comments and directives
+before a declaration. `DocumentationComment.GetXml` reads the `///` and `/** */` comments in them and returns
+their XML without the comment markers, or null:
+
+```csharp
+var xml = DocumentationComment.GetXml(utf8.Span, method);   // "<summary>\nDoes it.\n</summary>"
+```
+
+It is checked against Roslyn's documentation comment trivia on the built-in corpus.
+
+### Error recovery
+
+For code that is being edited, `new CSharpParseOptions(errorRecovery: true)` makes the parser return a tree
+for any input:
+
+- A member declaration or statement that does not parse is skipped up to and including the next `;` or
+  balanced `{...}` block, or up to the `}` that closes the enclosing body, the next declaration keyword
+  (`class`, `public`, …) or, for a statement, the next statement keyword (`if`, `return`, …). It is kept as an
+  `IncompleteMemberDeclaration` or `IncompleteStatement` with the skipped text.
+- Recovery happens in the innermost body: a broken statement costs that statement, not the method, and a
+  broken member costs that member, not the type.
+- A type, namespace or block left open at the end of the input is closed there.
+- `CompilationUnit.Errors` lists the errors (`SyntaxError`: the unexpected token and a message), or is null.
+
+```csharp
+var options = new CSharpParseOptions(errorRecovery: true);
+CSharpParser.TryParse("class C { void A() { a(); b(; c(); } void B() { } }", options, out var unit, out _);
+// A has three statements: a(); an IncompleteStatement "b(;" and c(); B parses normally
+Console.WriteLine(unit.Errors[0].Message);   // Unexpected ';'
+```
+
+Valid input parses to the same tree with and without recovery: `ErrorRecoveryTests` checks this on the
+built-in corpus (and on `CSHARP_CORPUS_DIR` when set), and parses thousands of damaged copies of the corpus
+files (truncated, with characters removed or inserted), which must always succeed.
+
 ## What is supported
 
 | Area | Support |
@@ -113,7 +170,9 @@ Nodes built in code have an empty span at 0; `Span` has a setter for tools that 
 
 **Limitations**
 
-- No error recovery: the parser is meant for code that compiles.
+- Error recovery is optional and coarse: it skips whole members and statements, where Roslyn inserts
+  missing tokens and keeps partial nodes. It is meant to keep the rest of a file usable, not to describe
+  the invalid code.
 - Trivia is not kept: comments, whitespace and directives other than `#nullable` are not in the AST, so
   `CSharpWriter` output is formatted by the writer, not like the input.
 - Preview features after C# 14 are not a target (only the `safe` modifier is parsed).
@@ -139,12 +198,13 @@ Parsing time is linear in the input, also for deeply nested code: 8 000 nested p
 | File | Contents |
 |---|---|
 | `CSharpParser.cs` | Entry points: `Parse`, `TryParse`, `GetUtf8Source`, `CompilationUnitParser` |
-| `CSharpParseOptions.cs`, `CSharpParseContext.cs` | Options (language version, preprocessor symbols) and per-parse state |
+| `CSharpParseOptions.cs`, `CSharpParseContext.cs` | Options (language version, preprocessor symbols, error recovery) and per-parse state |
 | `CSharpAst.cs` | AST nodes, `TextSpan` |
 | `CSharpWriter.cs` | Prints an AST as C# (see `CSharpWriter.README.md`) |
+| `LineMap.cs`, `DocumentationComment.cs` | Lines and columns of offsets; documentation comments of declarations |
 | `Parser/Lexer.cs`, `Parser/Tokens.cs` | Tokens: identifiers, keywords, literals, interpolated strings |
 | `Parser/Preprocessor.cs` | Trivia: whitespace, comments and preprocessor directives |
-| `Parser/SyntaxParser*.cs` | Hand-written recursive descent parser: types, expressions, patterns, statements, declarations, compilation unit |
+| `Parser/SyntaxParser*.cs` | Hand-written recursive descent parser: types, expressions, patterns, statements, declarations, compilation unit, error recovery (`SyntaxParser.Recovery.cs`) |
 | `CSharpGrammarSpecification.txt` | The C# grammar in EBNF, for reference |
 
 The parser is a hand-written recursive descent parser (`SyntaxParser`) that follows Roslyn's disambiguation
@@ -164,4 +224,7 @@ dotnet run --project src/PaspanParsers.Tests -- --filter "FullyQualifiedName~Pas
   to measure an external corpus (and `CSHARP_CORPUS_SYMBOLS`, for example `NET;DEBUG`, for preprocessor symbols).
 - `CSharpPerformanceTests`: deep nesting, and a benchmark against Roslyn when `CSHARP_CORPUS_DIR` is set
   (run it with `-c Release`).
+- `ErrorRecoveryTests`: recovery from invalid input; valid corpus files parse the same with recovery; damaged
+  corpus files always parse.
+- `SourceTextTests`: UTF-8 input, `LineMap` and `DocumentationComment`, checked against Roslyn on the corpus.
 - `CSharpParserTests`, `CSharpWriterTests`: the original tests of the parser and the writer.

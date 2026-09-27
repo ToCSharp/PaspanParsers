@@ -21,7 +21,12 @@ internal ref partial struct SyntaxParser
             var statements = new List<Statement>();
             while (!IsPunctuator("}"))
             {
-                var statement = ParseStatement();
+                if (IsMissingCloseBrace())
+                {
+                    break;
+                }
+
+                var statement = ParseStatementOrRecover();
                 if (statement == null)
                 {
                     return null;
@@ -30,7 +35,7 @@ internal ref partial struct SyntaxParser
                 statements.Add(statement);
             }
 
-            var closeBraceDirectives = EatToken().NullableDirectives;
+            var closeBraceDirectives = TryEatPunctuatorToken("}")?.NullableDirectives;
             return Finish(
                 new BlockStatement(statements.Count != 0 ? statements : null)
                 {

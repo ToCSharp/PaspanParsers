@@ -29,14 +29,29 @@ public partial class CSharpParser
 
     /// <summary>
     /// Parses <paramref name="input"/>. When it is not valid C#, returns false and an <paramref name="error"/>
-    /// at the token after the furthest token the parser could consume.
+    /// at the token after the furthest token the parser could consume; with
+    /// <see cref="CSharpParseOptions.ErrorRecovery"/> it returns the tree and <see cref="CompilationUnit.Errors"/>.
     /// </summary>
     public static bool TryParse(string input, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
     {
-        var source = GetUtf8Source(input);
+        return TryParseSource(GetUtf8Source(input), options, out result, out error);
+    }
+
+    /// <summary>
+    /// Parses C# source given as UTF-8 bytes, such as the content of a file, without decoding it to a string.
+    /// A leading byte order mark is skipped: node spans are offsets into <paramref name="utf8Source"/>
+    /// after it, which is what <see cref="GetUtf8Source(ReadOnlyMemory{byte})"/> returns.
+    /// </summary>
+    public static bool TryParse(ReadOnlyMemory<byte> utf8Source, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
+    {
+        return TryParseSource(GetUtf8Source(utf8Source), options, out result, out error);
+    }
+
+    private static bool TryParseSource(ReadOnlyMemory<byte> source, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
+    {
         try
         {
-            return TryParse(source, options, out result, out error);
+            return TryParseCore(source, options, out result, out error);
         }
         catch (InsufficientExecutionStackException)
         {
@@ -51,7 +66,7 @@ public partial class CSharpParser
             {
                 try
                 {
-                    success = TryParse(source, options, out largeStackResult, out largeStackError);
+                    success = TryParseCore(source, options, out largeStackResult, out largeStackError);
                 }
                 catch (InsufficientExecutionStackException)
                 {
@@ -67,18 +82,24 @@ public partial class CSharpParser
         return success;
     }
 
-    private static bool TryParse(byte[] source, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
+    private static bool TryParseCore(ReadOnlyMemory<byte> source, CSharpParseOptions options, out CompilationUnit result, out ParseError error)
     {
-        var reader = new SpanReader(source);
+        var reader = new SpanReader(source.Span);
         var context = new CSharpParseContext(options);
         try
         {
             if (CompilationUnitParser.TryParse(ref reader, context, out result, out error))
             {
+                if (context.Errors.Count != 0)
+                {
+                    // An invalid region is skipped again each time an enclosing alternative is retried
+                    result.Errors = context.Errors.Distinct().OrderBy(e => e.Span.Start).ThenBy(e => e.Span.End).ToList();
+                }
+
                 return true;
             }
 
-            error ??= SyntaxParser.DescribeFailure(source, context);
+            error ??= SyntaxParser.DescribeFailure(source.Span, context);
             return false;
         }
         finally
@@ -98,5 +119,14 @@ public partial class CSharpParser
         // A byte order mark is not part of the source text
         var start = input.Length > 0 && input[0] == '\uFEFF' ? 1 : 0;
         return System.Text.Encoding.UTF8.GetBytes(input, start, input.Length - start);
+    }
+
+    /// <summary>
+    /// The bytes the parser reads for the UTF-8 source <paramref name="utf8Source"/>: the source without
+    /// its byte order mark. Node spans (<see cref="CSharpNode.Span"/>) are offsets into them.
+    /// </summary>
+    public static ReadOnlyMemory<byte> GetUtf8Source(ReadOnlyMemory<byte> utf8Source)
+    {
+        return utf8Source.Span.StartsWith("\uFEFF"u8) ? utf8Source[3..] : utf8Source;
     }
 }

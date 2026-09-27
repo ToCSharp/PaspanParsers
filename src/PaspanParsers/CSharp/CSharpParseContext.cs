@@ -23,6 +23,11 @@ public sealed class CSharpParseContext(CSharpParseOptions options) : ParseContex
     private SyntaxCache _syntaxCache;
 
     /// <summary>
+    /// The errors recovered from so far, when <see cref="CSharpParseOptions.ErrorRecovery"/> is set.
+    /// </summary>
+    internal List<SyntaxError> Errors { get; } = [];
+
+    /// <summary>
     /// Lets the next parse reuse the caches; the context must not be used to parse again.
     /// </summary>
     internal void ReleaseCaches()

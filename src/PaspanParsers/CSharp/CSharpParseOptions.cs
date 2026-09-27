@@ -34,10 +34,12 @@ public sealed class CSharpParseOptions
 
     public CSharpParseOptions(
         CSharpLanguageVersion languageVersion = CSharpLanguageVersion.Latest,
-        IEnumerable<string> preprocessorSymbols = null)
+        IEnumerable<string> preprocessorSymbols = null,
+        bool errorRecovery = false)
     {
         LanguageVersion = languageVersion;
         PreprocessorSymbols = preprocessorSymbols?.ToArray() ?? [];
+        ErrorRecovery = errorRecovery;
     }
 
     public CSharpLanguageVersion LanguageVersion { get; }
@@ -46,4 +48,13 @@ public sealed class CSharpParseOptions
     /// Symbols considered defined when evaluating <c>#if</c> directives.
     /// </summary>
     public IReadOnlyList<string> PreprocessorSymbols { get; }
+
+    /// <summary>
+    /// When true, invalid input still yields a tree: a member declaration or statement that cannot be
+    /// parsed is skipped up to the next ';', balanced '{...}' block or the '}' that closes the enclosing
+    /// body and kept as an <see cref="IncompleteMemberDeclaration"/> or <see cref="IncompleteStatement"/>;
+    /// a body left open at the end of the input is closed there. The errors are in
+    /// <see cref="CompilationUnit.Errors"/>. Valid input parses to the same tree either way.
+    /// </summary>
+    public bool ErrorRecovery { get; }
 }

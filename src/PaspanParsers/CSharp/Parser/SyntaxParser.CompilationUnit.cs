@@ -16,10 +16,18 @@ internal ref partial struct SyntaxParser
         while (IsGlobalAttributeSectionStart())
         {
             var nullableDirectives = Current.NullableDirectives;
+            var start = _position;
             var section = ParseAttributeSection();
             if (section == null)
             {
-                return null;
+                if (!RecoversErrors)
+                {
+                    return null;
+                }
+
+                // The member declarations recover from the invalid section
+                _position = start;
+                break;
             }
 
             section.NullableDirectives = nullableDirectives;
@@ -29,7 +37,7 @@ internal ref partial struct SyntaxParser
         var members = new List<MemberDeclaration>();
         while (Current.Kind != TokenKind.EndOfFile)
         {
-            var member = ParseMemberDeclaration(MemberContext.CompilationUnit);
+            var member = ParseMemberDeclarationOrRecover(MemberContext.CompilationUnit, inBraces: false);
             if (member == null)
             {
                 return null;
