@@ -167,7 +167,10 @@ public sealed class SimpleDeclaration(DeclSpecifierSequence specifiers, IReadOnl
 
 /// <summary>
 /// A function with its body: <c>int main() { return 0; }</c>. The specifiers are null for a constructor,
-/// destructor or conversion function, which have none: <c>S::~S() { }</c>.
+/// destructor or conversion function, which have none: <c>S::~S() { }</c>. A constructor may initialize
+/// members and bases before its body: <c>S() : a(1), Base{ 2 } { }</c>. A function-try-block
+/// (<c>void f() try { } catch (...) { }</c>) has <see cref="Handlers"/>. A defaulted or deleted function
+/// (<c>S() = default;</c>) has no body; its span includes the ';'.
 /// </summary>
 public sealed class FunctionDefinition(DeclSpecifierSequence specifiers, Declarator declarator, CompoundStatement body) : Declaration
 {
@@ -177,10 +180,37 @@ public sealed class FunctionDefinition(DeclSpecifierSequence specifiers, Declara
     public DeclSpecifierSequence Specifiers { get; } = specifiers;
     public Declarator Declarator { get; } = declarator;
 
+    /// <summary><c>override</c> and <c>final</c> after the declarator, in source order.</summary>
+    public IReadOnlyList<string> VirtSpecifiers { get; init; } = [];
+
     /// <summary>The constraint after the declarator: <c>requires C&lt;T&gt;</c>, or null.</summary>
     public Expression RequiresClause { get; init; }
 
+    /// <summary>The ctor-initializer: <c>a(1), Base{ 2 }</c> after ':'; null when there is none.</summary>
+    public IReadOnlyList<MemberInitializer> Initializers { get; init; }
+
+    /// <summary>The body; null for a defaulted or deleted function.</summary>
     public CompoundStatement Body { get; } = body;
+
+    /// <summary>The handlers of a function-try-block, whose <c>try</c> comes before the ctor-initializer; null otherwise.</summary>
+    public IReadOnlyList<CatchClause> Handlers { get; init; }
+
+    /// <summary><c>= default;</c>.</summary>
+    public bool IsDefaulted { get; init; }
+
+    /// <summary><c>= delete;</c>.</summary>
+    public bool IsDeleted { get; init; }
+}
+
+/// <summary>
+/// An initializer of a member or base in a ctor-initializer: <c>value(1)</c>, <c>Base{ 2 }</c>, or a pack
+/// expansion <c>Bases(args)...</c>.
+/// </summary>
+public sealed class MemberInitializer(Name member, Initializer initializer) : CppNode
+{
+    public Name Member { get; } = member;
+    public Initializer Initializer { get; } = initializer;
+    public bool IsPackExpansion { get; init; }
 }
 
 /// <summary>
@@ -190,6 +220,196 @@ public sealed class StaticAssertDeclaration(Expression condition, Expression mes
 {
     public Expression Condition { get; } = condition;
     public Expression Message { get; } = message;
+}
+
+/// <summary>
+/// An empty declaration: a ';' at namespace scope or among the members of a class.
+/// </summary>
+public sealed class EmptyDeclaration : Declaration
+{
+}
+
+/// <summary>
+/// An access specifier among the members of a class: <c>public:</c>, <c>protected:</c> or <c>private:</c>.
+/// </summary>
+public sealed class AccessSpecifier(string access) : Declaration
+{
+    public string Access { get; } = access;
+}
+
+/// <summary>
+/// A component of the name of a namespace definition: <c>inline v2</c> in <c>namespace outer::inline v2</c>.
+/// </summary>
+public sealed record NamespaceName(string Identifier, bool IsInline = false);
+
+/// <summary>
+/// <c>namespace name { declarations }</c>, <c>inline namespace v1 { … }</c>, an unnamed namespace (no
+/// <see cref="Names"/>) or a nested namespace definition <c>namespace a::b::inline c { … }</c>.
+/// </summary>
+public sealed class NamespaceDefinition(IReadOnlyList<NamespaceName> names, IReadOnlyList<Declaration> declarations) : Declaration
+{
+    public bool IsInline { get; init; }
+
+    /// <summary>The attributes after <c>namespace</c>: <c>namespace [[deprecated]] old { }</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
+    public IReadOnlyList<NamespaceName> Names { get; } = names ?? [];
+    public IReadOnlyList<Declaration> Declarations { get; } = declarations ?? [];
+
+    /// <summary>The directives before the closing '}' that the writer writes back, or null.</summary>
+    public IReadOnlyList<PreprocessorDirective> CloseBraceDirectives { get; init; }
+}
+
+/// <summary>
+/// <c>namespace alias = outer::inner;</c>.
+/// </summary>
+public sealed class NamespaceAliasDefinition(string alias, Name target) : Declaration
+{
+    public string Alias { get; } = alias;
+    public Name Target { get; } = target;
+}
+
+/// <summary>
+/// <c>using namespace outer::inner;</c>.
+/// </summary>
+public sealed class UsingDirective(Name @namespace) : Declaration
+{
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+    public Name Namespace { get; } = @namespace;
+}
+
+/// <summary>
+/// A using-declaration: <c>using outer::value, outer::other;</c>, <c>using typename Base::type;</c>,
+/// <c>using Bases::operator()...;</c>.
+/// </summary>
+public sealed class UsingDeclaration(IReadOnlyList<UsingDeclarator> declarators) : Declaration
+{
+    public IReadOnlyList<UsingDeclarator> Declarators { get; } = declarators ?? [];
+}
+
+/// <summary>
+/// A name of a using-declaration, with <c>typename</c> and a pack expansion <c>...</c>.
+/// </summary>
+public sealed class UsingDeclarator(Name name) : CppNode
+{
+    public bool IsTypename { get; init; }
+    public Name Name { get; } = name;
+    public bool IsPackExpansion { get; init; }
+}
+
+/// <summary>
+/// <c>using enum Scoped;</c>.
+/// </summary>
+public sealed class UsingEnumDeclaration(Name @enum) : Declaration
+{
+    public Name Enum { get; } = @enum;
+}
+
+/// <summary>
+/// An alias declaration: <c>using Alias = Type;</c>, with attributes after the name: <c>using A [[deprecated]] = int;</c>.
+/// </summary>
+public sealed class AliasDeclaration(string identifier, TypeId type) : Declaration
+{
+    public string Identifier { get; } = identifier;
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+    public TypeId Type { get; } = type;
+}
+
+/// <summary>
+/// A linkage specification: <c>extern "C" int f();</c> or, with <see cref="HasBraces"/>,
+/// <c>extern "C" { declarations }</c>. <see cref="Language"/> is the value of the string: <c>C</c>.
+/// </summary>
+public sealed class LinkageSpecification(string language, IReadOnlyList<Declaration> declarations) : Declaration
+{
+    public string Language { get; } = language;
+    public bool HasBraces { get; init; }
+    public IReadOnlyList<Declaration> Declarations { get; } = declarations ?? [];
+
+    /// <summary>The directives before the closing '}' that the writer writes back, or null.</summary>
+    public IReadOnlyList<PreprocessorDirective> CloseBraceDirectives { get; init; }
+}
+
+/// <summary>
+/// <c>template &lt;parameters&gt; requires constraint declaration</c>. An explicit specialization
+/// (<c>template &lt;&gt; struct Box&lt;void&gt; { };</c>) has no parameters.
+/// </summary>
+public sealed class TemplateDeclaration(IReadOnlyList<TemplateParameter> parameters, Declaration declaration) : Declaration
+{
+    public IReadOnlyList<TemplateParameter> Parameters { get; } = parameters ?? [];
+
+    /// <summary>The constraint after the parameters: <c>template &lt;class T&gt; requires C&lt;T&gt;</c>, or null.</summary>
+    public Expression RequiresClause { get; init; }
+
+    public Declaration Declaration { get; } = declaration;
+}
+
+/// <summary>
+/// An explicit instantiation: <c>template struct Box&lt;int&gt;;</c>, or with <see cref="IsExtern"/>,
+/// <c>extern template struct Box&lt;int&gt;;</c>.
+/// </summary>
+public sealed class ExplicitInstantiation(Declaration declaration) : Declaration
+{
+    public bool IsExtern { get; init; }
+    public Declaration Declaration { get; } = declaration;
+}
+
+/// <summary>
+/// The definition of a concept after its template parameters: <c>concept Integral = constraint;</c>.
+/// </summary>
+public sealed class ConceptDefinition(string name, Expression constraint) : Declaration
+{
+    public string Name { get; } = name;
+    public Expression Constraint { get; } = constraint;
+}
+
+/// <summary>
+/// An asm declaration: <c>asm("nop");</c>. <see cref="Keyword"/> is <c>asm</c>, <c>__asm</c> or <c>__asm__</c>;
+/// the GNU qualifiers (<c>volatile</c>, <c>inline</c>, <c>goto</c>) follow it; <see cref="Text"/> is the source
+/// between the parentheses, including the operands of a GNU extended asm.
+/// </summary>
+public sealed class AsmDeclaration(string keyword, string text) : Declaration
+{
+    public string Keyword { get; } = keyword;
+    public IReadOnlyList<string> Qualifiers { get; init; } = [];
+    public string Text { get; } = text;
+}
+
+/// <summary>
+/// A module declaration: <c>export module name:partition;</c>. The start of the global module fragment,
+/// <c>module;</c>, has no <see cref="Name"/>; the private module fragment, <c>module :private;</c>, has
+/// no name and the partition <c>private</c>. Names are dotted: <c>a.b</c>.
+/// </summary>
+public sealed class ModuleDeclaration(string name, string partition) : Declaration
+{
+    public bool IsExport { get; init; }
+    public string Name { get; } = name;
+    public string Partition { get; } = partition;
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+}
+
+/// <summary>
+/// <c>import name;</c>, <c>import :partition;</c> or <c>import &lt;header&gt;;</c>; <see cref="Header"/> is
+/// the header name as written: <c>&lt;vector&gt;</c> or <c>"local.h"</c>.
+/// </summary>
+public sealed class ImportDeclaration(string module, string partition, string header) : Declaration
+{
+    public bool IsExport { get; init; }
+    public string Module { get; } = module;
+    public string Partition { get; } = partition;
+    public string Header { get; } = header;
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+}
+
+/// <summary>
+/// <c>export declaration</c> or, with <see cref="HasBraces"/>, <c>export { declarations }</c>.
+/// </summary>
+public sealed class ExportDeclaration(IReadOnlyList<Declaration> declarations) : Declaration
+{
+    public bool HasBraces { get; init; }
+    public IReadOnlyList<Declaration> Declarations { get; } = declarations ?? [];
+
+    /// <summary>The directives before the closing '}' that the writer writes back, or null.</summary>
+    public IReadOnlyList<PreprocessorDirective> CloseBraceDirectives { get; init; }
 }
 
 // ========================================
@@ -235,6 +455,10 @@ public sealed class NamedTypeSpecifier(Name name) : DeclSpecifier
 public sealed class ElaboratedTypeSpecifier(string key, Name name) : DeclSpecifier
 {
     public string Key { get; } = key;
+
+    /// <summary>The attributes after the key: <c>struct [[deprecated]] Old;</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
     public Name Name { get; } = name;
 }
 
@@ -254,6 +478,94 @@ public sealed class PlaceholderTypeSpecifier(Name concept, bool isDecltypeAuto =
 {
     public Name Concept { get; } = concept;
     public bool IsDecltypeAuto { get; } = isDecltypeAuto;
+}
+
+/// <summary>
+/// <c>explicit(condition)</c>. A plain <c>explicit</c> is a <see cref="KeywordSpecifier"/>.
+/// </summary>
+public sealed class ExplicitSpecifier(Expression condition) : DeclSpecifier
+{
+    public Expression Condition { get; } = condition;
+}
+
+/// <summary>
+/// An attribute specifier among the declaration specifiers: <c>static __attribute__((unused)) int a;</c>.
+/// </summary>
+public sealed class AttributeDeclSpecifier(AttributeSpecifier attribute) : DeclSpecifier
+{
+    public AttributeSpecifier Attribute { get; } = attribute;
+}
+
+/// <summary>
+/// A class definition: <c>struct Point final : Base { members }</c>. <see cref="Key"/> is <c>class</c>,
+/// <c>struct</c> or <c>union</c>; the name is null for an unnamed class and may be qualified or a
+/// template-id: <c>struct Box&lt;void&gt; { }</c>.
+/// </summary>
+public sealed class ClassSpecifier(string key, Name name, IReadOnlyList<BaseSpecifier> bases, IReadOnlyList<Declaration> members) : DeclSpecifier
+{
+    public string Key { get; } = key;
+
+    /// <summary>The attributes after the key: <c>struct [[nodiscard]] Result</c>, <c>struct alignas(16) Aligned</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
+    public Name Name { get; } = name;
+    public bool IsFinal { get; init; }
+    public IReadOnlyList<BaseSpecifier> Bases { get; } = bases ?? [];
+
+    /// <summary>The members in source order, including access specifiers.</summary>
+    public IReadOnlyList<Declaration> Members { get; } = members ?? [];
+
+    /// <summary>The directives before the closing '}' that the writer writes back, or null.</summary>
+    public IReadOnlyList<PreprocessorDirective> CloseBraceDirectives { get; init; }
+}
+
+/// <summary>
+/// A base class: <c>public virtual Base</c>, <c>Bases...</c>. <see cref="Access"/> is null when not written.
+/// </summary>
+public sealed class BaseSpecifier(Name name) : CppNode
+{
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
+    /// <summary><c>virtual</c> is written before the access specifier.</summary>
+    public bool IsVirtualFirst { get; init; }
+
+    public bool IsVirtual { get; init; }
+    public string Access { get; init; }
+    public Name Name { get; } = name;
+    public bool IsPackExpansion { get; init; }
+}
+
+/// <summary>
+/// An enumeration: <c>enum class Color : char { Red, Green = 2 }</c>. <see cref="ScopedKey"/> is
+/// <c>class</c> or <c>struct</c> for a scoped enumeration and null otherwise. An opaque declaration
+/// (<c>enum class E : int;</c>) has no <see cref="Enumerators"/>; the name is null for an unnamed enumeration.
+/// </summary>
+public sealed class EnumSpecifier(string scopedKey, Name name, IReadOnlyList<Enumerator> enumerators) : DeclSpecifier
+{
+    public string ScopedKey { get; } = scopedKey;
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+    public Name Name { get; } = name;
+
+    /// <summary>The underlying type after ':', or null.</summary>
+    public TypeId UnderlyingType { get; init; }
+
+    /// <summary>The enumerators; null for an opaque declaration without braces.</summary>
+    public IReadOnlyList<Enumerator> Enumerators { get; } = enumerators;
+
+    public bool HasTrailingComma { get; init; }
+
+    /// <summary>The directives before the closing '}' that the writer writes back, or null.</summary>
+    public IReadOnlyList<PreprocessorDirective> CloseBraceDirectives { get; init; }
+}
+
+/// <summary>
+/// An enumerator: <c>Green = 2</c>, <c>Old [[deprecated]]</c>.
+/// </summary>
+public sealed class Enumerator(string identifier, Expression value = null) : CppNode
+{
+    public string Identifier { get; } = identifier;
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+    public Expression Value { get; } = value;
 }
 
 // ========================================
@@ -377,14 +689,34 @@ public sealed class TypeId(DeclSpecifierSequence specifiers, Declarator declarat
 // ========================================
 
 /// <summary>
-/// A declarator and its optional initializer: <c>a = 1</c> in <c>int a = 1;</c>.
+/// A declarator and its optional initializer: <c>a = 1</c> in <c>int a = 1;</c>. Members may have a
+/// bit-field width (<c>flag : 1</c>; the declarator is null for an unnamed bit-field <c>: 0</c>), the
+/// virt-specifiers <c>override</c> and <c>final</c>, and a pure specifier <c>= 0</c>.
 /// </summary>
 public sealed class InitDeclarator(Declarator declarator, Initializer initializer = null) : CppNode
 {
+    /// <summary>The GNU attributes before a declarator that is not the first: <c>int a, __attribute__((unused)) b;</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> LeadingAttributes { get; init; } = [];
+
     public Declarator Declarator { get; } = declarator;
+
+    /// <summary>The GNU asm label after the declarator, as written without the parentheses: <c>"name"</c>; or null.</summary>
+    public string AsmLabel { get; init; }
+
+    /// <summary>The GNU attributes after the declarator: <c>int a __attribute__((unused));</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
+    /// <summary><c>override</c> and <c>final</c> after the declarator of a member function, in source order.</summary>
+    public IReadOnlyList<string> VirtSpecifiers { get; init; } = [];
 
     /// <summary>The constraint after the declarator: <c>requires C&lt;T&gt;</c>, or null.</summary>
     public Expression RequiresClause { get; init; }
+
+    /// <summary>The width of a bit-field after ':', or null.</summary>
+    public Expression BitFieldWidth { get; init; }
+
+    /// <summary>A pure virtual function: <c>= 0</c>.</summary>
+    public bool IsPure { get; init; }
 
     public Initializer Initializer { get; } = initializer;
 }
@@ -405,6 +737,9 @@ public abstract class Declarator : CppNode
 public sealed class NameDeclarator(Name name) : Declarator
 {
     public Name Name { get; } = name;
+
+    /// <summary>The attributes after the name, which appertain to the declared entity: <c>int a [[maybe_unused]];</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
 }
 
 /// <summary>
@@ -498,11 +833,13 @@ public sealed class ParenthesizedDeclarator(Declarator inner) : Declarator
 }
 
 /// <summary>
-/// <c>noexcept</c>, or <c>noexcept(condition)</c>.
+/// <c>noexcept</c>, or <c>noexcept(condition)</c>; with <see cref="IsThrow"/>, the dynamic exception
+/// specification <c>throw()</c>, which compilers accept in C++20 and later as meaning <c>noexcept</c>.
 /// </summary>
 public sealed class NoexceptSpecifier(Expression condition = null) : CppNode
 {
     public Expression Condition { get; } = condition;
+    public bool IsThrow { get; init; }
 }
 
 /// <summary>
@@ -510,6 +847,11 @@ public sealed class NoexceptSpecifier(Expression condition = null) : CppNode
 /// </summary>
 public sealed class ParameterDeclaration(DeclSpecifierSequence specifiers, Declarator declarator = null, Expression defaultValue = null) : CppNode
 {
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
+    /// <summary>An explicit object parameter (C++23): <c>this Self &amp;&amp;self</c>.</summary>
+    public bool IsExplicitObject { get; init; }
+
     public DeclSpecifierSequence Specifiers { get; } = specifiers;
     public Declarator Declarator { get; } = declarator;
     public Expression DefaultValue { get; } = defaultValue;
@@ -1307,12 +1649,34 @@ public sealed class TemplateTemplateParameter(IReadOnlyList<TemplateParameter> p
 // ========================================
 
 /// <summary>
-/// <c>[[ attributes ]]</c>, or <c>[[using ns: attributes]]</c> with <see cref="UsingNamespace"/>.
+/// <c>[[ attributes ]]</c>, or <c>[[using ns: attributes]]</c> with <see cref="UsingNamespace"/>. The
+/// derived <see cref="AlignasSpecifier"/> and <see cref="GnuAttributeSpecifier"/> have no attributes.
 /// </summary>
-public sealed class AttributeSpecifier(IReadOnlyList<CppAttribute> attributes) : CppNode
+public class AttributeSpecifier(IReadOnlyList<CppAttribute> attributes) : CppNode
 {
     public string UsingNamespace { get; init; }
     public IReadOnlyList<CppAttribute> Attributes { get; } = attributes ?? [];
+}
+
+/// <summary>
+/// <c>alignas(type-id)</c> or <c>alignas(expression)</c>, or a pack expansion <c>alignas(Ts...)</c>.
+/// </summary>
+public sealed class AlignasSpecifier(CppNode operand) : AttributeSpecifier([])
+{
+    /// <summary>A <see cref="TypeId"/> or an <see cref="Expression"/>.</summary>
+    public CppNode Operand { get; } = operand;
+
+    public bool IsPackExpansion { get; init; }
+}
+
+/// <summary>
+/// A GNU attribute: <c>__attribute__((unused, aligned(8)))</c>. <see cref="Keyword"/> is <c>__attribute__</c>
+/// or <c>__attribute</c>; <see cref="Arguments"/> is the source between the double parentheses: <c>unused, aligned(8)</c>.
+/// </summary>
+public sealed class GnuAttributeSpecifier(string keyword, string arguments) : AttributeSpecifier([])
+{
+    public string Keyword { get; } = keyword;
+    public string Arguments { get; } = arguments;
 }
 
 /// <summary>

@@ -429,6 +429,57 @@ C#-парсер переходит на них. Единственное изм�
   - `try`/`catch(...)`, `co_return`, структурные привязки `auto& [a, b] =`, `static_assert` в блоке, атрибуты у операторов.
 
 ### Этап 6. Объявления и единица трансляции
+
+> **Статус: выполнен.**
+> - **Диспетчер объявлений** (`Parser/SyntaxParser.Declarations.cs`): `ParseDeclaration(DeclarationContext)` — namespace, класс
+>   или блок; по первому токену — `namespace`, `using`, `template`, `extern template`, `extern "C"`, `export`, `asm`, спецификаторы
+>   доступа, пустое объявление `;`; иначе атрибуты, спецификаторы, деклараторы. Модули (`SyntaxParser.Namespaces.cs`) распознаются
+>   на уровне единицы трансляции: `module` и `import` — идентификаторы, если за ними не идут имя модуля, `;`, `:` или имя заголовка.
+> - **AST:** `NamespaceDefinition` (вложенные имена `a::inline b`, `inline`, безымянные, атрибуты), `NamespaceAliasDefinition`,
+>   `UsingDirective`, `UsingDeclaration` (`UsingDeclarator` с `typename` и `...`), `UsingEnumDeclaration`, `AliasDeclaration`,
+>   `LinkageSpecification`, `TemplateDeclaration` (без параметров — явная специализация), `ExplicitInstantiation` (`IsExtern`),
+>   `ConceptDefinition`, `AsmDeclaration`, `ModuleDeclaration` (`module;`, `export module a.b:part`, `module :private;`),
+>   `ImportDeclaration`, `ExportDeclaration`, `EmptyDeclaration`, `AccessSpecifier`. Спецификаторы: `ClassSpecifier` (ключ,
+>   атрибуты, имя — в том числе квалифицированное и template-id, `final`, `BaseSpecifier` с доступом, `virtual` и `...`, члены),
+>   `EnumSpecifier` (scoped, базовый тип, opaque-объявление, `Enumerator` с атрибутами), `ExplicitSpecifier` (`explicit(bool)`),
+>   `AttributeDeclSpecifier`. Члены: у `InitDeclarator` — ширина битового поля (безымянное поле — без декларатора),
+>   `override`/`final`, `= 0`, GNU asm-метка и атрибуты; у `FunctionDefinition` — ctor-initializer (`MemberInitializer`),
+>   function-try-block (`Handlers`), `= default`/`= delete`, virt-specifiers. Атрибуты: `AlignasSpecifier`, `GnuAttributeSpecifier`
+>   (аргументы текстом), атрибуты после имени декларатора (`NameDeclarator.Attributes`) и у параметров, `this` явного объектного
+>   параметра, `__restrict` как cv-квалификатор, `throw()` как `NoexceptSpecifier.IsThrow`.
+> - **Разбор:** конструктор — имя класса перед `(`, кроме `S (*f)()`; deduction guide — известный шаблон, `( … ) ->`; у них и у
+>   деструкторов нет спецификаторов, и имя не объявляется значением. Определение класса или перечисления — только в объявлении,
+>   когда за заголовком идёт `{` или `:` (у scoped enum и `;`), иначе elaborated. Битовое поле — `:` после декларатора члена
+>   (ширина — conditional-expression, затем инициализатор). Абстрактный пакет `Ts...` в параметрах — пакет, если тип называет пакет
+>   параметров шаблона (ограничение этапа 3 снято), иначе многоточие. В аргументах шаблона `>` после неизвестного `a<b>` закрывает
+>   template-id (`bool = is_integral_v<T>>`). Известный template-id шаблона класса перед `(` — функциональный каст.
+> - **Таблица символов** (`Parser/Symbols.cs`) переписана: области namespace, классов и перечислений сохраняются и открываются
+>   повторно; квалифицированные имена ищутся в области квалификатора (при неизвестном квалификаторе — по последнему идентификатору,
+>   как раньше); using-директивы, `using enum`, inline и безымянные namespace, известные базы классов и безымянные классы делают
+>   имена видимыми; псевдонимы namespace; тело функции, определённой вне класса (`int S::f()`), видит имена `S`. Параметры шаблона —
+>   в отдельной области; сущность, объявленная шаблоном, — `Template`. Пакеты помечаются. `using`-объявление объявляет имя с видом из
+>   его области. **Отклонение:** тела функций-членов разбираются сразу, а не после класса: члены, объявленные ниже, неизвестны.
+> - **Writer** печатает все новые узлы; члены класса — с отступом, спецификаторы доступа — с отступом класса.
+> - **Оракул:**
+>   - правила для всех новых узлов в `CppKindMap`; `ClassSpecifier` ↔ `CXXRecordDecl` и специализации, `TemplateDeclaration` ↔
+>     шаблоны и то, что Clang начинает с `template` (специализации, члены шаблонов вне класса), `UsingDeclarator` — по имени;
+>     функция и класс внутри шаблона могут начинаться у внешнего `template` (`ClangStart`);
+>   - новое `ExactRule.ClangEndBefore`: Clang заканчивает параметр и перечислитель до атрибутов после имени, безымянный пакет —
+>     на `typename`; объявление — до asm-метки и GNU-атрибутов (`DeclarationRule.OtherEnd`);
+>   - обходы особенностей Clang 18: вызов функции с явным объектным параметром (`obj.f()`) начинается у `f` — `ClangAst` исправляет
+>     начало такого вызова и выражений, которые с него начинаются, а `MemberAccessExpression`-callee может не иметь узла;
+>     alias-declaration в init-statement не имеет `DeclStmt` (или он кончается после `;`); параметры шаблона класса у члена,
+>     определённого вне класса, и внутренний `template <>` не выводятся; у явного инстанцирования нет объявлений по именам;
+>   - сырые токены `>>`, `>=`, `>>=` делятся на `>`, как у парсера; нормализация игнорирует адрес `temp`.
+> - **Корпус:** файлы `08`–`19` проходят без изменений; новые `20-Declarations.cpp` (члены шаблонов вне класса, вложенные шаблоны,
+>   классы-члены вне класса, пакеты абстрактных параметров, `using` в блоках, локальные классы, `throw()`), `21-Modules.cpp`
+>   (глобальный фрагмент, `export`, `module :private`; `import` требует собранных модулей и проверен юнит-тестами),
+>   `22-GnuExtensions.cpp` (`__attribute__`, asm-объявления и метки, `__restrict`).
+> - **База:** 23/23 — встроенный корпус проходит полностью. Юнит-тесты: `CppDeclarationTests.cs`.
+> - Проход по 4891 файлу `/usr/include`: без исключений, около 4 с в Release; разбирается 2784 файла (на этапе 5 — 1555), все прежние
+>   в их числе. Почти все оставшиеся неудачи — макросы в синтаксических позициях (`_GLIBCXX_VISIBILITY`, `__THROW`, `G_BEGIN_DECLS`) — этап 7.
+> - **Ограничения:** GNU-атрибуты после декларатора параметра, `__decltype`, `__extension__`, `throw(T)` (ошибка в C++17+),
+>   определения классов в alias-declaration (`using X = struct { … };`) и отложенный разбор тел функций-членов не поддерживаются.
 - namespace, включая `inline` и вложенные `a::b`; `using`-директивы и -объявления; alias `using X = …`; `typedef`; `extern "C"` (блок и одиночный).
 - class/struct/union:
   - базы с `virtual` и доступом, `final`;

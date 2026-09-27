@@ -67,26 +67,9 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        if (TryEatPunctuator("?"))
+        if (IsPunctuator("?"))
         {
-            // The GNU conditional a ?: b has no middle operand
-            Expression whenTrue = null;
-            if (!IsPunctuator(":"))
-            {
-                whenTrue = ParseExpression();
-                if (whenTrue == null)
-                {
-                    return null;
-                }
-            }
-
-            if (!TryEatPunctuator(":"))
-            {
-                return null;
-            }
-
-            var whenFalse = ParseAssignmentExpression();
-            return whenFalse == null ? null : Finish(new ConditionalExpression(left, whenTrue, whenFalse), left);
+            return ParseConditionalRest(left);
         }
 
         var (@operator, precedence, tokens) = PeekBinaryOperator();
@@ -98,6 +81,43 @@ internal ref partial struct SyntaxParser
         }
 
         return left;
+    }
+
+    /// <summary>
+    /// conditional-expression: a logical-or expression, or <c>condition ? a : b</c>. The width of a bit-field
+    /// is one: in <c>int x : 3 = 1;</c> the <c>= 1</c> is the initializer.
+    /// </summary>
+    private Expression ParseConditionalExpression()
+    {
+        var left = ParseBinaryExpression(LogicalOrPrecedence);
+        return left != null && IsPunctuator("?") ? ParseConditionalRest(left) : left;
+    }
+
+    /// <summary>
+    /// <c>? a : b</c> after the condition <paramref name="condition"/>.
+    /// </summary>
+    private Expression ParseConditionalRest(Expression condition)
+    {
+        EatToken();
+
+        // The GNU conditional a ?: b has no middle operand
+        Expression whenTrue = null;
+        if (!IsPunctuator(":"))
+        {
+            whenTrue = ParseExpression();
+            if (whenTrue == null)
+            {
+                return null;
+            }
+        }
+
+        if (!TryEatPunctuator(":"))
+        {
+            return null;
+        }
+
+        var whenFalse = ParseAssignmentExpression();
+        return whenFalse == null ? null : Finish(new ConditionalExpression(condition, whenTrue, whenFalse), condition);
     }
 
     /// <summary>
@@ -1059,7 +1079,8 @@ internal ref partial struct SyntaxParser
 
     /// <summary>
     /// A name in an expression is a type: it is known as one, or before a brace (<paramref name="beforeBrace"/>)
-    /// it is not known or is a template-id. A template-id before '(' may be a function template: it is a call.
+    /// it is not known or is a template-id. A template-id before '(' is a type when it names a class template
+    /// defined in the file, and a call otherwise: it may name a function template.
     /// </summary>
     private readonly bool IsTypeInExpression(Name name, bool beforeBrace)
     {
@@ -1075,7 +1096,7 @@ internal ref partial struct SyntaxParser
             return kind is null or SymbolKind.Type or SymbolKind.Template;
         }
 
-        return kind == SymbolKind.Type && last is IdentifierName;
+        return kind == SymbolKind.Type && (last is IdentifierName || _cache.Symbols.NamesClass(name));
     }
 
     /// <summary>

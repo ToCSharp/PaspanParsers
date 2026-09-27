@@ -94,7 +94,8 @@ public static class CppSpanChecker
     {
         bool Matches(TextSpan candidate) => bySpan[candidate].Any(n => n.FromMacro || rule.Kinds.Contains(n.Kind));
 
-        if (rule.ClangStart is { } clangStart && Matches(new TextSpan(clangStart, span.End)))
+        if ((rule.ClangStart != null || rule.ClangEndBefore != null)
+            && Matches(new TextSpan(rule.ClangStart ?? span.Start, rule.ClangEndBefore is { } before ? TokenEndBefore(before, span.Start, sortedTokenEnds) : span.End)))
         {
             return null;
         }
@@ -110,6 +111,17 @@ public static class CppSpanChecker
         }
 
         return $"no clang node of kind {string.Join("/", rule.Kinds)} has this span{Found(bySpan[span])}";
+    }
+
+    /// <summary>
+    /// The end of the last token that ends before <paramref name="offset"/> and after <paramref name="start"/>,
+    /// or <paramref name="offset"/> when there is none.
+    /// </summary>
+    private static int TokenEndBefore(int offset, int start, int[] sortedTokenEnds)
+    {
+        var index = Array.BinarySearch(sortedTokenEnds, offset);
+        index = index >= 0 ? index - 1 : ~index - 1;
+        return index >= 0 && sortedTokenEnds[index] > start ? sortedTokenEnds[index] : offset;
     }
 
     /// <summary>

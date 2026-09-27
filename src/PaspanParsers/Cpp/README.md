@@ -1,8 +1,8 @@
 # C++ Parser
 
 A C++23 parser for valid code, checked against clang. **Work in progress:** it is being built by stages
-following [the plan](../../../docs/cpp-parser-clang-level-plan.md), and today it parses only a small subset
-of the language (see [Support](#support)).
+following [the plan](../../../docs/cpp-parser-clang-level-plan.md); the grammar of C++23 is complete, and
+the next stages measure it on real code, whose macros it does not expand (see [Support](#support)).
 
 Like the C# parser, it is a hand-written recursive descent parser (`SyntaxParser`) over lazily scanned,
 cached tokens, and builds a semantic AST whose nodes have positions (`Span`). `CppWriter` prints the AST
@@ -77,14 +77,18 @@ that the lazily scanned tokens can skip directives and inactive branches in any 
 | Names | Qualified names (`::a::b<int>::c`, `decltype(x)::type`, `T::template f<int>`), template-ids with type and expression arguments, operator, conversion and literal operator functions, destructors |
 | Types | Declaration specifiers in any order: fundamental types, cv-qualifiers, storage classes, `typedef`, named types, `typename`, elaborated types (`struct X`), `decltype`, `decltype(auto)`, constrained placeholders (`C auto`), GNU `__int128` and friends; type-ids |
 | Declarators | Pointers, references, pointers to members, arrays, functions with cv- and ref-qualifiers, `noexcept`, trailing return types and variadic parameters, parentheses, parameter packs, abstract declarators; `requires` after a declarator |
-| Declarations | Function definitions (also constructors, destructors and conversion functions without specifiers) and simple declarations with attributes, `struct X;`, parameters with default values; initializers `= x`, `= { }`, `(x)` and `{ }` (`int a(b);` declares a variable when `b` is a value); structured bindings (`auto &[a, b] = x;`); `static_assert` |
-| Names and scopes | A symbol table tells types from values: `a * b;` declares `b` when `a` is a type; unknown names use heuristics (`X y`, `X const`, `X *y;`, `X &y = z;`, `vector<int> v;`), and `CppParseOptions.TypeNames`/`TemplateNames` add names from headers. Blocks, statements, their substatements and handlers have scopes |
+| Declarations | Function definitions (also constructors, destructors, conversion functions and deduction guides without specifiers; ctor-initializers, function-try-blocks, `= default`, `= delete`) and simple declarations with attributes, `struct X;`, parameters with default values, attributes and `this`; initializers `= x`, `= { }`, `(x)` and `{ }` (`int a(b);` declares a variable when `b` is a value); structured bindings (`auto &[a, b] = x;`); `static_assert`; empty declarations |
+| Namespaces | Namespace definitions (nested `a::inline b`, inline, unnamed, attributes), namespace aliases, using-directives, using-declarations (lists, `typename`, packs), `using enum`, alias declarations, linkage specifications `extern "C"` (single or braces) |
+| Classes | Class, struct and union definitions in any declaration (also local and unnamed): attributes, `final`, bases with access, `virtual` and packs; members with access specifiers, bit-fields (also unnamed), default member initializers, `override`/`final`, `= 0`, friends, nested classes, member templates; `explicit(bool)` |
+| Enumerations | Unscoped and scoped (`enum class`, `enum struct`), underlying types, opaque declarations, enumerators with attributes and values, trailing commas |
+| Templates | Template declarations with parameters (type, non-type, template template, packs, defaults, constrained) and `requires`-clauses; explicit specializations (also nested `template <> template <>`), partial specializations, explicit instantiations, `extern template`, members defined outside their class template, deduction guides, concepts, variable and alias templates |
+| Modules | `module;`, `export module a.b:part;`, `module :private;`, `import` of modules, partitions and headers, `export` declarations and blocks |
+| Names and scopes | A symbol table tells types from values: `a * b;` declares `b` when `a` is a type; unknown names use heuristics (`X y`, `X const`, `X *y;`, `X &y = z;`, `vector<int> v;`), and `CppParseOptions.TypeNames`/`TemplateNames` add names from headers. Namespaces, classes and enumerations keep their scopes: qualified names are looked up in them, reopened namespaces and functions defined outside their class see their names, and using-directives, `using enum`, inline namespaces and known bases make names visible. Blocks, statements, their substatements, handlers and template parameters have scopes |
 | Statements | All statements of C++23: compound, declaration, expression, null; `if` with init-statements and condition declarations, `if constexpr`, `if consteval`, `if !consteval`; `switch`, `case` (also the GNU range `case 1 ... 3:`), `default`; `while`, `do`, `for`, range-based `for` with init-statements and structured bindings; `break`, `continue`, `return`, `co_return`, `goto`, labels (also at the end of a block); `try`/`catch`; attributes of statements |
 | Expressions | All operators of C++23 with their precedence and associativity (including `<=>`, `.*`, `->*`, the comma, `?:` and GNU `?:`, `throw`, `co_await`, `co_yield`); calls, subscripts with any number of arguments, member access (`a.template f<int>`, `p->~T()`); C-style, named and functional casts (`int(x)`, `T{x}`, `auto(x)`, `typename T::x()`, `decltype(x)(y)`); `sizeof`, `sizeof...`, `alignof`, `noexcept`, `typeid`; `new` (placement, parenthesized types, array bounds, initializers) and `delete`; `this`; braced lists with designators; pack expansions; fold expressions; lambdas (captures, init-captures, template parameters, attributes, specifiers, `noexcept`, trailing return types, `requires`); requires-expressions |
-| Templates | Template parameters of lambdas: type, non-type, template template, packs, defaults, constrained (`std::integral T`) |
-| Attributes | `[[...]]` with namespaces, `using`, arguments (kept as written) and `...`; in lambdas, before declarations and statements |
+| Attributes | `[[...]]` with namespaces, `using`, arguments (kept as written) and `...`; `alignas`; before declarations, statements and parameters, after declared names, in classes, enumerators, namespaces and lambdas |
+| GNU extensions | `__attribute__((...))` (before and among specifiers, after declarators, in class heads), asm declarations with qualifiers and asm labels, `__restrict`, `throw()`; not `__extension__` or statement expressions |
 | Preprocessor | Directives as trivia, conditional compilation, macro expansion in conditions, `__has_include` and other feature tests |
-| Classes, enums, namespaces, template declarations, `using` and alias declarations, function-try-blocks, `asm`, ... | Not yet |
 
 Ambiguities are resolved like clang, with the symbol table:
 
@@ -109,6 +113,12 @@ Ambiguities are resolved like clang, with the symbol table:
   it is a type only when declared as one: `std::string("a")` is a call, since names from headers are not known.
 - In template parameters, a name that is not declared in the file is a concept (`std::integral T`) unless it
   ends with `_t` (`std::size_t N`).
+- Among the members of a class `S`, `S(` starts a constructor (but `S (*f)();` declares a pointer), and a known
+  template followed by parameters and `->` is a deduction guide. A template-id of a class template defined in
+  the file followed by `(` is a functional cast. `f(Ts...)` declares a parameter pack when `Ts` is a template
+  parameter pack, and a variadic function otherwise.
+- Member function bodies are parsed where they are, not after the class: members declared after the body
+  are not known in it.
 
 ## Checking against clang
 
@@ -129,5 +139,5 @@ must also be clang's (`CppLiteralChecker.cs`).
 | `Parser/Lexer.cs`, `Parser/SyntaxToken.cs` | Tokens and trivia |
 | `Parser/Literals.cs` | Values of literals |
 | `Parser/Preprocessor*.cs` | Directives, conditions and macro expansion in them |
-| `Parser/SyntaxParser*.cs` | Recursive descent parser: names, types, declarators, declarations, statements, expressions, lambdas and requires-expressions, template parameters, attributes |
+| `Parser/SyntaxParser*.cs` | Recursive descent parser: names, types, declarators, declarations, classes and enumerations, namespaces and modules, templates, statements, expressions, lambdas and requires-expressions, attributes |
 | `Parser/Symbols.cs` | Scopes and the kinds of declared names |

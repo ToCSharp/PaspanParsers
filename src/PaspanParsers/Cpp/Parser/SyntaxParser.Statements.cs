@@ -11,7 +11,7 @@ internal ref partial struct SyntaxParser
     private Statement ParseStatement()
     {
         EnsureSufficientStack();
-        if (IsAttributeStart)
+        if (IsAttributeSpecifierStart)
         {
             return ParseAttributedStatement();
         }
@@ -113,7 +113,7 @@ internal ref partial struct SyntaxParser
     private Statement ParseDeclarationOrExpressionStatement()
     {
         var start = NodeStart;
-        if (IsKeyword("static_assert") || IsDeclarationStatementStart())
+        if (StartsBlockDeclarationWithKeyword() || IsDeclarationStatementStart())
         {
             var mark = Save();
             var declaration = ParseBlockDeclaration();
@@ -154,6 +154,15 @@ internal ref partial struct SyntaxParser
     // ========================================
 
     /// <summary>
+    /// A statement that starts with <c>static_assert</c>, <c>using</c>, <c>namespace</c> or <c>asm</c> is a
+    /// declaration.
+    /// </summary>
+    private bool StartsBlockDeclarationWithKeyword()
+    {
+        return IsKeyword("static_assert") || IsKeyword("using") || IsKeyword("namespace") || IsAsmKeyword(Current);
+    }
+
+    /// <summary>
     /// A statement that starts with attributes and a declaration, with a declaration specifier keyword, or
     /// with a name that is a type: known as one, or unknown and followed by what can only follow a type in
     /// a declaration (<c>X y</c>, <c>X const</c>, <c>X *y;</c>, <c>X &amp;y =</c>, <c>X&lt;int&gt; y</c>).
@@ -163,7 +172,7 @@ internal ref partial struct SyntaxParser
         var mark = Save();
         try
         {
-            if (IsAttributeStart && ParseAttributeSpecifiers() == null)
+            if (IsAttributeSpecifierStart && ParseAttributeSpecifiers() == null)
             {
                 return false;
             }
@@ -189,6 +198,9 @@ internal ref partial struct SyntaxParser
             {
                 case SymbolKind.Type or SymbolKind.Template:
                     return true;
+                case SymbolKind.Concept:
+                    // A constrained placeholder: Integral auto a = 1;
+                    return IsKeyword("auto") || IsKeyword("decltype");
                 case not null:
                     return false;
             }
@@ -750,6 +762,15 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
+        var handlers = ParseHandlers();
+        return handlers == null ? null : Finish(new TryStatement(block, handlers), start);
+    }
+
+    /// <summary>
+    /// The handlers of a try block or a function-try-block: at least one.
+    /// </summary>
+    private List<CatchClause> ParseHandlers()
+    {
         var handlers = new List<CatchClause>();
         while (IsKeyword("catch"))
         {
@@ -762,7 +783,7 @@ internal ref partial struct SyntaxParser
             handlers.Add(handler);
         }
 
-        return handlers.Count == 0 ? null : Finish(new TryStatement(block, handlers), start);
+        return handlers.Count == 0 ? null : handlers;
     }
 
     /// <summary>

@@ -188,24 +188,78 @@ public sealed class CppWriter
         Directives(declaration);
         switch (declaration)
         {
-            case SimpleDeclaration simple:
-                WriteSimpleDeclaration(simple);
-                NewLine();
-                break;
             case FunctionDefinition function:
-                WriteLeadingAttributes(function.Attributes);
-                WriteSpecifiersAndDeclarator(function.Specifiers, function.Declarator);
-                WriteRequiresClause(function.RequiresClause);
+                WriteFunctionDefinition(function);
+                break;
+            case NamespaceDefinition @namespace:
+                WriteNamespaceDefinition(@namespace);
+                break;
+            case LinkageSpecification linkage:
+                Token("extern");
+                Space();
+                Token("\"" + linkage.Language + "\"");
+                WriteDeclarationBlockOrDeclaration(linkage.Declarations, linkage.HasBraces, linkage.CloseBraceDirectives);
+                break;
+            case ExportDeclaration export:
+                Token("export");
+                WriteDeclarationBlockOrDeclaration(export.Declarations, export.HasBraces, export.CloseBraceDirectives);
+                break;
+            case TemplateDeclaration template:
+                Token("template");
+                Space();
+                WriteTemplateParameterList(template.Parameters);
+                WriteRequiresClause(template.RequiresClause);
                 NewLine();
-                WriteCompoundStatement(function.Body);
+                WriteDeclaration(template.Declaration);
+                break;
+            case ExplicitInstantiation instantiation:
+                if (instantiation.IsExtern)
+                {
+                    Token("extern");
+                    Space();
+                }
+
+                Token("template");
+                Space();
+                WriteDeclaration(instantiation.Declaration);
+                break;
+            case AccessSpecifier access:
+                // Access specifiers stand out of the members
+                _indentLevel--;
+                Token(access.Access);
+                Token(":");
+                _indentLevel++;
                 NewLine();
                 break;
-            case StaticAssertDeclaration staticAssert:
-                WriteStaticAssertDeclaration(staticAssert);
+            case ModuleDeclaration module:
+                WriteExport(module.IsExport);
+                Token("module");
+                WriteModuleName(module.Name, module.Partition);
+                WriteAttributeSpecifiers(module.Attributes);
+                Token(";");
+                NewLine();
+                break;
+            case ImportDeclaration import:
+                WriteExport(import.IsExport);
+                Token("import");
+                Space();
+                if (import.Header != null)
+                {
+                    _builder.Append(import.Header);
+                }
+                else
+                {
+                    WriteModuleName(import.Module, import.Partition);
+                }
+
+                WriteAttributeSpecifiers(import.Attributes);
+                Token(";");
                 NewLine();
                 break;
             default:
-                throw new NotSupportedException($"Unknown declaration {declaration.GetType().Name}");
+                WriteBlockDeclaration(declaration);
+                NewLine();
+                break;
         }
     }
 
@@ -214,6 +268,7 @@ public sealed class CppWriter
     /// </summary>
     private void WriteBlockDeclaration(Declaration declaration)
     {
+        Directives(declaration);
         switch (declaration)
         {
             case SimpleDeclaration simple:
@@ -222,9 +277,255 @@ public sealed class CppWriter
             case StaticAssertDeclaration staticAssert:
                 WriteStaticAssertDeclaration(staticAssert);
                 break;
+            case EmptyDeclaration:
+                Token(";");
+                break;
+            case NamespaceAliasDefinition alias:
+                Token("namespace");
+                Space();
+                Token(alias.Alias);
+                Space();
+                Token("=");
+                Space();
+                WriteName(alias.Target);
+                Token(";");
+                break;
+            case UsingDirective directive:
+                WriteLeadingAttributes(directive.Attributes);
+                Token("using");
+                Space();
+                Token("namespace");
+                Space();
+                WriteName(directive.Namespace);
+                Token(";");
+                break;
+            case UsingEnumDeclaration usingEnum:
+                Token("using");
+                Space();
+                Token("enum");
+                Space();
+                WriteName(usingEnum.Enum);
+                Token(";");
+                break;
+            case UsingDeclaration usingDeclaration:
+                Token("using");
+                for (var i = 0; i < usingDeclaration.Declarators.Count; i++)
+                {
+                    var declarator = usingDeclaration.Declarators[i];
+                    Token(i > 0 ? "," : "");
+                    Space();
+                    Directives(declarator);
+                    if (declarator.IsTypename)
+                    {
+                        Token("typename");
+                        Space();
+                    }
+
+                    WriteName(declarator.Name);
+                    if (declarator.IsPackExpansion)
+                    {
+                        Token("...");
+                    }
+                }
+
+                Token(";");
+                break;
+            case AliasDeclaration alias:
+                Token("using");
+                Space();
+                Token(alias.Identifier);
+                WriteAttributeSpecifiers(alias.Attributes);
+                Space();
+                Token("=");
+                Space();
+                WriteTypeId(alias.Type);
+                Token(";");
+                break;
+            case ConceptDefinition concept:
+                Token("concept");
+                Space();
+                Token(concept.Name);
+                Space();
+                Token("=");
+                Space();
+                WriteExpression(concept.Constraint);
+                Token(";");
+                break;
+            case AsmDeclaration asm:
+                Token(asm.Keyword);
+                foreach (var qualifier in asm.Qualifiers)
+                {
+                    Space();
+                    Token(qualifier);
+                }
+
+                Token("(");
+                _builder.Append(asm.Text);
+                Token(")");
+                Token(";");
+                break;
             default:
-                throw new NotSupportedException($"Unknown block declaration {declaration.GetType().Name}");
+                throw new NotSupportedException($"Unknown declaration {declaration.GetType().Name}");
         }
+    }
+
+    private void WriteExport(bool isExport)
+    {
+        if (isExport)
+        {
+            Token("export");
+            Space();
+        }
+    }
+
+    private void WriteModuleName(string name, string partition)
+    {
+        if (name != null)
+        {
+            Space();
+            Token(name);
+        }
+
+        if (partition != null)
+        {
+            Space();
+            Token(":");
+            Token(partition);
+        }
+    }
+
+    private void WriteFunctionDefinition(FunctionDefinition function)
+    {
+        WriteLeadingAttributes(function.Attributes);
+        WriteSpecifiersAndDeclarator(function.Specifiers, function.Declarator);
+        WriteVirtSpecifiers(function.VirtSpecifiers);
+        WriteRequiresClause(function.RequiresClause);
+        if (function.IsDefaulted || function.IsDeleted)
+        {
+            Space();
+            Token("=");
+            Space();
+            Token(function.IsDefaulted ? "default" : "delete");
+            Token(";");
+            NewLine();
+            return;
+        }
+
+        if (function.Handlers != null)
+        {
+            NewLine();
+            Token("try");
+        }
+
+        if (function.Initializers != null)
+        {
+            NewLine();
+            _indentLevel++;
+            Token(":");
+            for (var i = 0; i < function.Initializers.Count; i++)
+            {
+                var initializer = function.Initializers[i];
+                Token(i > 0 ? "," : "");
+                Space();
+                Directives(initializer);
+                WriteName(initializer.Member);
+                WriteInitializer(initializer.Initializer);
+                if (initializer.IsPackExpansion)
+                {
+                    Token("...");
+                }
+            }
+
+            _indentLevel--;
+        }
+
+        NewLine();
+        WriteCompoundStatement(function.Body);
+        if (function.Handlers != null)
+        {
+            WriteHandlers(function.Handlers);
+        }
+
+        NewLine();
+    }
+
+    private void WriteVirtSpecifiers(IReadOnlyList<string> specifiers)
+    {
+        foreach (var specifier in specifiers)
+        {
+            Space();
+            Token(specifier);
+        }
+    }
+
+    private void WriteNamespaceDefinition(NamespaceDefinition @namespace)
+    {
+        if (@namespace.IsInline)
+        {
+            Token("inline");
+            Space();
+        }
+
+        Token("namespace");
+        WriteAttributeSpecifiers(@namespace.Attributes);
+        for (var i = 0; i < @namespace.Names.Count; i++)
+        {
+            var name = @namespace.Names[i];
+            if (i > 0)
+            {
+                Token("::");
+            }
+            else
+            {
+                Space();
+            }
+
+            if (name.IsInline)
+            {
+                Token("inline");
+                Space();
+            }
+
+            Token(name.Identifier);
+        }
+
+        WriteDeclarationBlock(@namespace.Declarations, @namespace.CloseBraceDirectives);
+        NewLine();
+    }
+
+    /// <summary>
+    /// The declarations of a linkage specification or an export declaration: in braces, or the single declaration.
+    /// </summary>
+    private void WriteDeclarationBlockOrDeclaration(IReadOnlyList<Declaration> declarations, bool hasBraces, IReadOnlyList<PreprocessorDirective> closeBraceDirectives)
+    {
+        if (hasBraces)
+        {
+            WriteDeclarationBlock(declarations, closeBraceDirectives);
+            NewLine();
+            return;
+        }
+
+        Space();
+        WriteDeclaration(declarations[0]);
+    }
+
+    /// <summary>
+    /// <c>{ declarations }</c> on their own lines, the closing brace not followed by a line break.
+    /// </summary>
+    private void WriteDeclarationBlock(IReadOnlyList<Declaration> declarations, IReadOnlyList<PreprocessorDirective> closeBraceDirectives)
+    {
+        NewLine();
+        Token("{");
+        NewLine();
+        _indentLevel++;
+        foreach (var declaration in declarations)
+        {
+            WriteDeclaration(declaration);
+        }
+
+        Directives(closeBraceDirectives);
+        _indentLevel--;
+        Token("}");
     }
 
     private void WriteStaticAssertDeclaration(StaticAssertDeclaration declaration)
@@ -335,8 +636,24 @@ public sealed class CppWriter
                 break;
             case ElaboratedTypeSpecifier elaborated:
                 Token(elaborated.Key);
+                WriteAttributeSpecifiers(elaborated.Attributes);
                 Space();
                 WriteName(elaborated.Name);
+                break;
+            case ClassSpecifier @class:
+                WriteClassSpecifier(@class);
+                break;
+            case EnumSpecifier @enum:
+                WriteEnumSpecifier(@enum);
+                break;
+            case ExplicitSpecifier @explicit:
+                Token("explicit");
+                Token("(");
+                WriteExpression(@explicit.Condition);
+                Token(")");
+                break;
+            case AttributeDeclSpecifier attribute:
+                WriteAttributeSpecifiers([attribute.Attribute]);
                 break;
             case DecltypeSpecifier decltype:
                 Token("decltype");
@@ -376,9 +693,149 @@ public sealed class CppWriter
     private void WriteInitDeclarator(DeclSpecifierSequence specifiers, InitDeclarator declarator)
     {
         Directives(declarator);
+        WriteLeadingAttributes(declarator.LeadingAttributes);
         WriteSpecifiersAndDeclarator(specifiers, declarator.Declarator);
+        WriteVirtSpecifiers(declarator.VirtSpecifiers);
         WriteRequiresClause(declarator.RequiresClause);
+        if (declarator.AsmLabel != null)
+        {
+            Space();
+            Token("asm");
+            Token("(");
+            _builder.Append(declarator.AsmLabel);
+            Token(")");
+        }
+
+        WriteAttributeSpecifiers(declarator.Attributes);
+        if (declarator.BitFieldWidth != null)
+        {
+            Space();
+            Token(":");
+            Space();
+            WriteExpression(declarator.BitFieldWidth);
+        }
+
+        if (declarator.IsPure)
+        {
+            Space();
+            Token("=");
+            Space();
+            Token("0");
+        }
+
         WriteInitializer(declarator.Initializer);
+    }
+
+    private void WriteClassSpecifier(ClassSpecifier @class)
+    {
+        Token(@class.Key);
+        WriteAttributeSpecifiers(@class.Attributes);
+        if (@class.Name != null)
+        {
+            Space();
+            WriteName(@class.Name);
+        }
+
+        if (@class.IsFinal)
+        {
+            Space();
+            Token("final");
+        }
+
+        for (var i = 0; i < @class.Bases.Count; i++)
+        {
+            var @base = @class.Bases[i];
+            Space();
+            Token(i == 0 ? ":" : ",");
+            Space();
+            Directives(@base);
+            WriteLeadingAttributes(@base.Attributes);
+            if (@base.IsVirtual && @base.IsVirtualFirst)
+            {
+                Token("virtual");
+                Space();
+            }
+
+            if (@base.Access != null)
+            {
+                Token(@base.Access);
+                Space();
+            }
+
+            if (@base.IsVirtual && !@base.IsVirtualFirst)
+            {
+                Token("virtual");
+                Space();
+            }
+
+            WriteName(@base.Name);
+            if (@base.IsPackExpansion)
+            {
+                Token("...");
+            }
+        }
+
+        WriteDeclarationBlock(@class.Members, @class.CloseBraceDirectives);
+    }
+
+    private void WriteEnumSpecifier(EnumSpecifier @enum)
+    {
+        Token("enum");
+        if (@enum.ScopedKey != null)
+        {
+            Space();
+            Token(@enum.ScopedKey);
+        }
+
+        WriteAttributeSpecifiers(@enum.Attributes);
+        if (@enum.Name != null)
+        {
+            Space();
+            WriteName(@enum.Name);
+        }
+
+        if (@enum.UnderlyingType != null)
+        {
+            Space();
+            Token(":");
+            Space();
+            WriteTypeId(@enum.UnderlyingType);
+        }
+
+        if (@enum.Enumerators == null)
+        {
+            return;
+        }
+
+        NewLine();
+        Token("{");
+        NewLine();
+        _indentLevel++;
+        for (var i = 0; i < @enum.Enumerators.Count; i++)
+        {
+            var enumerator = @enum.Enumerators[i];
+            Directives(enumerator);
+            Token(enumerator.Identifier);
+            WriteAttributeSpecifiers(enumerator.Attributes);
+            if (enumerator.Value != null)
+            {
+                Space();
+                Token("=");
+                Space();
+                WriteExpression(enumerator.Value);
+            }
+
+            if (i < @enum.Enumerators.Count - 1 || @enum.HasTrailingComma)
+            {
+                Token(",");
+            }
+
+            NewLine();
+        }
+
+        Directives(@enum.CloseBraceDirectives);
+        _indentLevel--;
+        Token("}");
     }
 
     private void WriteRequiresClause(Expression constraint)
@@ -437,6 +894,7 @@ public sealed class CppWriter
         {
             case NameDeclarator name:
                 WriteName(name.Name);
+                WriteAttributeSpecifiers(name.Attributes);
                 break;
             case StructuredBindingDeclarator binding:
                 Token("[");
@@ -539,6 +997,14 @@ public sealed class CppWriter
 
         Directives(noexcept);
         Space();
+        if (noexcept.IsThrow)
+        {
+            Token("throw");
+            Token("(");
+            Token(")");
+            return;
+        }
+
         Token("noexcept");
         if (noexcept.Condition != null)
         {
@@ -580,6 +1046,13 @@ public sealed class CppWriter
     private void WriteParameter(ParameterDeclaration parameter)
     {
         Directives(parameter);
+        WriteLeadingAttributes(parameter.Attributes);
+        if (parameter.IsExplicitObject)
+        {
+            Token("this");
+            Space();
+        }
+
         WriteSpecifiersAndDeclarator(parameter.Specifiers, parameter.Declarator);
         if (parameter.DefaultValue != null)
         {
@@ -801,27 +1274,7 @@ public sealed class CppWriter
                 Token("try");
                 NewLine();
                 WriteCompoundStatement(@try.Block);
-                foreach (var handler in @try.Handlers)
-                {
-                    NewLine();
-                    Directives(handler);
-                    Token("catch");
-                    Space();
-                    Token("(");
-                    if (handler.Declaration == null)
-                    {
-                        Token("...");
-                    }
-                    else
-                    {
-                        WriteParameter(handler.Declaration);
-                    }
-
-                    Token(")");
-                    NewLine();
-                    WriteCompoundStatement(handler.Body);
-                }
-
+                WriteHandlers(@try.Handlers);
                 break;
             default:
                 throw new NotSupportedException($"Unknown statement {statement.GetType().Name}");
@@ -969,6 +1422,30 @@ public sealed class CppWriter
         }
 
         WriteEmbeddedStatement(statement);
+    }
+
+    private void WriteHandlers(IReadOnlyList<CatchClause> handlers)
+    {
+        foreach (var handler in handlers)
+        {
+            NewLine();
+            Directives(handler);
+            Token("catch");
+            Space();
+            Token("(");
+            if (handler.Declaration == null)
+            {
+                Token("...");
+            }
+            else
+            {
+                WriteParameter(handler.Declaration);
+            }
+
+            Token(")");
+            NewLine();
+            WriteCompoundStatement(handler.Body);
+        }
     }
 
     /// <summary>
@@ -1572,6 +2049,29 @@ public sealed class CppWriter
         {
             Space();
             Directives(specifier);
+            switch (specifier)
+            {
+                case AlignasSpecifier alignas:
+                    Token("alignas");
+                    Token("(");
+                    WriteTypeOrExpression(alignas.Operand);
+                    if (alignas.IsPackExpansion)
+                    {
+                        Token("...");
+                    }
+
+                    Token(")");
+                    continue;
+                case GnuAttributeSpecifier gnu:
+                    Token(gnu.Keyword);
+                    Token("(");
+                    Token("(");
+                    _builder.Append(gnu.Arguments);
+                    Token(")");
+                    Token(")");
+                    continue;
+            }
+
             Token("[");
             Token("[");
             if (specifier.UsingNamespace != null)

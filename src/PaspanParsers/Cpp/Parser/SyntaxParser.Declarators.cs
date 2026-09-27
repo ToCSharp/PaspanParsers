@@ -89,12 +89,12 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// <c>const</c> and <c>volatile</c>, in source order.
+    /// <c>const</c>, <c>volatile</c> and the GNU <c>__restrict</c>, in source order.
     /// </summary>
     private List<string> ParseCvQualifiers()
     {
         var qualifiers = new List<string>();
-        while (IsKeyword("const") || IsKeyword("volatile"))
+        while (IsKeyword("const") || IsKeyword("volatile") || IsRestrict(Current))
         {
             qualifiers.Add(EatToken().Text);
         }
@@ -126,21 +126,19 @@ internal ref partial struct SyntaxParser
 
             declarator = Finish(new ParenthesizedDeclarator(inner), start);
         }
-        else if (IsPunctuator("...") && kind == DeclaratorKind.Parameter && IsNameStart(Peek(1), NameContext.Declarator))
+        else if (IsPunctuator("...") && kind == DeclaratorKind.Parameter && (IsNameStart(Peek(1), NameContext.Declarator) || _parameterTypeIsPack))
         {
-            // A parameter pack: ...args. A '...' before ')' is taken as the ellipsis of a variadic function
-            // (an abstract pack, Ts..., needs to know that Ts is a pack)
+            // A parameter pack: ...args, or without a name when the type names a pack: Ts..., Ts &&...
+            // Otherwise a '...' before ')' is the ellipsis of a variadic function
             EatToken();
             Declarator inner = null;
             if (IsNameStart(Current, NameContext.Declarator))
             {
-                var name = ParseName(NameContext.Declarator);
-                if (name == null)
+                inner = ParseNameDeclarator();
+                if (inner == null)
                 {
                     return false;
                 }
-
-                inner = Finish(new NameDeclarator(name), name);
             }
 
             declarator = Finish(new PackDeclarator(inner), start);
@@ -152,13 +150,11 @@ internal ref partial struct SyntaxParser
         }
         else if (kind != DeclaratorKind.Abstract && IsNameStart(Current, NameContext.Declarator))
         {
-            var name = ParseName(NameContext.Declarator);
-            if (name == null)
+            declarator = ParseNameDeclarator();
+            if (declarator == null)
             {
                 return false;
             }
-
-            declarator = Finish(new NameDeclarator(name), start);
         }
         else if (kind == DeclaratorKind.Named)
         {
@@ -215,6 +211,22 @@ internal ref partial struct SyntaxParser
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// A declarator id and the attributes after it: <c>a [[maybe_unused]]</c>.
+    /// </summary>
+    private NameDeclarator ParseNameDeclarator()
+    {
+        var start = NodeStart;
+        var name = ParseName(NameContext.Declarator);
+        if (name == null)
+        {
+            return null;
+        }
+
+        var attributes = ParseStandardAttributeSpecifiers();
+        return attributes == null ? null : Finish(new NameDeclarator(name) { Attributes = attributes }, start);
     }
 
     /// <summary>
@@ -358,6 +370,12 @@ internal ref partial struct SyntaxParser
                 return null;
             }
         }
+        else if (IsKeyword("throw") && Peek(1).IsPunctuator("(") && Peek(2).IsPunctuator(")"))
+        {
+            var throwStart = NodeStart;
+            EatTokens(3);
+            noexcept = Finish(new NoexceptSpecifier { IsThrow = true }, throwStart);
+        }
 
         TypeId trailingReturnType = null;
         if (TryEatPunctuator("->"))
@@ -450,11 +468,31 @@ internal ref partial struct SyntaxParser
         }
     }
 
+    /// <summary>
+    /// A parameter: attributes, <c>this</c> for an explicit object parameter, specifiers, a named or abstract
+    /// declarator and a default argument.
+    /// </summary>
     private ParameterDeclaration ParseParameter()
     {
         var start = NodeStart;
+        var attributes = ParseAttributeSpecifiers();
+        if (attributes == null)
+        {
+            return null;
+        }
+
+        var isExplicitObject = TryEatKeyword("this");
         var specifiers = ParseDeclSpecifiers();
-        if (specifiers == null || !TryParseDeclarator(DeclaratorKind.Parameter, out var declarator))
+        if (specifiers == null)
+        {
+            return null;
+        }
+
+        var saved = _parameterTypeIsPack;
+        _parameterTypeIsPack = NamesPack(specifiers, _cache.Symbols);
+        var parsed = TryParseDeclarator(DeclaratorKind.Parameter, out var declarator);
+        _parameterTypeIsPack = saved;
+        if (!parsed)
         {
             return null;
         }
@@ -469,8 +507,25 @@ internal ref partial struct SyntaxParser
             }
         }
 
-        return Finish(new ParameterDeclaration(specifiers, declarator, defaultValue), start);
+        return Finish(new ParameterDeclaration(specifiers, declarator, defaultValue) { Attributes = attributes, IsExplicitObject = isExplicitObject }, start);
     }
+
+    /// <summary>
+    /// The type names a template parameter pack that is not expanded: <c>Ts</c>, <c>const Box&lt;Ts&gt;</c>.
+    /// </summary>
+    private static bool NamesPack(DeclSpecifierSequence specifiers, Symbols symbols)
+    {
+        return specifiers.Specifiers.Any(s => s is NamedTypeSpecifier named && NamesPack(named.Name, symbols));
+    }
+
+    private static bool NamesPack(Name name, Symbols symbols) => name switch
+    {
+        IdentifierName identifier => symbols.IsPack(identifier.Identifier),
+        TemplateIdName templateId => NamesPack(templateId.Template, symbols)
+            || templateId.Arguments.Any(a => a is TypeId { IsPackExpansion: false } type && NamesPack(type.Specifiers, symbols)),
+        QualifiedName qualified => (qualified.Qualifier != null && NamesPack(qualified.Qualifier, symbols)) || NamesPack(qualified.Name, symbols),
+        _ => false,
+    };
 
     // ========================================
     // Declarator queries
@@ -490,6 +545,18 @@ internal ref partial struct SyntaxParser
         FunctionDeclarator function => DeclaredName(function.Inner),
         ParenthesizedDeclarator parenthesized => DeclaredName(parenthesized.Inner),
         _ => null,
+    };
+
+    /// <summary>
+    /// The declarator declares a pack: <c>...args</c>, <c>&amp;&amp;...args</c>.
+    /// </summary>
+    public static bool IsPackDeclarator(Declarator declarator) => declarator switch
+    {
+        PackDeclarator => true,
+        PointerDeclarator pointer => IsPackDeclarator(pointer.Inner),
+        ReferenceDeclarator reference => IsPackDeclarator(reference.Inner),
+        MemberPointerDeclarator member => IsPackDeclarator(member.Inner),
+        _ => false,
     };
 
     /// <summary>

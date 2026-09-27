@@ -139,6 +139,7 @@ src/PaspanParsers.Tests/Cpp/ClangAst.cs
 src/PaspanParsers.Tests/Cpp/ClangOracle.cs
 src/PaspanParsers.Tests/Cpp/ClangOracleTests.cs
 src/PaspanParsers.Tests/Cpp/CppCorpusTests.cs
+src/PaspanParsers.Tests/Cpp/CppDeclarationTests.cs
 src/PaspanParsers.Tests/Cpp/CppDeclaratorTests.cs
 src/PaspanParsers.Tests/Cpp/CppExpressionTests.cs
 src/PaspanParsers.Tests/Cpp/CppKindMap.cs
@@ -201,11 +202,13 @@ src/PaspanParsers/Cpp/Parser/Preprocessor.Macros.cs
 src/PaspanParsers/Cpp/Parser/Preprocessor.cs
 src/PaspanParsers/Cpp/Parser/Symbols.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Attributes.cs
+src/PaspanParsers/Cpp/Parser/SyntaxParser.Classes.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Declarations.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Declarators.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Expressions.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Lambdas.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Names.cs
+src/PaspanParsers/Cpp/Parser/SyntaxParser.Namespaces.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Statements.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Templates.cs
 src/PaspanParsers/Cpp/Parser/SyntaxParser.Types.cs

@@ -1,11 +1,85 @@
 namespace PaspanParsers.Cpp;
 
-// Template parameters ([temp.param]).
+// Template declarations ([temp.pre]), template parameters ([temp.param]), explicit instantiations and
+// specializations, and concepts ([temp.concept]).
 internal ref partial struct SyntaxParser
 {
     /// <summary>
+    /// <c>template &lt;parameters&gt; requires constraint declaration</c>, an explicit specialization
+    /// <c>template &lt;&gt; declaration</c>, or an explicit instantiation <c>template declaration</c>. The
+    /// parameters are declared in a scope of their own; the declared entity is a template.
+    /// </summary>
+    private Declaration ParseTemplateDeclaration(DeclarationContext context)
+    {
+        var start = NodeStart;
+        if (!Peek(1).IsPunctuator("<"))
+        {
+            return ParseExplicitInstantiation(context);
+        }
+
+        EatToken();
+        var symbols = _cache.Symbols;
+        symbols.EnterScope(ScopeKind.TemplateParameters);
+        var parameters = ParseTemplateParameterList();
+        if (parameters == null)
+        {
+            return null;
+        }
+
+        var requiresClause = ParseOptionalRequiresClause(out var valid);
+        if (!valid)
+        {
+            return null;
+        }
+
+        var declaration = IsKeyword("concept") ? ParseConceptDefinition() : ParseDeclaration(context);
+        if (declaration == null)
+        {
+            return null;
+        }
+
+        symbols.ExitScope();
+        return Finish(new TemplateDeclaration(parameters, declaration) { RequiresClause = requiresClause }, start);
+    }
+
+    /// <summary>
+    /// <c>template declaration</c> or <c>extern template declaration</c>.
+    /// </summary>
+    private ExplicitInstantiation ParseExplicitInstantiation(DeclarationContext context)
+    {
+        var start = NodeStart;
+        var isExtern = TryEatKeyword("extern");
+        EatToken();
+        var declaration = ParseDeclaration(context);
+        return declaration == null ? null : Finish(new ExplicitInstantiation(declaration) { IsExtern = isExtern }, start);
+    }
+
+    /// <summary>
+    /// <c>concept Name = constraint;</c> after the template parameters. A name followed by '&lt;' in the
+    /// constraint is a template-id, as in a requires-clause.
+    /// </summary>
+    private ConceptDefinition ParseConceptDefinition()
+    {
+        var start = NodeStart;
+        EatToken();
+        var name = TryEatIdentifier();
+        if (name == null || !TryEatPunctuator("="))
+        {
+            return null;
+        }
+
+        // The concept is known in its own definition: concept C = requires { requires C<int>; } is invalid anyway
+        _cache.Symbols.Declare(name, SymbolKind.Concept);
+        var saved = _inConstraint;
+        _inConstraint = true;
+        var constraint = ParseConditionalExpression();
+        _inConstraint = saved;
+        return constraint != null && TryEatPunctuator(";") ? Finish(new ConceptDefinition(name, constraint), start) : null;
+    }
+
+    /// <summary>
     /// <c>&lt; template parameters &gt;</c>. The names of the parameters are declared in the current scope:
-    /// type parameters as types, template template parameters as templates, others as values.
+    /// type parameters as types, template template parameters as templates, others as values; packs as packs.
     /// </summary>
     private List<TemplateParameter> ParseTemplateParameterList()
     {
@@ -91,7 +165,11 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        DeclareName(parameter.Specifiers, parameter.Declarator);
+        if (DeclaredName(parameter.Declarator)?.Name is IdentifierName name)
+        {
+            _cache.Symbols.DeclareTemplateParameter(name.Identifier, SymbolKind.Value, isPack: IsPackDeclarator(parameter.Declarator));
+        }
+
         return Finish(new NonTypeTemplateParameter(parameter), start);
     }
 
@@ -151,7 +229,7 @@ internal ref partial struct SyntaxParser
 
         if (identifier != null)
         {
-            _cache.Symbols.Declare(identifier, SymbolKind.Type);
+            _cache.Symbols.DeclareTemplateParameter(identifier, SymbolKind.Type, isPack);
         }
 
         return Finish(new TypeTemplateParameter(key, identifier) { Constraint = constraint, IsPack = isPack, Default = @default }, start);
@@ -188,7 +266,7 @@ internal ref partial struct SyntaxParser
 
         if (identifier != null)
         {
-            symbols.Declare(identifier, SymbolKind.Template);
+            symbols.DeclareTemplateParameter(identifier, SymbolKind.Template, isPack);
         }
 
         return Finish(new TemplateTemplateParameter(parameters, key, identifier) { IsPack = isPack, Default = @default }, start);

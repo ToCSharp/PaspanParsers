@@ -13,13 +13,16 @@ public abstract record KindRule;
 /// With <see cref="OrAbsent"/>, a node that no clang node has the span of passes when it starts and ends at
 /// token boundaries: clang has no <c>InitListExpr</c> for the braces of a constructor call.
 /// <see cref="ClangStart"/>, when set, is where clang starts the node instead: at the unqualified concept of
-/// a constrained template parameter, <c>integral T</c> in <c>std::integral T</c>.
+/// a constrained template parameter, <c>integral T</c> in <c>std::integral T</c>. With
+/// <see cref="ClangEndBefore"/>, clang ends the node at the last token that ends before that offset: before
+/// the attributes after the name of a parameter, <c>int a [[maybe_unused]]</c>.
 /// </summary>
 public sealed record ExactRule(params string[] Kinds) : KindRule
 {
     public bool WithoutSemicolon { get; init; }
     public bool OrAbsent { get; init; }
     public int? ClangStart { get; init; }
+    public int? ClangEndBefore { get; init; }
 }
 
 /// <summary>
@@ -53,7 +56,19 @@ public static class CppKindMap
     private static readonly TokensRule Tokens = new();
 
     private static readonly string[] FunctionKinds =
-        ["FunctionDecl", "CXXMethodDecl", "CXXConstructorDecl", "CXXDestructorDecl", "CXXConversionDecl"];
+        ["FunctionDecl", "CXXMethodDecl", "CXXConstructorDecl", "CXXDestructorDecl", "CXXConversionDecl", "CXXDeductionGuideDecl"];
+
+    private static readonly string[] ClassKinds =
+        ["CXXRecordDecl", "ClassTemplateSpecializationDecl", "ClassTemplatePartialSpecializationDecl"];
+
+    // A template declaration is a template, or the specialization or member of a template it defines, which
+    // clang starts at the first 'template'
+    private static readonly string[] TemplateKinds =
+    [
+        "ClassTemplateDecl", "FunctionTemplateDecl", "VarTemplateDecl", "TypeAliasTemplateDecl", "ConceptDecl",
+        "ClassTemplateSpecializationDecl", "ClassTemplatePartialSpecializationDecl", "VarTemplateSpecializationDecl",
+        "VarTemplatePartialSpecializationDecl", "CXXRecordDecl", "VarDecl", "FriendDecl", "EnumDecl", .. FunctionKinds,
+    ];
 
     public static KindRule RuleFor(ICppNode node, Ancestry parent) => node switch
     {
@@ -64,18 +79,68 @@ public static class CppKindMap
         // of designators
         Expression when IsInType(parent) => Tokens,
 
-        // Declarations: clang starts a function after its attributes, and a declaration statement before them
-        FunctionDefinition { Attributes.Count: > 0 } function => new ExactRule(FunctionKinds)
+        // Declarations: clang starts a function after its standard attributes, and a declaration statement
+        // before them; a specialization or a member of a class template defined outside it at the 'template'.
+        // A defaulted or deleted function ends before its ';'.
+        FunctionDefinition function => new ExactRule(FunctionKinds)
         {
-            ClangStart = function.Specifiers?.Span.Start ?? function.Declarator.Span.Start,
+            WithoutSemicolon = true,
+            ClangStart = OutermostTemplate(parent)?.Span.Start
+                ?? (function.Attributes.Count > 0 ? function.Specifiers?.Span.Start ?? function.Declarator.Span.Start : null),
         },
-        FunctionDefinition => new ExactRule(FunctionKinds),
         SimpleDeclaration => Tokens,
         StaticAssertDeclaration => new ExactRule("StaticAssertDecl") { WithoutSemicolon = true },
-        DeclSpecifierSequence or DeclSpecifier => Tokens,
-        InitDeclarator => new DeclarationRule(n => NameLocation(((InitDeclarator)n).Declarator), ["VarDecl", "DecompositionDecl", "TypedefDecl", .. FunctionKinds])
+        EmptyDeclaration when parent.Node is ClassSpecifier => Tokens,
+        EmptyDeclaration => new ExactRule("EmptyDecl"),
+        AccessSpecifier => new ExactRule("AccessSpecDecl"),
+        NamespaceDefinition => new ExactRule("NamespaceDecl"),
+        NamespaceAliasDefinition => new ExactRule("NamespaceAliasDecl") { WithoutSemicolon = true },
+        UsingDirective => new ExactRule("UsingDirectiveDecl") { WithoutSemicolon = true },
+        UsingEnumDeclaration => new ExactRule("UsingEnumDecl") { WithoutSemicolon = true },
+        UsingDeclaration => Tokens,
+        UsingDeclarator => new DeclarationRule(n => UnqualifiedName(((UsingDeclarator)n).Name).Span.Start,
+            "UsingDecl", "UnresolvedUsingValueDecl", "UnresolvedUsingTypenameDecl", "UsingPackDecl")
         {
-            OtherEnd = n => ((InitDeclarator)n).Initializer is ParenthesizedInitializer { Arguments: [.., var last] } ? last.Span.End : -1,
+            OtherEnd = n => ((UsingDeclarator)n).Name.Span.End,
+        },
+        AliasDeclaration => new ExactRule("TypeAliasDecl") { WithoutSemicolon = true },
+        LinkageSpecification => new ExactRule("LinkageSpecDecl") { WithoutSemicolon = true },
+        // The inner of template <> template <> has no declaration of its own
+        TemplateDeclaration { Parameters.Count: 0 } when parent.Node is TemplateDeclaration => new ExactRule(TemplateKinds) { WithoutSemicolon = true, OrAbsent = true },
+        TemplateDeclaration => new ExactRule(TemplateKinds) { WithoutSemicolon = true },
+        ExplicitInstantiation => new ExactRule("ClassTemplateSpecializationDecl", "VarTemplateSpecializationDecl") { WithoutSemicolon = true, OrAbsent = true },
+        ConceptDefinition => Tokens,
+        AsmDeclaration when parent.Node is DeclarationStatement => Tokens,
+        AsmDeclaration => new ExactRule("FileScopeAsmDecl") { WithoutSemicolon = true },
+        ModuleDeclaration or ImportDeclaration => Tokens,
+        ExportDeclaration => new ExactRule("ExportDecl") { WithoutSemicolon = true },
+        ClassSpecifier => new ExactRule(ClassKinds)
+        {
+            ClangStart = parent is { Node: DeclSpecifierSequence, Parent: { Node: SimpleDeclaration } declaration } ? OutermostTemplate(declaration.Parent)?.Span.Start : null,
+        },
+        EnumSpecifier => new ExactRule("EnumDecl"),
+        Enumerator { Value: null, Attributes: [var first, ..] } => new ExactRule("EnumConstantDecl") { ClangEndBefore = first.Span.Start },
+        Enumerator => new ExactRule("EnumConstantDecl"),
+        BaseSpecifier or MemberInitializer => Tokens,
+        DeclSpecifierSequence or DeclSpecifier => Tokens,
+
+        // Clang has no declarations for the names of an explicit instantiation
+        InitDeclarator when IsInExplicitInstantiation(parent) => Tokens,
+        InitDeclarator => new DeclarationRule(
+            n => NameLocation(((InitDeclarator)n).Declarator),
+            ["VarDecl", "DecompositionDecl", "TypedefDecl", "FieldDecl", "VarTemplateSpecializationDecl", "VarTemplatePartialSpecializationDecl", .. FunctionKinds])
+        {
+            OtherEnd = n => ((InitDeclarator)n) switch
+            {
+                { Initializer: ParenthesizedInitializer { Arguments: [.., var last] } } => last.Span.End,
+
+                // Clang ends a declaration before its asm label and GNU attributes, and before the attributes of its name
+                { AsmLabel: not null, Initializer: null, Declarator: { } declarator } => declarator.Span.End,
+                { Initializer: null, BitFieldWidth: null, Declarator: { } declarator } when TrailingNameAttributes(declarator, n.Span.End) is not null
+                    => DeclaredName(declarator).Name.Span.End,
+                { Attributes.Count: > 0, Initializer: null, BitFieldWidth: null, Declarator: { } declarator } => declarator.Span.End,
+                _ => -1,
+            },
         },
         ConditionDeclaration => new DeclarationRule(n => NameLocation(((ConditionDeclaration)n).Declarator), "VarDecl", "DecompositionDecl"),
         ForRangeDeclaration => new DeclarationRule(n => NameLocation(((ForRangeDeclaration)n).Declarator), "VarDecl", "DecompositionDecl")
@@ -85,21 +150,40 @@ public static class CppKindMap
         IdentifierName when parent.Node is StructuredBindingDeclarator => new ExactRule("BindingDecl"),
         Declarator or Name or TypeId or NoexceptSpecifier => Tokens,
         ParameterDeclaration when parent.Node is CatchClause => new ExactRule("VarDecl"),
-        ParameterDeclaration parameter => IsFunctionParameter(parameter, parent) ? new ExactRule("ParmVarDecl") : Tokens,
+        ParameterDeclaration parameter => IsFunctionParameter(parameter, parent)
+            ? new ExactRule("ParmVarDecl")
+            {
+                ClangStart = parameter.Attributes.Count > 0 ? parameter.Specifiers.Span.Start : null,
+                ClangEndBefore = TrailingNameAttributes(parameter.Declarator, parameter.Span.End),
+            }
+            : Tokens,
         Initializer => Tokens,
 
         // Templates and attributes: clang's attribute nodes span the attribute without the brackets, and
         // attributes it does not know have none
+        // Clang dumps no parameters of the enclosing class templates of a member defined outside them:
+        // template <typename T> T Stack<T>::top() { … }
+        TemplateParameter when parent.Node is TemplateDeclaration template && DeclaresQualifiedName(template) => Tokens,
         TypeTemplateParameter { Constraint: QualifiedName { Name: var concept } } => new ExactRule("TemplateTypeParmDecl") { ClangStart = concept.Span.Start },
+
+        // Clang ends an unnamed pack at its key: typename...
+        TypeTemplateParameter { IsPack: true, Identifier: null, Default: null } parameter => new ExactRule("TemplateTypeParmDecl")
+        {
+            ClangEndBefore = parameter.Span.End,
+        },
         TypeTemplateParameter => new ExactRule("TemplateTypeParmDecl"),
         NonTypeTemplateParameter => new ExactRule("NonTypeTemplateParmDecl"),
         TemplateTemplateParameter => new ExactRule("TemplateTemplateParmDecl"),
         AttributeSpecifier or CppAttribute => Tokens,
 
-        // Statements. Clang's ranges of statements that end with ';' do not include it, except for null
+        // Statements. Clang has an asm statement for an asm declaration in a block. Clang's ranges of statements that end with ';' do not include it, except for null
         // statements and declarations. Clang drops attributes it does not know, and with them the
         // AttributedStmt; the attributes of a label belong to it, and its LabelStmt starts after them.
         CompoundStatement => new ExactRule("CompoundStmt"),
+        DeclarationStatement { Declaration: AsmDeclaration } => new ExactRule("GCCAsmStmt") { WithoutSemicolon = true },
+
+        // Clang 18 gives the alias declaration of an init-statement no declaration statement, or one that ends after the ';'
+        DeclarationStatement { Declaration: AliasDeclaration } => new ExactRule("DeclStmt") { OrAbsent = true },
         DeclarationStatement => new ExactRule("DeclStmt"),
         ExpressionStatement { Expression: null } => new ExactRule("NullStmt"),
         ExpressionStatement => Tokens,
@@ -138,6 +222,9 @@ public static class CppKindMap
             "CallExpr", "CXXMemberCallExpr", "CXXOperatorCallExpr", "CXXConstructExpr", "CXXTemporaryObjectExpr",
             "CXXFunctionalCastExpr", "CXXUnresolvedConstructExpr", "UserDefinedLiteral"),
         ThisExpression => new ExactRule("CXXThisExpr"),
+        // Clang 18 has no member expression for the call of a function with an explicit object parameter
+        MemberAccessExpression when parent.Node is CallExpression call && call.Callee == node => new ExactRule(
+            "MemberExpr", "CXXDependentScopeMemberExpr", "UnresolvedMemberExpr", "CXXPseudoDestructorExpr") { OrAbsent = true },
         MemberAccessExpression => new ExactRule("MemberExpr", "CXXDependentScopeMemberExpr", "UnresolvedMemberExpr", "CXXPseudoDestructorExpr"),
         SubscriptExpression => new ExactRule("ArraySubscriptExpr", "CXXOperatorCallExpr"),
         CastExpression => new ExactRule("CStyleCastExpr"),
@@ -165,8 +252,70 @@ public static class CppKindMap
     };
 
     /// <summary>
-    /// An expression is part of a type or a designator: the nearest ancestor that is not an expression is a
-    /// declarator, a specifier, a type-id, a name or a designator.
+    /// The outermost of the template declarations that <paramref name="parent"/> and its ancestors directly
+    /// are, or null when the parent is none.
+    /// </summary>
+    private static TemplateDeclaration OutermostTemplate(Ancestry parent)
+    {
+        TemplateDeclaration outermost = null;
+        for (var ancestor = parent; ancestor?.Node is TemplateDeclaration template; ancestor = ancestor.Parent)
+        {
+            outermost = template;
+        }
+
+        return outermost;
+    }
+
+    /// <summary>
+    /// The template declaration declares a member of a class outside it: <c>template &lt;class T&gt; int S&lt;T&gt;::x;</c>,
+    /// or holds another template declaration.
+    /// </summary>
+    private static bool DeclaresQualifiedName(TemplateDeclaration template)
+    {
+        switch (template.Declaration)
+        {
+            case TemplateDeclaration:
+                return true;
+            case FunctionDefinition function:
+                return DeclaredName(function.Declarator)?.Name is QualifiedName;
+            case SimpleDeclaration simple:
+                return simple.Declarators.Any(d => DeclaredName(d.Declarator)?.Name is QualifiedName)
+                    || simple.Specifiers?.Specifiers.Any(s => s is ClassSpecifier { Name: QualifiedName } or EnumSpecifier { Name: QualifiedName }) == true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsInExplicitInstantiation(Ancestry parent)
+    {
+        for (var ancestor = parent; ancestor != null; ancestor = ancestor.Parent)
+        {
+            switch (ancestor.Node)
+            {
+                case ExplicitInstantiation:
+                    return true;
+                case ClassSpecifier or CompoundStatement:
+                    return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static Name UnqualifiedName(Name name) => name is QualifiedName qualified ? qualified.Name : name;
+
+    /// <summary>
+    /// The start of the attributes after the declared name, when they end the declaration at
+    /// <paramref name="end"/>: <c>int a [[maybe_unused]]</c>; otherwise null.
+    /// </summary>
+    private static int? TrailingNameAttributes(Declarator declarator, int end)
+    {
+        return DeclaredName(declarator) is { Attributes: [var first, ..] } name && name.Span.End == end ? first.Span.Start : null;
+    }
+
+    /// <summary>
+    /// An expression is part of a type, a designator or an attribute: the nearest ancestor that is not an
+    /// expression is a declarator, a specifier, a type-id, a name, a designator or an attribute specifier.
     /// </summary>
     private static bool IsInType(Ancestry parent)
     {
@@ -174,7 +323,7 @@ public static class CppKindMap
         {
             switch (ancestor.Node)
             {
-                case Declarator or DeclSpecifier or DeclSpecifierSequence or TypeId or Name or NoexceptSpecifier or Designator:
+                case Declarator or DeclSpecifier or DeclSpecifierSequence or TypeId or Name or NoexceptSpecifier or Designator or AttributeSpecifier:
                     return true;
                 case Expression:
                     continue;
@@ -221,8 +370,9 @@ public static class CppKindMap
                 case FunctionDefinition:
                     return true;
                 case InitDeclarator:
-                    return ancestor.Parent?.Node is not SimpleDeclaration declaration
-                        || declaration.Specifiers?.Specifiers.Any(s => s is KeywordSpecifier { Keyword: "typedef" }) != true;
+                    return (ancestor.Parent?.Node is not SimpleDeclaration declaration
+                        || declaration.Specifiers?.Specifiers.Any(s => s is KeywordSpecifier { Keyword: "typedef" }) != true)
+                        && !IsInExplicitInstantiation(ancestor.Parent);
                 default:
                     return false;
             }

@@ -28,6 +28,9 @@ internal ref partial struct SyntaxParser
     // In a requires-clause, where a name followed by template arguments is a concept-id
     private bool _inConstraint;
 
+    // In the declarator of a parameter whose type names a pack, where '...' starts a pack: void f(Ts...)
+    private bool _parameterTypeIsPack;
+
     public SyntaxParser(ReadOnlySpan<byte> source, int position, ParseContext context)
     {
         _source = source;

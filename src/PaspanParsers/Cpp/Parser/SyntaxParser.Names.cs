@@ -73,7 +73,7 @@ internal ref partial struct SyntaxParser
         {
             var qualified = global || qualifier != null;
             var isTemplate = qualified && TryEatKeyword("template");
-            var component = ParseNameComponent(context, qualified, isTemplate);
+            var component = ParseNameComponent(context, qualified, isTemplate, qualifier, global);
             if (component == null)
             {
                 return null;
@@ -101,7 +101,7 @@ internal ref partial struct SyntaxParser
     /// A component of a name: an identifier or template-id, an operator, conversion or literal operator
     /// function, a destructor, or as the first component, <c>decltype(expression)</c>.
     /// </summary>
-    private Name ParseNameComponent(NameContext context, bool qualified, bool isTemplate)
+    private Name ParseNameComponent(NameContext context, bool qualified, bool isTemplate, Name qualifier = null, bool global = false)
     {
         var start = NodeStart;
         var token = Current;
@@ -115,21 +115,25 @@ internal ref partial struct SyntaxParser
                 return identifier;
             }
 
-            if (TakesTemplateArguments(identifier, context, isTemplate))
+            // The component is looked up in the scope of its qualifier: ns::Tmpl<int>
+            var kind = _cache.Symbols.LookupComponent(qualifier, global, identifier.Identifier);
+            if (isTemplate || context == NameContext.Type || kind is SymbolKind.Template or SymbolKind.Concept)
             {
                 return ParseTemplateId(identifier, start, commit: isTemplate || context == NameContext.Type);
             }
 
             // An unknown template: template arguments followed by '::' (N::S<int>::S), in a constraint (C<T>),
             // or in an expression followed by a token that cannot follow a comparison a < b > c
-            if (_cache.Symbols.Lookup(identifier.Identifier) != null)
+            if (kind != null)
             {
                 return identifier;
             }
 
             var mark = Save();
             var templateId = ParseTemplateId(identifier, start, commit: false);
-            if (templateId is TemplateIdName && (_inConstraint || IsPunctuator("::") || (context != NameContext.Type && FollowsTemplateId(Current))))
+            // In template arguments, a '>' closes the enclosing ones: bool = is_integral_v<T>>
+            if (templateId is TemplateIdName
+                && (_inConstraint || IsPunctuator("::") || (context != NameContext.Type && (FollowsTemplateId(Current) || (_inTemplateArguments && IsPunctuator(">"))))))
             {
                 return templateId;
             }
@@ -188,15 +192,6 @@ internal ref partial struct SyntaxParser
         return token.Kind == TokenKind.EndOfFile
             || (token.Kind == TokenKind.Punctuator && token.Text is "(" or ")" or "[" or "]" or "{" or "}" or ";" or "," or ":"
                 or "?" or "==" or "!=" or "&&" or "||" or "|" or "^" or "...");
-    }
-
-    /// <summary>
-    /// A '&lt;' after <paramref name="name"/> starts template arguments: always in a type and after
-    /// <c>template</c>, otherwise when the name is a known template or concept.
-    /// </summary>
-    private readonly bool TakesTemplateArguments(IdentifierName name, NameContext context, bool isTemplate)
-    {
-        return isTemplate || context == NameContext.Type || _cache.Symbols.Lookup(name.Identifier) is SymbolKind.Template or SymbolKind.Concept;
     }
 
     private DecltypeName ParseDecltypeName()

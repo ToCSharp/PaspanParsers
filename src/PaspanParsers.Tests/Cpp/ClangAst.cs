@@ -34,7 +34,7 @@ public sealed partial class ClangAst
     /// <summary>
     /// Keys whose values depend on positions or on addresses of the clang process, not on the tree.
     /// </summary>
-    private static readonly HashSet<string> IgnoredKeys = ["id", "loc", "range", "previousDecl", "parentDeclContextId", "referencedMemberDecl", "typeAliasDeclId", "targetLabelDeclId", "declId"];
+    private static readonly HashSet<string> IgnoredKeys = ["id", "loc", "range", "previousDecl", "parentDeclContextId", "referencedMemberDecl", "typeAliasDeclId", "targetLabelDeclId", "declId", "temp"];
 
     private ClangAst(List<JsonObject> declarations)
     {
@@ -271,6 +271,11 @@ public sealed partial class ClangAst
     /// </summary>
     public List<ClangNode> Nodes(byte[] source, int bomLength)
     {
+        foreach (var declaration in Declarations)
+        {
+            CorrectCallStarts(declaration);
+        }
+
         var nodes = new List<ClangNode>();
         var stack = new Stack<JsonNode>(Declarations);
         while (stack.Count != 0)
@@ -313,6 +318,56 @@ public sealed partial class ClangAst
         }
 
         return nodes;
+    }
+
+    /// <summary>
+    /// Clang 18 represents the call of a member function with an explicit object parameter (<c>obj.f()</c>)
+    /// as a call of <c>f</c> with the object as an argument, which starts at <c>f</c> instead of the object;
+    /// so do the expressions that start with the call. Corrects their ranges to start at the object, and
+    /// returns the original start of <paramref name="node"/> (-1 when it has none) and its corrected start.
+    /// </summary>
+    private static (int Original, JsonObject Begin) CorrectCallStarts(JsonObject node)
+    {
+        var begin = node["range"]?["begin"] as JsonObject;
+        var original = TryGetOffset(begin, out var location, out _) ? location.Offset : -1;
+        JsonObject earliest = null;
+        var earliestOffset = int.MaxValue;
+        JsonObject fromChild = null;
+        if (node["inner"] is JsonArray inner)
+        {
+            foreach (var child in inner.OfType<JsonObject>())
+            {
+                var (childOriginal, childBegin) = CorrectCallStarts(child);
+                if (!TryGetOffset(childBegin, out var childLocation, out _))
+                {
+                    continue;
+                }
+
+                if (childLocation.Offset < earliestOffset)
+                {
+                    earliestOffset = childLocation.Offset;
+                    earliest = childBegin;
+                }
+
+                if (childOriginal == original && childLocation.Offset < original)
+                {
+                    fromChild = childBegin;
+                }
+            }
+        }
+
+        var kind = node["kind"]?.GetValue<string>() ?? "";
+        var corrected = kind == "CallExpr" && original >= 0 && earliestOffset < original ? earliest
+            : fromChild != null && (kind.EndsWith("Expr", StringComparison.Ordinal) || kind.EndsWith("Operator", StringComparison.Ordinal)) ? fromChild
+            : null;
+        if (corrected == null)
+        {
+            return (original, begin);
+        }
+
+        var copy = corrected.DeepClone().AsObject();
+        node["range"]!["begin"] = copy;
+        return (original, copy);
     }
 
     /// <summary>
@@ -485,7 +540,17 @@ public sealed partial class ClangAst
             var start = lineStarts[line - 1] + column - 1;
             var unclean = match.Groups["unclean"];
             var end = start + Encoding.UTF8.GetByteCount(unclean.Success ? unclean.Value : match.Groups["spelling"].Value);
-            tokens.Add(new TextSpan(SkipSplices(source, start) - bomLength, end - bomLength));
+            start = SkipSplices(source, start);
+
+            // The '>' of '>>', '>=' and '>>=' can close template arguments: A<B<int>>
+            while (!unclean.Success && kind is "greatergreater" or "greaterequal" or "greatergreaterequal" && start + 1 < end && source[start] == '>')
+            {
+                tokens.Add(new TextSpan(start - bomLength, start + 1 - bomLength));
+                start++;
+                kind = source[start] == '>' ? "greatergreater" : "";
+            }
+
+            tokens.Add(new TextSpan(start - bomLength, end - bomLength));
         }
 
         return tokens;

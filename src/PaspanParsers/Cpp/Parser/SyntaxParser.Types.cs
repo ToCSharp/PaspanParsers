@@ -43,6 +43,11 @@ internal ref partial struct SyntaxParser
     private static readonly HashSet<string> ClassKeys = ["class", "struct", "union", "enum"];
 
     /// <summary>
+    /// The GNU spellings of <c>restrict</c>, a cv-qualifier of pointers.
+    /// </summary>
+    private static bool IsRestrict(SyntaxToken token) => token.IsIdentifier && token.Text is "__restrict" or "__restrict__";
+
+    /// <summary>
     /// The current token starts a declaration specifier that is a keyword.
     /// </summary>
     private bool IsDeclSpecifierKeyword => Current is { Kind: TokenKind.Keyword } token
@@ -52,10 +57,12 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// decl-specifier-seq: declaration specifiers in any order. A name is a type specifier only while
     /// there is no other type specifier (<c>unsigned x</c> declares <c>x</c>), and not when it names a
-    /// constructor, destructor or conversion function (<c>S::S</c>, <c>S::~S</c>), which have no
-    /// specifiers. Returns null when there are no specifiers.
+    /// constructor, destructor or conversion function (<c>S::S</c>, <c>S::~S</c>, or <c>S(</c> among the members
+    /// of the class <paramref name="className"/>) or a deduction guide (<c>Box(T) -&gt; Box&lt;T&gt;</c>), which
+    /// have no specifiers. A class or enumeration may be defined in a declaration. Returns null when there are
+    /// no specifiers.
     /// </summary>
-    private DeclSpecifierSequence ParseDeclSpecifiers(SpecifierContext context = SpecifierContext.Declaration)
+    private DeclSpecifierSequence ParseDeclSpecifiers(SpecifierContext context = SpecifierContext.Declaration, string className = null)
     {
         var start = NodeStart;
         var specifiers = new List<DeclSpecifier>();
@@ -68,7 +75,15 @@ internal ref partial struct SyntaxParser
 
             if (token.Kind == TokenKind.Keyword)
             {
-                if (TypeKeywords.Contains(token.Text) || OtherSpecifierKeywords.Contains(token.Text))
+                if (token.Text == "explicit" && Peek(1).IsPunctuator("(") && context == SpecifierContext.Declaration)
+                {
+                    specifier = ParseExplicitSpecifier();
+                    if (specifier == null)
+                    {
+                        return null;
+                    }
+                }
+                else if (TypeKeywords.Contains(token.Text) || OtherSpecifierKeywords.Contains(token.Text))
                 {
                     if (context == SpecifierContext.Type && !TypeKeywords.Contains(token.Text) && token.Text is not ("const" or "volatile"))
                     {
@@ -81,7 +96,7 @@ internal ref partial struct SyntaxParser
                 }
                 else if (ClassKeys.Contains(token.Text) && !hasType)
                 {
-                    specifier = ParseElaboratedTypeSpecifier();
+                    specifier = token.Text == "enum" ? ParseEnumOrElaboratedSpecifier(context) : ParseClassOrElaboratedSpecifier(context);
                     if (specifier == null)
                     {
                         return null;
@@ -118,12 +133,28 @@ internal ref partial struct SyntaxParser
                 specifier = Finish(new KeywordSpecifier(token.Text), specifierStart);
                 hasType = true;
             }
+            else if (IsRestrict(token))
+            {
+                EatToken();
+                specifier = Finish(new KeywordSpecifier(token.Text), specifierStart);
+            }
+            else if (IsGnuAttributeStart && context == SpecifierContext.Declaration)
+            {
+                var attribute = ParseGnuAttributeSpecifier();
+                if (attribute == null)
+                {
+                    return null;
+                }
+
+                specifier = Finish(new AttributeDeclSpecifier(attribute), specifierStart);
+            }
             else if (!hasType && (token.IsIdentifier || token.IsPunctuator("::")))
             {
                 var mark = Save();
                 var name = ParseName(NameContext.Type);
                 if (name == null || NamesFunctionWithoutType(name) || (IsPunctuator("::") && Peek(1).IsPunctuator("*"))
-                    || (name is IdentifierName && _cache.Symbols.Lookup(name) is SymbolKind.Value or SymbolKind.Namespace))
+                    || (name is IdentifierName && _cache.Symbols.Lookup(name) is SymbolKind.Value or SymbolKind.Namespace)
+                    || (context == SpecifierContext.Declaration && IsPunctuator("(") && StartsFunctionWithoutType(name, className)))
                 {
                     // A declarator id, the class of a pointer to member, or a variable: int a(b); declares a variable
                     Restore(mark);
@@ -163,6 +194,65 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
+    /// <paramref name="name"/>, followed by the current '(', names a function without type specifiers: a
+    /// constructor among the members of the class <paramref name="className"/> (<c>S(int)</c>, but not
+    /// <c>S (*f)()</c>), or a deduction guide of a known template (<c>Box(T) -&gt; Box&lt;T&gt;</c>).
+    /// </summary>
+    private bool StartsFunctionWithoutType(Name name, string className)
+    {
+        if (name is not IdentifierName identifier)
+        {
+            return false;
+        }
+
+        if (identifier.Identifier == className)
+        {
+            var next = Peek(1);
+            return !(next.IsPunctuator("*") || next.IsPunctuator("&") || next.IsPunctuator("&&"));
+        }
+
+        return _cache.Symbols.Lookup(identifier.Identifier) == SymbolKind.Template && TokenAfterParentheses().IsPunctuator("->");
+    }
+
+    /// <summary>
+    /// The token after the parentheses that the current '(' opens.
+    /// </summary>
+    private SyntaxToken TokenAfterParentheses()
+    {
+        var depth = 0;
+        var token = Current;
+        for (; token.Kind != TokenKind.EndOfFile; token = TokenAt(token.End))
+        {
+            if (token.Kind != TokenKind.Punctuator)
+            {
+                continue;
+            }
+
+            if (token.Text is "(" or "[" or "{")
+            {
+                depth++;
+            }
+            else if (token.Text is ")" or "]" or "}" && --depth == 0)
+            {
+                return TokenAt(token.End);
+            }
+        }
+
+        return token;
+    }
+
+    /// <summary>
+    /// <c>explicit(condition)</c>.
+    /// </summary>
+    private ExplicitSpecifier ParseExplicitSpecifier()
+    {
+        var start = NodeStart;
+        EatToken();
+        var condition = ParseParenthesizedExpression();
+        return condition == null ? null : Finish(new ExplicitSpecifier(condition), start);
+    }
+
+    /// <summary>
     /// The identifier of the last component of <paramref name="name"/>, without template arguments.
     /// </summary>
     private static string LastIdentifier(Name name) => name switch
@@ -193,13 +283,11 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// <c>class</c>, <c>struct</c>, <c>union</c> or <c>enum</c> and a name. The name is declared as a type.
+    /// The rest of an elaborated type specifier after its key and attributes: a name. An unqualified name is
+    /// declared as a type.
     /// </summary>
-    private ElaboratedTypeSpecifier ParseElaboratedTypeSpecifier()
+    private ElaboratedTypeSpecifier ParseElaboratedTypeSpecifierRest(int start, string key, IReadOnlyList<AttributeSpecifier> attributes, Name name)
     {
-        var start = NodeStart;
-        var key = EatToken().Text;
-        var name = ParseName(NameContext.Type);
         if (name == null || name is DestructorName or OperatorFunctionName or ConversionFunctionName or LiteralOperatorName)
         {
             return null;
@@ -210,7 +298,7 @@ internal ref partial struct SyntaxParser
             _cache.Symbols.Declare(identifier.Identifier, SymbolKind.Type);
         }
 
-        return Finish(new ElaboratedTypeSpecifier(key, name), start);
+        return Finish(new ElaboratedTypeSpecifier(key, name) { Attributes = attributes }, start);
     }
 
     /// <summary>
@@ -264,8 +352,10 @@ internal ref partial struct SyntaxParser
         return Finish(new TypeId(specifiers, declarator), start);
     }
 
-    private static bool IsTypeSpecifier(DeclSpecifier specifier)
+    private static bool IsTypeSpecifier(DeclSpecifier specifier) => specifier switch
     {
-        return specifier is not KeywordSpecifier keyword || TypeKeywords.Contains(keyword.Keyword) || ExtensionTypeNames.Contains(keyword.Keyword);
-    }
+        KeywordSpecifier keyword => TypeKeywords.Contains(keyword.Keyword) || ExtensionTypeNames.Contains(keyword.Keyword),
+        ExplicitSpecifier or AttributeDeclSpecifier => false,
+        _ => true,
+    };
 }
