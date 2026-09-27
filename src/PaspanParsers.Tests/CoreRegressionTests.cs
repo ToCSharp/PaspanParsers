@@ -279,4 +279,117 @@ public class CoreRegressionTests
         Assert.IsNotNull(nested);
         Assert.HasCount(2, nested.Members);
     }
+
+
+    // Positions and error reporting
+
+    private static ParseResult<T> ParseWithResult<T>(Parser<T> parser, string input)
+    {
+        var reader = new SpanReader(input);
+        var result = new ParseResult<T>();
+        Assert.IsTrue(parser.Parse(ref reader, new ParseContext(), ref result));
+        return result;
+    }
+
+    [TestMethod]
+    public void ThenShouldKeepThePositionsOfTheInnerParser()
+    {
+        var result = ParseWithResult(Terms.Integer().Then(x => x * 2), "  123");
+
+        Assert.AreEqual(246, result.Value);
+        Assert.AreEqual(2, result.Start);
+        Assert.AreEqual(5, result.End);
+    }
+
+    [TestMethod]
+    public void ThenWithOffsetsShouldReceiveThePositionsOfNestedConversions()
+    {
+        var parser = Terms.Text("abc")
+            .Then(x => x.ToUpperInvariant())
+            .Then((context, start, end, x) => (start, end));
+
+        Assert.AreEqual((1, 4), ParseWithResult(parser, " abc").Value);
+    }
+
+    [TestMethod]
+    public void OneOrManyShouldKeepPositions()
+    {
+        var result = ParseWithResult(OneOrMany(Terms.Integer()), " 1 22 333");
+
+        Assert.HasCount(3, result.Value);
+        Assert.AreEqual(1, result.Start);
+        Assert.AreEqual(9, result.End);
+    }
+
+    [TestMethod]
+    public void LiteralsShouldSetPositions()
+    {
+        var text = ParseWithResult(Terms.Text("ab"), " ab");
+        Assert.AreEqual((1, 3), (text.Start, text.End));
+
+        var str = ParseWithResult(Terms.String(), "  'x\\ny'");
+        Assert.AreEqual("x\ny", str.Value);
+        Assert.AreEqual((2, 8), (str.Start, str.End));
+
+        var id = ParseWithResult(Terms.Identifier(), " foo1 ");
+        Assert.AreEqual((1, 5), (id.Start, id.End));
+
+        var ch = ParseWithResult(Terms.Char('+').AsChar(), " +");
+        Assert.AreEqual('+', ch.Value);
+        Assert.AreEqual((1, 2), (ch.Start, ch.End));
+    }
+
+    [TestMethod]
+    public void DeferredShouldReleaseLoopDetectionWhenAnExceptionEscapes()
+    {
+        var context = new ParseContext();
+        var parser = Deferred<long>();
+        parser.Parser = Terms.Integer().Then<long>(x => x < 0 ? throw new ParseException("negative") : x);
+
+        var reader = new SpanReader("-1");
+        var result = new ParseResult<long>();
+        Assert.ThrowsExactly<ParseException>(() =>
+        {
+            var r = new SpanReader("-1");
+            var res = new ParseResult<long>();
+            parser.Parse(ref r, context, ref res);
+        });
+
+        // Same parser, same position, same context: must not be reported as a recursion loop
+        reader = new SpanReader("5");
+        Assert.IsTrue(parser.Parse(ref reader, context, ref result));
+        Assert.AreEqual(5, result.Value);
+    }
+
+    [TestMethod]
+    public void ParseErrorShouldReportPosition()
+    {
+        var parser = Terms.Text("a").And(Terms.Text("b")).And(Literals.Text("c").ElseError("'c' expected"));
+
+        Assert.IsFalse(parser.TryParse("a\n b\n  x", out _, out var error));
+        Assert.AreEqual("'c' expected", error.Message);
+        Assert.AreEqual(4, error.Position);
+        Assert.AreEqual(2, error.Line);
+        Assert.AreEqual(3, error.Column);
+
+        var parser2 = Literals.Text("a").And(Literals.Text("ф")).And(Literals.Text("b").ElseError("'b' expected"));
+        Assert.IsFalse(parser2.TryParse("aфc", out _, out error));
+        Assert.AreEqual(3, error.Position);
+        Assert.AreEqual((1, 3), (error.Line, error.Column));
+    }
+
+    [TestMethod]
+    public void IdentifierExtraPredicatesShouldReceiveDecodedChars()
+    {
+        static bool IsCyrillic(char c) => c >= 'а' && c <= 'я';
+
+        var parser = Terms.Identifier(IsCyrillic, IsCyrillic);
+
+        Assert.AreEqual("привет1", parser.Parse(" привет1 "));
+        Assert.AreEqual("aбв", parser.Parse("aбв"));
+        Assert.IsNull(parser.Parse("Ж"));
+
+        // Without extra predicates non-ASCII chars end the identifier
+        Assert.AreEqual("ab", Terms.Identifier().Parse("abф"));
+    }
 }

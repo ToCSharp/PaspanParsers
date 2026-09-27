@@ -27,9 +27,11 @@ public sealed class TextLiteral : Parser<string>
 
         if (_comparisonType == StringComparison.Ordinal)
         {
+            var start = reader.CaptureState();
+
             if (reader.Skip(new ReadOnlySpan<byte>(TextBytes)))
             {
-                result.Set(Text);
+                result.Set(start, reader.GetCurrentPosition(), Text);
                 return true;
             }
         }
@@ -41,7 +43,7 @@ public sealed class TextLiteral : Parser<string>
             {
                 // Возвращаем фактически прочитанный текст (с сохранением регистра из входных данных)
                 var actualText = reader.GetString(start, TextBytes.Length);
-                result.Set(actualText);
+                result.Set(start, reader.GetCurrentPosition(), actualText);
                 return true;
             }
             

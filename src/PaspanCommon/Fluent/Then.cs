@@ -44,15 +44,15 @@ public sealed class Then<T, U>(Parser<T> parser) : Parser<U>
         {
             if (_action1 != null)
             {
-                result.Set(_action1.Invoke(parsed.Value));
+                result.Set(parsed.Start, parsed.End, _action1.Invoke(parsed.Value));
             }
             else if (_action2 != null)
             {
-                result.Set(_action2.Invoke(context, parsed.Value));
+                result.Set(parsed.Start, parsed.End, _action2.Invoke(context, parsed.Value));
             }
             else if (_action3 != null)
             {
-                result.Set(_action3.Invoke(context, parsed.Start, parsed.End, parsed.Value));
+                result.Set(parsed.Start, parsed.End, _action3.Invoke(context, parsed.Start, parsed.End, parsed.Value));
             }
             else
             {

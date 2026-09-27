@@ -27,7 +27,7 @@ public sealed class DecimalLiteral(NumberOptions numberOptions = NumberOptions.A
 
         if (reader.ConsumeDecimalDigits() && reader.TryGetDecimal(out decimal value))
         {
-            result.Set(sign * value);
+            result.Set(start, reader.GetCurrentPosition(), sign * value);
             return true;
         }
 

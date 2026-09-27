@@ -38,7 +38,7 @@ public sealed class HexValue<T>(Parser<T> parser) : Parser<ulong>
         {
             if (reader.TryGetHex(out var v))
             {
-                result.Set(v);
+                result.Set(parsed.Start, parsed.End, v);
                 return true;
             }
         }
@@ -60,7 +60,7 @@ public sealed class CharValue<T>(Parser<T> parser) : Parser<char>
         {
             if (reader.TryGetChar(out var v))
             {
-                result.Set(v);
+                result.Set(parsed.Start, parsed.End, v);
                 return true;
             }
         }
@@ -154,7 +154,7 @@ public sealed class AsObject<T>(Parser<T> parser) : Parser<object>
         var parsed = new ParseResult<T>();
         if (_parser.Parse(ref reader, context, ref parsed))
         {
-            result.Set(parsed.Value);
+            result.Set(parsed.Start, parsed.End, parsed.Value);
             return true;
         }
         return false;
@@ -176,7 +176,7 @@ public sealed class RegionToString(Parser<Region> parser) : Parser<string>
             // Регион хранит абсолютную позицию; позиция до разбора может включать пропущенные пробелы (Terms)
             if (reader.TryGetString(region.Start, region.Length, out var str))
             {
-                result.Set(str);
+                result.Set(parsed.Start, parsed.End, str);
                 return true;
             }
         }
@@ -197,7 +197,7 @@ public sealed class UnitToString(Parser<Unit> parser) : Parser<string>
         {
             if (reader.TryGetString(out var str))
             {
-                result.Set(str);
+                result.Set(parsed.Start, parsed.End, str);
                 return true;
             }
         }

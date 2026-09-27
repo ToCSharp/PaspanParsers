@@ -21,7 +21,7 @@ public sealed class Switch<T, U>(Parser<T> previousParser, Func<ParseContext, T,
 
             if (nextParser != null && nextParser.Parse(ref reader, context, ref parsed))
             {
-                result.Set(parsed.Value);
+                result.Set(parsed.Start, parsed.End, parsed.Value);
                 return true;
             }
         }

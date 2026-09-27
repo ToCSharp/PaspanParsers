@@ -1,7 +1,9 @@
 namespace Paspan;
 
-public class ParseException(string message/*, in TextPosition position*/) : Exception(message)
+public class ParseException(string message, int position = -1) : Exception(message)
 {
-
-    //public TextPosition Position { get; set; }
+    /// <summary>
+    /// The byte offset in the input where the error was raised, or <c>-1</c> when unknown.
+    /// </summary>
+    public int Position { get; } = position;
 }

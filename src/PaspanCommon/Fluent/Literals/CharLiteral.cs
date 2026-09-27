@@ -31,7 +31,7 @@ public sealed class CharLiteral : Parser<Unit>
         if (reader.Skip(CharBytes))
         {
             reader.SetValue(reader.GetPosition(start), reader.GetCurrentPosition());
-            result.Set(Unit.Value);
+            result.Set(start, reader.GetCurrentPosition(), Unit.Value);
             return true;
         }
 

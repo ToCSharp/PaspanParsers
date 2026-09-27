@@ -130,13 +130,13 @@ namespace PaspanParsers.Calc
 
                 if (!_reader.Skip((byte)')'))
                 {
-                    throw new ParseException("Expected ')'"/*, Position*/);
+                    throw new ParseException("Expected ')'", _reader.GetCurrentPosition());
                 }
 
                 return value;
             }
 
-            throw new ParseException("Expected primary expression"/*, Position*/);
+            throw new ParseException("Expected primary expression", _reader.GetCurrentPosition());
         }
     }
 }

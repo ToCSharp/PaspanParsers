@@ -11,7 +11,7 @@ public sealed class ElseError<T>(Parser<T> parser, string message) : Parser<T>
 
         if (!_parser.Parse(ref reader, context, ref result))
         {
-            throw new ParseException(_message);
+            throw new ParseException(_message, reader.GetCurrentPosition());
         }
 
         return true;
@@ -29,7 +29,7 @@ public sealed class Error<T>(Parser<T> parser, string message) : Parser<T>
 
         if (_parser.Parse(ref reader, context, ref result))
         {
-            throw new ParseException(_message);
+            throw new ParseException(_message, reader.GetCurrentPosition());
         }
 
         return false;
@@ -49,7 +49,7 @@ public sealed class Error<T, U>(Parser<T> parser, string message) : Parser<U>
 
         if (_parser.Parse(ref reader, context, ref parsed))
         {
-            throw new ParseException(_message);
+            throw new ParseException(_message, reader.GetCurrentPosition());
         }
 
         return false;

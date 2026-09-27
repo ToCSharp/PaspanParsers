@@ -18,6 +18,8 @@ public sealed class OneOrMany<T>(Parser<T> parser) : Parser<List<T>>
         }
 
         var results = new List<T> { parsed.Value };
+        var resultStart = parsed.Start;
+        var resultEnd = parsed.End;
 
         // A parser that succeeds without consuming anything would loop forever
         var before = start;
@@ -37,10 +39,11 @@ public sealed class OneOrMany<T>(Parser<T> parser) : Parser<List<T>>
                 break;
             }
 
+            resultEnd = parsed.End;
             results.Add(parsed.Value);
         }
 
-        result = new ParseResult<List<T>>(results);
+        result.Set(resultStart, resultEnd, results);
         return true;
     }
 

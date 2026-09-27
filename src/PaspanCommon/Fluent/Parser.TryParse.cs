@@ -117,8 +117,13 @@ public abstract partial class Parser<T>
             error = new ParseError
             {
                 Message = e.Message,
-                //Position = e.Position
+                Position = e.Position
             };
+
+            if (e.Position >= 0)
+            {
+                (error.Line, error.Column) = reader.GetLineAndColumn(e.Position);
+            }
         }
 
         value = default;
