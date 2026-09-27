@@ -66,7 +66,7 @@ public static class CppSpanChecker
 
                 // Clang's nodes from a macro use all have the span of the use: the parts of the use are not checked
                 _ when macroUses.StrictlyContain(span) => null,
-                ExactRule exact => CheckExact(exact, span, bySpan, utf8, sortedEnds),
+                ExactRule exact => CheckExact(exact, span, bySpan, utf8, sortedEnds, tokenStarts, tokenEnds),
                 DeclarationRule declaration => CheckDeclaration(declaration, node, byName),
                 TokensRule => tokenStarts.Contains(span.Start) && tokenEnds.Contains(span.End)
                     ? null
@@ -89,13 +89,24 @@ public static class CppSpanChecker
         return null;
     }
 
-    private static string CheckExact(ExactRule rule, TextSpan span, ILookup<TextSpan, ClangNode> bySpan, byte[] utf8, int[] sortedTokenEnds)
+    private static string CheckExact(
+        ExactRule rule, TextSpan span, ILookup<TextSpan, ClangNode> bySpan, byte[] utf8, int[] sortedTokenEnds, HashSet<int> tokenStarts, HashSet<int> tokenEnds)
     {
         bool Matches(TextSpan candidate) => bySpan[candidate].Any(n => n.FromMacro || rule.Kinds.Contains(n.Kind));
+
+        if (rule.ClangStart is { } clangStart && Matches(new TextSpan(clangStart, span.End)))
+        {
+            return null;
+        }
 
         if (Matches(span) || (rule.WithoutSemicolon && Matches(WithoutSemicolon(span, utf8, sortedTokenEnds))))
         {
             return null;
+        }
+
+        if (rule.OrAbsent && !bySpan[span].Any())
+        {
+            return tokenStarts.Contains(span.Start) && tokenEnds.Contains(span.End) ? null : "the span does not start and end at token boundaries";
         }
 
         return $"no clang node of kind {string.Join("/", rule.Kinds)} has this span{Found(bySpan[span])}";
@@ -125,7 +136,8 @@ public static class CppSpanChecker
         }
 
         var candidates = byName[name].ToList();
-        if (candidates.Any(n => n.FromMacro || (rule.Kinds.Contains(n.Kind) && n.Span.End == node.Span.End)))
+        var otherEnd = rule.OtherEnd?.Invoke(node) ?? -1;
+        if (candidates.Any(n => n.FromMacro || (rule.Kinds.Contains(n.Kind) && (n.Span.End == node.Span.End || n.Span.End == otherEnd))))
         {
             return null;
         }

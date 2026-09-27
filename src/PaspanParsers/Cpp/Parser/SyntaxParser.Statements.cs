@@ -23,7 +23,7 @@ internal ref partial struct SyntaxParser
             Expression value = null;
             if (!IsPunctuator(";"))
             {
-                value = ParseExpression();
+                value = IsPunctuator("{") ? ParseBracedInitList() : ParseExpression();
                 if (value == null)
                 {
                     return null;
@@ -125,8 +125,9 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// The tokens after a name can only follow a type: a declarator name, a pointer or reference to one
-    /// followed by the end of a declarator, or a pointer to member.
+    /// The tokens after a name can only follow a type: a declarator name, a pointer to one followed by the
+    /// end of a declarator, a reference to one followed by its initializer (<c>X &amp;&amp; y;</c> is an
+    /// expression: a reference needs an initializer), or a pointer to member.
     /// </summary>
     private bool FollowsTypeInDeclaration()
     {
@@ -143,14 +144,23 @@ internal ref partial struct SyntaxParser
 
         if (next.IsPunctuator("*") || next.IsPunctuator("&") || next.IsPunctuator("&&"))
         {
-            var offset = 1;
-            while (Peek(offset).IsPunctuator("*") || Peek(offset).IsPunctuator("&") || Peek(offset).IsKeyword("const"))
+            var offset = 0;
+            var isReference = false;
+            while (Peek(offset).IsPunctuator("*") || Peek(offset).IsPunctuator("&") || Peek(offset).IsPunctuator("&&") || Peek(offset).IsKeyword("const"))
             {
+                isReference |= !Peek(offset).IsPunctuator("*") && !Peek(offset).IsKeyword("const");
                 offset++;
             }
 
             var after = Peek(offset + 1);
-            return Peek(offset).IsIdentifier && (after.IsPunctuator(";") || after.IsPunctuator("=") || after.IsPunctuator(",") || after.IsPunctuator("["));
+            if (!Peek(offset).IsIdentifier)
+            {
+                return false;
+            }
+
+            return isReference
+                ? after.IsPunctuator("=") || after.IsPunctuator("{")
+                : after.IsPunctuator(";") || after.IsPunctuator("=") || after.IsPunctuator(",") || after.IsPunctuator("[");
         }
 
         return false;
@@ -230,7 +240,9 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
+        var saved = EnterBrackets();
         var condition = ParseExpression();
+        LeaveBrackets(saved);
         return condition != null && TryEatPunctuator(")") ? condition : null;
     }
 }

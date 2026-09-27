@@ -77,12 +77,29 @@ that the lazily scanned tokens can skip directives and inactive branches in any 
 | Names | Qualified names (`::a::b<int>::c`, `decltype(x)::type`, `T::template f<int>`), template-ids with type and expression arguments, operator, conversion and literal operator functions, destructors |
 | Types | Declaration specifiers in any order: fundamental types, cv-qualifiers, storage classes, `typedef`, named types, `typename`, elaborated types (`struct X`), `decltype`, `decltype(auto)`, constrained placeholders (`C auto`), GNU `__int128` and friends; type-ids |
 | Declarators | Pointers, references, pointers to members, arrays, functions with cv- and ref-qualifiers, `noexcept`, trailing return types and variadic parameters, parentheses, parameter packs, abstract declarators; `requires` after a declarator |
-| Declarations | Function definitions (also constructors, destructors and conversion functions without specifiers) and simple declarations, `struct X;`, parameters with default values, `=` initializers |
-| Names and scopes | A symbol table tells types from values: `a * b;` declares `b` when `a` is a type; unknown names use heuristics (`X y`, `X *y;`, `vector<int> v;`), and `CppParseOptions.TypeNames`/`TemplateNames` add names from headers |
-| Statements | Compound, declaration, expression, null, `if`/`else`, `while`, `return` |
-| Expressions | Literals, names, parentheses, all binary operators with C++ precedence, `?:`, assignments, prefix and postfix operators, calls |
+| Declarations | Function definitions (also constructors, destructors and conversion functions without specifiers) and simple declarations, `struct X;`, parameters with default values; initializers `= x`, `= { }`, `(x)` and `{ }` (`int a(b);` declares a variable when `b` is a value) |
+| Names and scopes | A symbol table tells types from values: `a * b;` declares `b` when `a` is a type; unknown names use heuristics (`X y`, `X *y;`, `X &y = z;`, `vector<int> v;`), and `CppParseOptions.TypeNames`/`TemplateNames` add names from headers |
+| Statements | Compound, declaration, expression, null, `if`/`else`, `while`, `return` (also with a braced list) |
+| Expressions | All operators of C++23 with their precedence and associativity (including `<=>`, `.*`, `->*`, the comma, `?:` and GNU `?:`, `throw`, `co_await`, `co_yield`); calls, subscripts with any number of arguments, member access (`a.template f<int>`, `p->~T()`); C-style, named and functional casts (`int(x)`, `T{x}`, `auto(x)`, `typename T::x()`, `decltype(x)(y)`); `sizeof`, `sizeof...`, `alignof`, `noexcept`, `typeid`; `new` (placement, parenthesized types, array bounds, initializers) and `delete`; `this`; braced lists with designators; pack expansions; fold expressions; lambdas (captures, init-captures, template parameters, attributes, specifiers, `noexcept`, trailing return types, `requires`); requires-expressions |
+| Templates | Template parameters of lambdas: type, non-type, template template, packs, defaults, constrained (`std::integral T`) |
+| Attributes | `[[...]]` with namespaces, `using`, arguments (kept as written) and `...`; in lambdas |
 | Preprocessor | Directives as trivia, conditional compilation, macro expansion in conditions, `__has_include` and other feature tests |
-| Classes, enums, namespaces, templates, initializers `()` and `{}`, ... | Not yet |
+| Classes, enums, namespaces, template declarations, statements other than the above, ... | Not yet |
+
+Ambiguities of expressions are resolved like clang, with the symbol table:
+
+- `(T)x` is a cast when `T` is a type: it has a keyword, a pointer or reference declarator, or names a
+  type declared in the file. A single name that is not declared in the file (from a header) is a type when
+  an identifier, a literal or a keyword like `sizeof` follows: `(size_t)n` is a cast, `(x)(y)` a call and
+  `(x) - y` a subtraction.
+- `sizeof(x)` and `typeid(x)` take a type unless `x` is declared as a value.
+- `<` after a name starts template arguments when the name is a known template, and after an unknown name
+  when the arguments are followed by a token that cannot follow a comparison `a < b > c`: `(`, `)`, `{`,
+  `::`, `;`, `,`, ... (`get<0>(t)`, `std::array<int, 3>{}`).
+- A name followed by `{` is a type (a functional cast) unless it is declared as a value; followed by `(`,
+  it is a type only when declared as one: `std::string("a")` is a call, since names from headers are not known.
+- In template parameters, a name that is not declared in the file is a concept (`std::integral T`) unless it
+  ends with `_t` (`std::size_t N`).
 
 ## Checking against clang
 
@@ -103,5 +120,5 @@ must also be clang's (`CppLiteralChecker.cs`).
 | `Parser/Lexer.cs`, `Parser/SyntaxToken.cs` | Tokens and trivia |
 | `Parser/Literals.cs` | Values of literals |
 | `Parser/Preprocessor*.cs` | Directives, conditions and macro expansion in them |
-| `Parser/SyntaxParser*.cs` | Recursive descent parser: names, types, declarators, declarations, statements, expressions |
+| `Parser/SyntaxParser*.cs` | Recursive descent parser: names, types, declarators, declarations, statements, expressions, lambdas and requires-expressions, template parameters, attributes |
 | `Parser/Symbols.cs` | Scopes and the kinds of declared names |

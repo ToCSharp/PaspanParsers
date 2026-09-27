@@ -122,9 +122,10 @@ internal ref partial struct SyntaxParser
             {
                 var mark = Save();
                 var name = ParseName(NameContext.Type);
-                if (name == null || NamesFunctionWithoutType(name) || (IsPunctuator("::") && Peek(1).IsPunctuator("*")))
+                if (name == null || NamesFunctionWithoutType(name) || (IsPunctuator("::") && Peek(1).IsPunctuator("*"))
+                    || (name is IdentifierName && _cache.Symbols.Lookup(name) is SymbolKind.Value or SymbolKind.Namespace))
                 {
-                    // A declarator id, or the class of a pointer to member
+                    // A declarator id, the class of a pointer to member, or a variable: int a(b); declares a variable
                     Restore(mark);
                     break;
                 }
@@ -242,11 +243,11 @@ internal ref partial struct SyntaxParser
     // ========================================
 
     /// <summary>
-    /// type-id: a type-specifier-seq and an optional abstract declarator. The type of a conversion
-    /// function (<paramref name="conversion"/>) takes only pointer and reference operators. Returns null
-    /// when there is no type.
+    /// type-id: a type-specifier-seq and an optional abstract declarator of <paramref name="kind"/>: the type
+    /// of a conversion function takes only pointer and reference operators, and the type of a new-expression
+    /// only pointers and arrays. Returns null when there is no type.
     /// </summary>
-    private TypeId ParseTypeId(bool conversion = false)
+    private TypeId ParseTypeId(DeclaratorKind kind = DeclaratorKind.Abstract)
     {
         var start = NodeStart;
         var specifiers = ParseDeclSpecifiers(SpecifierContext.Type);
@@ -255,7 +256,7 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        if (!TryParseDeclarator(conversion ? DeclaratorKind.Conversion : DeclaratorKind.Abstract, out var declarator))
+        if (!TryParseDeclarator(kind, out var declarator))
         {
             return null;
         }

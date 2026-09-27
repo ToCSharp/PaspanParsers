@@ -259,59 +259,64 @@ public sealed class CppWriter
                 Space();
             }
 
-            Directives(specifier);
-            switch (specifier)
-            {
-                case KeywordSpecifier keyword:
-                    Token(keyword.Keyword);
-                    break;
-                case NamedTypeSpecifier named:
-                    if (named.IsTypename)
-                    {
-                        Token("typename");
-                        Space();
-                    }
+            WriteDeclSpecifier(specifier);
+        }
+    }
 
-                    WriteName(named.Name);
-                    break;
-                case ElaboratedTypeSpecifier elaborated:
-                    Token(elaborated.Key);
+    private void WriteDeclSpecifier(DeclSpecifier specifier)
+    {
+        Directives(specifier);
+        switch (specifier)
+        {
+            case KeywordSpecifier keyword:
+                Token(keyword.Keyword);
+                break;
+            case NamedTypeSpecifier named:
+                if (named.IsTypename)
+                {
+                    Token("typename");
                     Space();
-                    WriteName(elaborated.Name);
-                    break;
-                case DecltypeSpecifier decltype:
+                }
+
+                WriteName(named.Name);
+                break;
+            case ElaboratedTypeSpecifier elaborated:
+                Token(elaborated.Key);
+                Space();
+                WriteName(elaborated.Name);
+                break;
+            case DecltypeSpecifier decltype:
+                Token("decltype");
+                Token("(");
+                if (decltype.Expression == null)
+                {
+                    Token("auto");
+                }
+                else
+                {
+                    WriteExpression(decltype.Expression);
+                }
+
+                Token(")");
+                break;
+            case PlaceholderTypeSpecifier placeholder:
+                WriteName(placeholder.Concept);
+                Space();
+                if (placeholder.IsDecltypeAuto)
+                {
                     Token("decltype");
                     Token("(");
-                    if (decltype.Expression == null)
-                    {
-                        Token("auto");
-                    }
-                    else
-                    {
-                        WriteExpression(decltype.Expression);
-                    }
-
+                    Token("auto");
                     Token(")");
-                    break;
-                case PlaceholderTypeSpecifier placeholder:
-                    WriteName(placeholder.Concept);
-                    Space();
-                    if (placeholder.IsDecltypeAuto)
-                    {
-                        Token("decltype");
-                        Token("(");
-                        Token("auto");
-                        Token(")");
-                    }
-                    else
-                    {
-                        Token("auto");
-                    }
+                }
+                else
+                {
+                    Token("auto");
+                }
 
-                    break;
-                default:
-                    throw new NotSupportedException($"Unknown declaration specifier {specifier.GetType().Name}");
-            }
+                break;
+            default:
+                throw new NotSupportedException($"Unknown declaration specifier {specifier.GetType().Name}");
         }
     }
 
@@ -346,6 +351,16 @@ public sealed class CppWriter
                 Token("=");
                 Space();
                 WriteExpression(equals.Value);
+                break;
+            case ParenthesizedInitializer parenthesized:
+                Directives(parenthesized);
+                Token("(");
+                WriteExpressionList(parenthesized.Arguments);
+                Token(")");
+                break;
+            case BracedInitializer braced:
+                Directives(braced);
+                WriteExpression(braced.List);
                 break;
             default:
                 throw new NotSupportedException($"Unknown initializer {initializer.GetType().Name}");
@@ -422,11 +437,9 @@ public sealed class CppWriter
         }
     }
 
-    private void WriteFunctionDeclarator(FunctionDeclarator function)
+    private void WriteParameters(IReadOnlyList<ParameterDeclaration> parameters, bool isVariadic)
     {
-        WriteDeclarator(function.Inner);
-        Token("(");
-        for (var i = 0; i < function.Parameters.Count; i++)
+        for (var i = 0; i < parameters.Count; i++)
         {
             if (i > 0)
             {
@@ -434,12 +447,12 @@ public sealed class CppWriter
                 Space();
             }
 
-            WriteParameter(function.Parameters[i]);
+            WriteParameter(parameters[i]);
         }
 
-        if (function.IsVariadic)
+        if (isVariadic)
         {
-            if (function.Parameters.Count > 0)
+            if (parameters.Count > 0)
             {
                 Token(",");
                 Space();
@@ -447,7 +460,31 @@ public sealed class CppWriter
 
             Token("...");
         }
+    }
 
+    private void WriteNoexceptSpecifier(NoexceptSpecifier noexcept)
+    {
+        if (noexcept == null)
+        {
+            return;
+        }
+
+        Directives(noexcept);
+        Space();
+        Token("noexcept");
+        if (noexcept.Condition != null)
+        {
+            Token("(");
+            WriteExpression(noexcept.Condition);
+            Token(")");
+        }
+    }
+
+    private void WriteFunctionDeclarator(FunctionDeclarator function)
+    {
+        WriteDeclarator(function.Inner);
+        Token("(");
+        WriteParameters(function.Parameters, function.IsVariadic);
         Token(")");
         foreach (var qualifier in function.Qualifiers)
         {
@@ -461,18 +498,7 @@ public sealed class CppWriter
             Token(function.RefQualifier);
         }
 
-        if (function.Noexcept != null)
-        {
-            Directives(function.Noexcept);
-            Space();
-            Token("noexcept");
-            if (function.Noexcept.Condition != null)
-            {
-                Token("(");
-                WriteExpression(function.Noexcept.Condition);
-                Token(")");
-            }
-        }
+        WriteNoexceptSpecifier(function.Noexcept);
 
         if (function.TrailingReturnType != null)
         {
@@ -733,9 +759,13 @@ public sealed class CppWriter
                 WriteExpression(conditional.Condition);
                 Space();
                 Token("?");
-                Space();
-                WriteExpression(conditional.WhenTrue);
-                Space();
+                if (conditional.WhenTrue != null)
+                {
+                    Space();
+                    WriteExpression(conditional.WhenTrue);
+                    Space();
+                }
+
                 Token(":");
                 Space();
                 WriteExpression(conditional.WhenFalse);
@@ -743,21 +773,553 @@ public sealed class CppWriter
             case CallExpression call:
                 WriteExpression(call.Callee);
                 Token("(");
-                for (var i = 0; i < call.Arguments.Count; i++)
+                WriteExpressionList(call.Arguments);
+                Token(")");
+                break;
+            case ThisExpression:
+                Token("this");
+                break;
+            case MemberAccessExpression member:
+                WriteExpression(member.Object);
+                Token(member.Operator);
+                if (member.IsTemplate)
                 {
-                    if (i > 0)
-                    {
-                        Token(",");
-                        Space();
-                    }
+                    Token("template");
+                    Space();
+                }
 
-                    WriteExpression(call.Arguments[i]);
+                WriteName(member.Member);
+                break;
+            case SubscriptExpression subscript:
+                WriteExpression(subscript.Object);
+                Token("[");
+                WriteExpressionList(subscript.Arguments);
+                Token("]");
+                break;
+            case CastExpression cast:
+                Token("(");
+                WriteTypeId(cast.Type);
+                Token(")");
+                WriteExpression(cast.Operand);
+                break;
+            case NamedCastExpression cast:
+                Token(cast.Keyword);
+                Token("<");
+                WriteTypeId(cast.Type);
+                Token(">");
+                Token("(");
+                WriteExpression(cast.Operand);
+                Token(")");
+                break;
+            case FunctionalCastExpression cast:
+                WriteDeclSpecifier(cast.Type);
+                WriteInitializer(cast.Initializer);
+                break;
+            case SizeOfExpression size:
+                Token(size.Keyword);
+                WriteTypeOrExpressionOperand(size.Operand);
+                break;
+            case SizeOfPackExpression pack:
+                Token("sizeof");
+                Token("...");
+                Token("(");
+                WriteName(pack.Pack);
+                Token(")");
+                break;
+            case NoexceptExpression noexcept:
+                Token("noexcept");
+                Token("(");
+                WriteExpression(noexcept.Operand);
+                Token(")");
+                break;
+            case TypeidExpression typeid:
+                Token("typeid");
+                Token("(");
+                WriteTypeOrExpression(typeid.Operand);
+                Token(")");
+                break;
+            case NewExpression @new:
+                WriteNewExpression(@new);
+                break;
+            case DeleteExpression delete:
+                if (delete.IsGlobal)
+                {
+                    Token("::");
+                }
+
+                Token("delete");
+                if (delete.IsArray)
+                {
+                    Token("[");
+                    Token("]");
+                }
+
+                Space();
+                WriteExpression(delete.Operand);
+                break;
+            case ThrowExpression @throw:
+                Token("throw");
+                if (@throw.Operand != null)
+                {
+                    Space();
+                    WriteExpression(@throw.Operand);
+                }
+
+                break;
+            case YieldExpression yield:
+                Token("co_yield");
+                Space();
+                WriteExpression(yield.Operand);
+                break;
+            case InitializerListExpression list:
+                Token("{");
+                WriteExpressionList(list.Elements);
+                if (list.HasTrailingComma)
+                {
+                    Token(",");
+                }
+
+                Token("}");
+                break;
+            case DesignatedInitializerExpression designated:
+                foreach (var designator in designated.Designators)
+                {
+                    Directives(designator);
+                    if (designator.Index != null)
+                    {
+                        Token("[");
+                        WriteExpression(designator.Index);
+                        Token("]");
+                    }
+                    else
+                    {
+                        Token(".");
+                        Token(designator.Member);
+                    }
+                }
+
+                if (designated.HasEquals)
+                {
+                    Space();
+                    Token("=");
+                    Space();
+                }
+
+                WriteExpression(designated.Value);
+                break;
+            case PackExpansionExpression pack:
+                WriteExpression(pack.Pattern);
+                Token("...");
+                break;
+            case FoldExpression fold:
+                Token("(");
+                if (fold.Left != null)
+                {
+                    WriteExpression(fold.Left);
+                    Space();
+                    Token(fold.Operator);
+                    Space();
+                }
+
+                Token("...");
+                if (fold.Right != null)
+                {
+                    Space();
+                    Token(fold.Operator);
+                    Space();
+                    WriteExpression(fold.Right);
                 }
 
                 Token(")");
                 break;
+            case LambdaExpression lambda:
+                WriteLambdaExpression(lambda);
+                break;
+            case RequiresExpression requires:
+                WriteRequiresExpression(requires);
+                break;
             default:
                 throw new NotSupportedException($"Unknown expression {expression.GetType().Name}");
+        }
+    }
+
+    /// <summary>
+    /// Expressions separated by commas: arguments, subscripts and the elements of lists.
+    /// </summary>
+    private void WriteExpressionList(IReadOnlyList<Expression> expressions)
+    {
+        for (var i = 0; i < expressions.Count; i++)
+        {
+            if (i > 0)
+            {
+                Token(",");
+                Space();
+            }
+
+            WriteExpression(expressions[i]);
+        }
+    }
+
+    /// <summary>
+    /// A type in parentheses or an expression: the operand of <c>typeid</c>.
+    /// </summary>
+    private void WriteTypeOrExpression(CppNode operand)
+    {
+        if (operand is TypeId type)
+        {
+            WriteTypeId(type);
+        }
+        else
+        {
+            WriteExpression((Expression)operand);
+        }
+    }
+
+    /// <summary>
+    /// The operand of <c>sizeof</c> and <c>alignof</c>: a type in parentheses, or an expression.
+    /// </summary>
+    private void WriteTypeOrExpressionOperand(CppNode operand)
+    {
+        if (operand is TypeId type)
+        {
+            Token("(");
+            WriteTypeId(type);
+            Token(")");
+        }
+        else
+        {
+            Space();
+            WriteExpression((Expression)operand);
+        }
+    }
+
+    private void WriteNewExpression(NewExpression @new)
+    {
+        if (@new.IsGlobal)
+        {
+            Token("::");
+        }
+
+        Token("new");
+        Space();
+        if (@new.Placement != null)
+        {
+            Token("(");
+            WriteExpressionList(@new.Placement);
+            Token(")");
+            Space();
+        }
+
+        if (@new.IsParenthesizedType)
+        {
+            Token("(");
+            WriteTypeId(@new.Type);
+            Token(")");
+        }
+        else
+        {
+            WriteTypeId(@new.Type);
+        }
+
+        WriteInitializer(@new.Initializer);
+    }
+
+    private void WriteLambdaExpression(LambdaExpression lambda)
+    {
+        Token("[");
+        if (lambda.CaptureDefault != null)
+        {
+            Token(lambda.CaptureDefault);
+            if (lambda.Captures.Count > 0)
+            {
+                Token(",");
+                Space();
+            }
+        }
+
+        for (var i = 0; i < lambda.Captures.Count; i++)
+        {
+            if (i > 0)
+            {
+                Token(",");
+                Space();
+            }
+
+            WriteLambdaCapture(lambda.Captures[i]);
+        }
+
+        Token("]");
+        if (lambda.TemplateParameters != null)
+        {
+            WriteTemplateParameterList(lambda.TemplateParameters);
+            WriteRequiresClause(lambda.TemplateRequiresClause);
+        }
+
+        WriteAttributeSpecifiers(lambda.Attributes);
+        if (lambda.Parameters != null)
+        {
+            Token("(");
+            WriteParameters(lambda.Parameters, lambda.IsVariadic);
+            Token(")");
+        }
+
+        foreach (var specifier in lambda.Specifiers)
+        {
+            Space();
+            Token(specifier);
+        }
+
+        WriteNoexceptSpecifier(lambda.Noexcept);
+        WriteAttributeSpecifiers(lambda.TypeAttributes);
+        if (lambda.TrailingReturnType != null)
+        {
+            Space();
+            Token("->");
+            Space();
+            WriteTypeId(lambda.TrailingReturnType);
+        }
+
+        WriteRequiresClause(lambda.RequiresClause);
+        Space();
+        WriteCompoundStatement(lambda.Body);
+    }
+
+    private void WriteLambdaCapture(LambdaCapture capture)
+    {
+        Directives(capture);
+        if (capture.IsThis)
+        {
+            if (capture.IsStarThis)
+            {
+                Token("*");
+            }
+
+            Token("this");
+            return;
+        }
+
+        if (capture.IsByReference)
+        {
+            Token("&");
+        }
+
+        if (capture.IsPack && capture.Initializer != null)
+        {
+            Token("...");
+        }
+
+        Token(capture.Identifier);
+        if (capture.IsPack && capture.Initializer == null)
+        {
+            Token("...");
+        }
+
+        WriteInitializer(capture.Initializer);
+    }
+
+    private void WriteRequiresExpression(RequiresExpression requires)
+    {
+        Token("requires");
+        if (requires.Parameters != null)
+        {
+            Space();
+            Token("(");
+            WriteParameters(requires.Parameters, isVariadic: false);
+            Token(")");
+        }
+
+        Space();
+        Token("{");
+        foreach (var requirement in requires.Requirements)
+        {
+            Space();
+            Directives(requirement);
+            switch (requirement)
+            {
+                case SimpleRequirement simple:
+                    WriteExpression(simple.Expression);
+                    break;
+                case TypeRequirement type:
+                    Token("typename");
+                    Space();
+                    WriteName(type.Type);
+                    break;
+                case CompoundRequirement compound:
+                    Token("{");
+                    Space();
+                    WriteExpression(compound.Expression);
+                    Space();
+                    Token("}");
+                    if (compound.IsNoexcept)
+                    {
+                        Space();
+                        Token("noexcept");
+                    }
+
+                    if (compound.TypeConstraint != null)
+                    {
+                        Space();
+                        Token("->");
+                        Space();
+                        WriteName(compound.TypeConstraint);
+                    }
+
+                    break;
+                case NestedRequirement nested:
+                    Token("requires");
+                    Space();
+                    WriteExpression(nested.Constraint);
+                    break;
+                default:
+                    throw new NotSupportedException($"Unknown requirement {requirement.GetType().Name}");
+            }
+
+            Token(";");
+        }
+
+        Space();
+        Token("}");
+    }
+
+    // ========================================
+    // Templates and attributes
+    // ========================================
+
+    private void WriteTemplateParameterList(IReadOnlyList<TemplateParameter> parameters)
+    {
+        Token("<");
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            if (i > 0)
+            {
+                Token(",");
+                Space();
+            }
+
+            WriteTemplateParameter(parameters[i]);
+        }
+
+        Token(">");
+    }
+
+    private void WriteTemplateParameter(TemplateParameter parameter)
+    {
+        Directives(parameter);
+        switch (parameter)
+        {
+            case TypeTemplateParameter type:
+                if (type.Key != null)
+                {
+                    Token(type.Key);
+                }
+                else
+                {
+                    WriteName(type.Constraint);
+                }
+
+                if (type.IsPack)
+                {
+                    Token("...");
+                }
+
+                if (type.Identifier != null)
+                {
+                    Space();
+                    Token(type.Identifier);
+                }
+
+                if (type.Default != null)
+                {
+                    Space();
+                    Token("=");
+                    Space();
+                    WriteTypeId(type.Default);
+                }
+
+                break;
+            case NonTypeTemplateParameter nonType:
+                WriteParameter(nonType.Parameter);
+                break;
+            case TemplateTemplateParameter template:
+                Token("template");
+                Space();
+                WriteTemplateParameterList(template.Parameters);
+                Space();
+                Token(template.Key);
+                if (template.IsPack)
+                {
+                    Token("...");
+                }
+
+                if (template.Identifier != null)
+                {
+                    Space();
+                    Token(template.Identifier);
+                }
+
+                if (template.Default != null)
+                {
+                    Space();
+                    Token("=");
+                    Space();
+                    WriteName(template.Default);
+                }
+
+                break;
+            default:
+                throw new NotSupportedException($"Unknown template parameter {parameter.GetType().Name}");
+        }
+    }
+
+    private void WriteAttributeSpecifiers(IReadOnlyList<AttributeSpecifier> specifiers)
+    {
+        foreach (var specifier in specifiers)
+        {
+            Space();
+            Directives(specifier);
+            Token("[");
+            Token("[");
+            if (specifier.UsingNamespace != null)
+            {
+                Token("using");
+                Space();
+                Token(specifier.UsingNamespace);
+                Token(":");
+                Space();
+            }
+
+            for (var i = 0; i < specifier.Attributes.Count; i++)
+            {
+                if (i > 0)
+                {
+                    Token(",");
+                    Space();
+                }
+
+                var attribute = specifier.Attributes[i];
+                Directives(attribute);
+                if (attribute.Namespace != null)
+                {
+                    Token(attribute.Namespace);
+                    Token("::");
+                }
+
+                Token(attribute.Name);
+                if (attribute.Arguments != null)
+                {
+                    Token("(");
+                    _builder.Append(attribute.Arguments);
+                    Token(")");
+                }
+
+                if (attribute.IsPackExpansion)
+                {
+                    Token("...");
+                }
+            }
+
+            Token("]");
+            Token("]");
         }
     }
 

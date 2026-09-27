@@ -1,4 +1,7 @@
-// Classes: members, access, inheritance, nested types, friends, bit-fields, static members.
+// Classes: members, access, inheritance, nested types, friends, bit-fields, static members; expressions
+// with classes (member access, pointers to members, this in lambdas).
+
+#include <compare>
 
 class Forward;
 
@@ -124,3 +127,44 @@ struct Local
 };
 
 struct Point { int x, y; } origin{ 0, 0 }, *pointer = &origin;
+
+// Expressions with classes
+
+struct Shape { virtual ~Shape() {} int field; int method() { return field; } };
+struct Square : Shape { int extra; };
+struct Pair { int first, second; auto operator<=>(const Pair &) const = default; };
+
+int member_access(Shape &shape, Shape *pointer, Square square)
+{
+    int r = shape.field + pointer->field + shape.method() + pointer->method() + square.extra + square.Shape::field;
+    int Shape::*member = &Shape::field;
+    int (Shape::*method)() = &Shape::method;
+    r = shape.*member + (pointer->*method)() + (shape.*method)();
+    bool less = (Pair{1, 2} <=> Pair{1, 3}) < 0;
+    Square *derived = dynamic_cast<Square *>(pointer);
+    Shape *created = new Square();
+    Shape *global = ::new Square{};
+    delete created;
+    delete global;
+    return r + less + (derived != nullptr);
+}
+
+struct Widget
+{
+    int size = 0;
+
+    auto getter()
+    {
+        return [this] { return size; };
+    }
+
+    auto copier()
+    {
+        return [*this]() mutable { return ++size; };
+    }
+
+    auto everything()
+    {
+        return [=, this](int extra) { return this->size + extra; };
+    }
+};

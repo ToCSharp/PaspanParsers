@@ -22,15 +22,16 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// A position to go back to after a speculative parse, with the symbols declared up to it.
     /// </summary>
-    private readonly record struct Mark(int Position, int Symbols, bool InTemplateArguments);
+    private readonly record struct Mark(int Position, int Symbols, bool InTemplateArguments, bool InConstraint);
 
-    private readonly Mark Save() => new(_position, _cache.Symbols.Checkpoint(), _inTemplateArguments);
+    private readonly Mark Save() => new(_position, _cache.Symbols.Checkpoint(), _inTemplateArguments, _inConstraint);
 
     private void Restore(Mark mark)
     {
         _position = mark.Position;
         _cache.Symbols.Rollback(mark.Symbols);
         _inTemplateArguments = mark.InTemplateArguments;
+        _inConstraint = mark.InConstraint;
     }
 
     /// <summary>
@@ -119,7 +120,8 @@ internal ref partial struct SyntaxParser
                 return ParseTemplateId(identifier, start, commit: isTemplate || context == NameContext.Type);
             }
 
-            // An unknown template: template arguments followed by '::' (N::S<int>::S), or in a constraint (C<T>)
+            // An unknown template: template arguments followed by '::' (N::S<int>::S), in a constraint (C<T>),
+            // or in an expression followed by a token that cannot follow a comparison a < b > c
             if (_cache.Symbols.Lookup(identifier.Identifier) != null)
             {
                 return identifier;
@@ -127,7 +129,7 @@ internal ref partial struct SyntaxParser
 
             var mark = Save();
             var templateId = ParseTemplateId(identifier, start, commit: false);
-            if (templateId is TemplateIdName && (_inConstraint || IsPunctuator("::")))
+            if (templateId is TemplateIdName && (_inConstraint || IsPunctuator("::") || (context != NameContext.Type && FollowsTemplateId(Current))))
             {
                 return templateId;
             }
@@ -177,6 +179,18 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
+    /// After <c>a &lt; b &gt;</c> with an unknown <c>a</c>, the token cannot start the right operand of a
+    /// comparison, so the '&lt;' and '&gt;' enclose template arguments: <c>get&lt;0&gt;(t)</c>,
+    /// <c>std::array&lt;int, 3&gt;{}</c>, <c>f(is_same_v&lt;T, U&gt;)</c>.
+    /// </summary>
+    private static bool FollowsTemplateId(SyntaxToken token)
+    {
+        return token.Kind == TokenKind.EndOfFile
+            || (token.Kind == TokenKind.Punctuator && token.Text is "(" or ")" or "[" or "]" or "{" or "}" or ";" or "," or ":"
+                or "?" or "==" or "!=" or "&&" or "||" or "|" or "^" or "...");
+    }
+
+    /// <summary>
     /// A '&lt;' after <paramref name="name"/> starts template arguments: always in a type and after
     /// <c>template</c>, otherwise when the name is a known template or concept.
     /// </summary>
@@ -203,10 +217,9 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        var saved = _inTemplateArguments;
-        _inTemplateArguments = false;
+        var saved = EnterBrackets();
         var expression = ParseExpression();
-        _inTemplateArguments = saved;
+        LeaveBrackets(saved);
         return expression != null && TryEatPunctuator(")") ? expression : null;
     }
 
@@ -323,7 +336,7 @@ internal ref partial struct SyntaxParser
         _inTemplateArguments = true;
         var expression = ParseAssignmentExpression();
         _inTemplateArguments = saved;
-        return expression;
+        return expression == null ? null : TryParsePackExpansion(expression);
     }
 
     /// <summary>
@@ -366,7 +379,7 @@ internal ref partial struct SyntaxParser
         }
 
         // A conversion function: its type has no parentheses or arrays, so it ends before them
-        var type = ParseTypeId(conversion: true);
+        var type = ParseTypeId(DeclaratorKind.Conversion);
         return type == null ? null : Finish(new ConversionFunctionName(type), start);
     }
 

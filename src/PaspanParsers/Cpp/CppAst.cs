@@ -500,11 +500,29 @@ public abstract class Initializer : CppNode
 }
 
 /// <summary>
-/// <c>= expression</c>.
+/// <c>= expression</c>, or <c>= { list }</c> when <see cref="Value"/> is an <see cref="InitializerListExpression"/>.
 /// </summary>
 public sealed class EqualsInitializer(Expression value) : Initializer
 {
     public Expression Value { get; } = value;
+}
+
+/// <summary>
+/// Direct initialization with parentheses: <c>(1, 2)</c> in <c>int a(1);</c>, <c>new int(5)</c>, <c>T(x)</c>.
+/// An argument is an expression, an <see cref="InitializerListExpression"/> or a <see cref="PackExpansionExpression"/>.
+/// </summary>
+public sealed class ParenthesizedInitializer(IReadOnlyList<Expression> arguments) : Initializer
+{
+    public IReadOnlyList<Expression> Arguments { get; } = arguments ?? [];
+}
+
+/// <summary>
+/// List initialization: <c>{ 1, 2 }</c> in <c>int a{ 1 };</c>, <c>new int[2]{ 1, 2 }</c>, <c>T{ x }</c>. The
+/// initializer has the span of its list.
+/// </summary>
+public sealed class BracedInitializer(InitializerListExpression list) : Initializer
+{
+    public InitializerListExpression List { get; } = list;
 }
 
 // ========================================
@@ -675,7 +693,7 @@ public sealed class ParenthesizedExpression(Expression expression) : Expression
 }
 
 /// <summary>
-/// A prefix or postfix operator: <c>-a</c>, <c>*p</c>, <c>i++</c>.
+/// A prefix or postfix operator: <c>-a</c>, <c>*p</c>, <c>i++</c>, or <c>co_await a</c>.
 /// </summary>
 public sealed class UnaryExpression(string @operator, Expression operand, bool isPostfix = false) : Expression
 {
@@ -685,7 +703,9 @@ public sealed class UnaryExpression(string @operator, Expression operand, bool i
 }
 
 /// <summary>
-/// A binary operator, including assignments and the comma operator: <c>a + b</c>, <c>a = b</c>, <c>a, b</c>.
+/// A binary operator, including assignments, the comma operator and the pointer-to-member operators:
+/// <c>a + b</c>, <c>a = b</c>, <c>a, b</c>, <c>a.*m</c>. The right operand of an assignment may be an
+/// <see cref="InitializerListExpression"/>: <c>a = { 1, 2 }</c>.
 /// </summary>
 public sealed class BinaryExpression(Expression left, string @operator, Expression right) : Expression
 {
@@ -695,7 +715,8 @@ public sealed class BinaryExpression(Expression left, string @operator, Expressi
 }
 
 /// <summary>
-/// <c>condition ? whenTrue : whenFalse</c>.
+/// <c>condition ? whenTrue : whenFalse</c>. The GNU conditional without a middle operand,
+/// <c>condition ?: whenFalse</c>, has a null <see cref="WhenTrue"/>.
 /// </summary>
 public sealed class ConditionalExpression(Expression condition, Expression whenTrue, Expression whenFalse) : Expression
 {
@@ -705,10 +726,413 @@ public sealed class ConditionalExpression(Expression condition, Expression whenT
 }
 
 /// <summary>
-/// A function call: <c>f(a, b)</c>.
+/// A function call: <c>f(a, b)</c>. An argument is an expression, an <see cref="InitializerListExpression"/>
+/// or a <see cref="PackExpansionExpression"/>. A call of a name that is a type is a <see cref="FunctionalCastExpression"/>;
+/// names declared outside the file (in headers) are not known as types, so <c>std::string("a")</c> is a call.
 /// </summary>
 public sealed class CallExpression(Expression callee, IReadOnlyList<Expression> arguments) : Expression
 {
     public Expression Callee { get; } = callee;
     public IReadOnlyList<Expression> Arguments { get; } = arguments ?? [];
+}
+
+
+/// <summary>
+/// <c>this</c>.
+/// </summary>
+public sealed class ThisExpression : Expression
+{
+}
+
+/// <summary>
+/// Member access: <c>a.b</c>, <c>p-&gt;b</c>, <c>a.template f&lt;int&gt;</c>, <c>a.Base::b</c>, or a destructor
+/// name <c>p-&gt;~T</c>. <see cref="Operator"/> is <c>.</c> or <c>-&gt;</c>.
+/// </summary>
+public sealed class MemberAccessExpression(Expression @object, string @operator, Name member) : Expression
+{
+    public Expression Object { get; } = @object;
+    public string Operator { get; } = @operator;
+
+    /// <summary><c>template</c> comes before the member: <c>a.template f&lt;int&gt;</c>.</summary>
+    public bool IsTemplate { get; init; }
+
+    public Name Member { get; } = member;
+}
+
+/// <summary>
+/// A subscript: <c>a[i]</c>. Since C++23 it takes any number of arguments: <c>m[1, 2]</c>, <c>a[]</c>;
+/// an argument may be an <see cref="InitializerListExpression"/>.
+/// </summary>
+public sealed class SubscriptExpression(Expression @object, IReadOnlyList<Expression> arguments) : Expression
+{
+    public Expression Object { get; } = @object;
+    public IReadOnlyList<Expression> Arguments { get; } = arguments ?? [];
+}
+
+/// <summary>
+/// A C-style cast: <c>(int)x</c>.
+/// </summary>
+public sealed class CastExpression(TypeId type, Expression operand) : Expression
+{
+    public TypeId Type { get; } = type;
+    public Expression Operand { get; } = operand;
+}
+
+/// <summary>
+/// <c>static_cast&lt;T&gt;(x)</c>; <see cref="Keyword"/> is <c>static_cast</c>, <c>dynamic_cast</c>,
+/// <c>const_cast</c> or <c>reinterpret_cast</c>.
+/// </summary>
+public sealed class NamedCastExpression(string keyword, TypeId type, Expression operand) : Expression
+{
+    public string Keyword { get; } = keyword;
+    public TypeId Type { get; } = type;
+    public Expression Operand { get; } = operand;
+}
+
+/// <summary>
+/// A type used as a function: <c>int(x)</c>, <c>T{ 1, 2 }</c>, <c>auto(x)</c>, <c>typename T::type()</c>. The type
+/// is one simple type specifier (<see cref="KeywordSpecifier"/>, <see cref="NamedTypeSpecifier"/> or
+/// <see cref="DecltypeSpecifier"/>); the initializer is a <see cref="ParenthesizedInitializer"/> or a
+/// <see cref="BracedInitializer"/>.
+/// </summary>
+public sealed class FunctionalCastExpression(DeclSpecifier type, Initializer initializer) : Expression
+{
+    public DeclSpecifier Type { get; } = type;
+    public Initializer Initializer { get; } = initializer;
+}
+
+/// <summary>
+/// <c>sizeof</c> or <c>alignof</c> of an expression (<c>sizeof x</c>) or of a type (<c>sizeof(int)</c>, the
+/// operand is then a <see cref="TypeId"/> and the parentheses belong to the expression). <see cref="Keyword"/>
+/// is <c>sizeof</c>, <c>alignof</c>, or one of the extensions <c>_Alignof</c>, <c>__alignof</c> and <c>__alignof__</c>.
+/// </summary>
+public sealed class SizeOfExpression(string keyword, CppNode operand) : Expression
+{
+    public string Keyword { get; } = keyword;
+
+    /// <summary>A <see cref="TypeId"/> or an <see cref="Expression"/>.</summary>
+    public CppNode Operand { get; } = operand;
+}
+
+/// <summary>
+/// <c>sizeof...(pack)</c>.
+/// </summary>
+public sealed class SizeOfPackExpression(IdentifierName pack) : Expression
+{
+    public IdentifierName Pack { get; } = pack;
+}
+
+/// <summary>
+/// <c>noexcept(expression)</c>.
+/// </summary>
+public sealed class NoexceptExpression(Expression operand) : Expression
+{
+    public Expression Operand { get; } = operand;
+}
+
+/// <summary>
+/// <c>typeid(type)</c> or <c>typeid(expression)</c>.
+/// </summary>
+public sealed class TypeidExpression(CppNode operand) : Expression
+{
+    /// <summary>A <see cref="TypeId"/> or an <see cref="Expression"/>.</summary>
+    public CppNode Operand { get; } = operand;
+}
+
+/// <summary>
+/// A new-expression: <c>new int</c>, <c>::new (buffer) T(1)</c>, <c>new int[n]{ 1, 2 }</c>, <c>new (int *)(p)</c>.
+/// The type of <c>new int[n]</c> has an <see cref="ArrayDeclarator"/> whose size is any expression.
+/// </summary>
+public sealed class NewExpression(IReadOnlyList<Expression> placement, TypeId type, Initializer initializer = null) : Expression
+{
+    /// <summary><c>::new</c>.</summary>
+    public bool IsGlobal { get; init; }
+
+    /// <summary>The placement arguments: <c>(buffer)</c>, or null when there are none.</summary>
+    public IReadOnlyList<Expression> Placement { get; } = placement;
+
+    public TypeId Type { get; } = type;
+
+    /// <summary>The type is in parentheses: <c>new (int *)</c>.</summary>
+    public bool IsParenthesizedType { get; init; }
+
+    /// <summary>A <see cref="ParenthesizedInitializer"/>, a <see cref="BracedInitializer"/> or null.</summary>
+    public Initializer Initializer { get; } = initializer;
+}
+
+/// <summary>
+/// <c>delete p</c>, <c>delete[] p</c>, <c>::delete p</c>.
+/// </summary>
+public sealed class DeleteExpression(Expression operand) : Expression
+{
+    public bool IsGlobal { get; init; }
+    public bool IsArray { get; init; }
+    public Expression Operand { get; } = operand;
+}
+
+/// <summary>
+/// <c>throw expression</c>, or <c>throw</c> alone when <see cref="Operand"/> is null.
+/// </summary>
+public sealed class ThrowExpression(Expression operand = null) : Expression
+{
+    public Expression Operand { get; } = operand;
+}
+
+/// <summary>
+/// <c>co_yield expression</c>; the operand may be an <see cref="InitializerListExpression"/>.
+/// </summary>
+public sealed class YieldExpression(Expression operand) : Expression
+{
+    public Expression Operand { get; } = operand;
+}
+
+/// <summary>
+/// A braced-init-list: <c>{ 1, 2 }</c>, <c>{ .x = 1 }</c>. It appears where the grammar allows an
+/// initializer-clause: in initializers, arguments, subscripts, other lists and on the right of an assignment.
+/// An element is an expression, a nested list, a <see cref="DesignatedInitializerExpression"/> or a
+/// <see cref="PackExpansionExpression"/>.
+/// </summary>
+public sealed class InitializerListExpression(IReadOnlyList<Expression> elements) : Expression
+{
+    public IReadOnlyList<Expression> Elements { get; } = elements ?? [];
+
+    /// <summary>The list ends with a comma: <c>{ 1, 2, }</c>.</summary>
+    public bool HasTrailingComma { get; init; }
+}
+
+/// <summary>
+/// A designated initializer: <c>.x = 1</c>, <c>.to{ 2, 3 }</c>, or with the extensions of C99 that clang
+/// accepts, <c>.a.b = 1</c> and <c>[2] = 1</c>. Without <see cref="HasEquals"/> the value is an
+/// <see cref="InitializerListExpression"/>.
+/// </summary>
+public sealed class DesignatedInitializerExpression(IReadOnlyList<Designator> designators, Expression value) : Expression
+{
+    public IReadOnlyList<Designator> Designators { get; } = designators ?? [];
+    public bool HasEquals { get; init; }
+    public Expression Value { get; } = value;
+}
+
+/// <summary>
+/// A designator: <c>.member</c>, or <c>[index]</c> when <see cref="Index"/> is set.
+/// </summary>
+public sealed class Designator(string member, Expression index = null) : CppNode
+{
+    public string Member { get; } = member;
+    public Expression Index { get; } = index;
+}
+
+/// <summary>
+/// A pack expansion in a list: <c>args...</c> in <c>f(args...)</c>, <c>{ xs... }</c> or template arguments.
+/// </summary>
+public sealed class PackExpansionExpression(Expression pattern) : Expression
+{
+    public Expression Pattern { get; } = pattern;
+}
+
+/// <summary>
+/// A fold expression, with its parentheses: <c>(xs + ...)</c> has a null <see cref="Right"/>, <c>(... + xs)</c>
+/// a null <see cref="Left"/>, and <c>(xs + ... + 0)</c> both operands.
+/// </summary>
+public sealed class FoldExpression(Expression left, string @operator, Expression right) : Expression
+{
+    public Expression Left { get; } = left;
+    public string Operator { get; } = @operator;
+    public Expression Right { get; } = right;
+}
+
+/// <summary>
+/// A lambda: <c>[captures] &lt;template parameters&gt; requires C (parameters) specifiers -&gt; type { body }</c>.
+/// </summary>
+public sealed class LambdaExpression(IReadOnlyList<LambdaCapture> captures, CompoundStatement body) : Expression
+{
+    /// <summary><c>=</c> or <c>&amp;</c> as the first capture, or null.</summary>
+    public string CaptureDefault { get; init; }
+
+    public IReadOnlyList<LambdaCapture> Captures { get; } = captures ?? [];
+
+    /// <summary>The template parameters: <c>&lt;typename T&gt;</c>, or null when there are none.</summary>
+    public IReadOnlyList<TemplateParameter> TemplateParameters { get; init; }
+
+    /// <summary>The requires-clause after the template parameters, or null.</summary>
+    public Expression TemplateRequiresClause { get; init; }
+
+    /// <summary>The attributes before the parameters: <c>[] [[nodiscard]] (int x)</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
+
+    /// <summary>The parameters, or null when the lambda has no parentheses: <c>[] { }</c>.</summary>
+    public IReadOnlyList<ParameterDeclaration> Parameters { get; init; }
+
+    /// <summary>The parameters end with <c>...</c>, as in <see cref="FunctionDeclarator.IsVariadic"/>.</summary>
+    public bool IsVariadic { get; init; }
+
+    /// <summary><c>mutable</c>, <c>constexpr</c>, <c>consteval</c> and <c>static</c>, in source order.</summary>
+    public IReadOnlyList<string> Specifiers { get; init; } = [];
+
+    public NoexceptSpecifier Noexcept { get; init; }
+
+    /// <summary>The attributes after the specifiers, which appertain to the type of the call operator.</summary>
+    public IReadOnlyList<AttributeSpecifier> TypeAttributes { get; init; } = [];
+
+    /// <summary>The type after <c>-&gt;</c>, or null.</summary>
+    public TypeId TrailingReturnType { get; init; }
+
+    /// <summary>The requires-clause after the parameters, or null.</summary>
+    public Expression RequiresClause { get; init; }
+
+    public CompoundStatement Body { get; } = body;
+}
+
+/// <summary>
+/// A lambda capture: <c>x</c>, <c>&amp;x</c>, <c>x...</c>, <c>this</c>, <c>*this</c>, or an init-capture
+/// <c>x = a + b</c>, <c>&amp;r = a</c>, <c>...xs = ys</c>, <c>x{ a }</c>.
+/// </summary>
+public sealed class LambdaCapture(string identifier, Initializer initializer = null) : CppNode
+{
+    /// <summary>The captured or declared variable; null for <c>this</c> and <c>*this</c>.</summary>
+    public string Identifier { get; } = identifier;
+
+    public bool IsByReference { get; init; }
+
+    /// <summary><c>this</c>, or <c>*this</c> with <see cref="IsStarThis"/>.</summary>
+    public bool IsThis { get; init; }
+
+    public bool IsStarThis { get; init; }
+
+    /// <summary>A pack: <c>xs...</c>, or <c>...xs = ys</c> for an init-capture.</summary>
+    public bool IsPack { get; init; }
+
+    /// <summary>The initializer of an init-capture, or null.</summary>
+    public Initializer Initializer { get; } = initializer;
+}
+
+/// <summary>
+/// A requires-expression: <c>requires (T a) { a + 1; typename T::type; { a } -&gt; C; requires D&lt;T&gt;; }</c>.
+/// </summary>
+public sealed class RequiresExpression(IReadOnlyList<ParameterDeclaration> parameters, IReadOnlyList<Requirement> requirements) : Expression
+{
+    /// <summary>The parameters, or null when there are no parentheses.</summary>
+    public IReadOnlyList<ParameterDeclaration> Parameters { get; } = parameters;
+
+    public IReadOnlyList<Requirement> Requirements { get; } = requirements ?? [];
+}
+
+public abstract class Requirement : CppNode
+{
+}
+
+/// <summary>
+/// <c>expression;</c> in a requires-expression.
+/// </summary>
+public sealed class SimpleRequirement(Expression expression) : Requirement
+{
+    public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// <c>typename T::type;</c> in a requires-expression.
+/// </summary>
+public sealed class TypeRequirement(Name type) : Requirement
+{
+    public Name Type { get; } = type;
+}
+
+/// <summary>
+/// <c>{ expression } noexcept -&gt; C&lt;int&gt;;</c> in a requires-expression; <c>noexcept</c> and the type constraint
+/// are optional.
+/// </summary>
+public sealed class CompoundRequirement(Expression expression) : Requirement
+{
+    public Expression Expression { get; } = expression;
+    public bool IsNoexcept { get; init; }
+
+    /// <summary>The type constraint after <c>-&gt;</c>: a concept name with its arguments but the first, or null.</summary>
+    public Name TypeConstraint { get; init; }
+}
+
+/// <summary>
+/// <c>requires constraint;</c> in a requires-expression.
+/// </summary>
+public sealed class NestedRequirement(Expression constraint) : Requirement
+{
+    public Expression Constraint { get; } = constraint;
+}
+
+// ========================================
+// Templates
+// ========================================
+
+/// <summary>
+/// A template parameter ([temp.param]).
+/// </summary>
+public abstract class TemplateParameter : CppNode
+{
+}
+
+/// <summary>
+/// A type parameter: <c>typename T</c>, <c>class... Ts</c>, <c>typename T = int</c>, or constrained by a concept,
+/// <c>std::integral T</c>, when <see cref="Constraint"/> is set and <see cref="Key"/> is null. The identifier is
+/// null for an unnamed parameter.
+/// </summary>
+public sealed class TypeTemplateParameter(string key, string identifier) : TemplateParameter
+{
+    /// <summary><c>typename</c> or <c>class</c>; null for a constrained parameter.</summary>
+    public string Key { get; } = key;
+
+    /// <summary>The concept of a constrained parameter: <c>std::integral</c>, <c>C&lt;int&gt;</c>, or null.</summary>
+    public Name Constraint { get; init; }
+
+    public bool IsPack { get; init; }
+    public string Identifier { get; } = identifier;
+    public TypeId Default { get; init; }
+}
+
+/// <summary>
+/// A non-type parameter: <c>int N</c>, <c>auto V = 1</c>, <c>int... Ns</c>.
+/// </summary>
+public sealed class NonTypeTemplateParameter(ParameterDeclaration parameter) : TemplateParameter
+{
+    public ParameterDeclaration Parameter { get; } = parameter;
+}
+
+/// <summary>
+/// A template template parameter: <c>template &lt;typename&gt; class TT = std::vector</c>.
+/// </summary>
+public sealed class TemplateTemplateParameter(IReadOnlyList<TemplateParameter> parameters, string key, string identifier) : TemplateParameter
+{
+    public IReadOnlyList<TemplateParameter> Parameters { get; } = parameters ?? [];
+
+    /// <summary><c>class</c> or <c>typename</c>.</summary>
+    public string Key { get; } = key;
+
+    public bool IsPack { get; init; }
+    public string Identifier { get; } = identifier;
+    public Name Default { get; init; }
+}
+
+// ========================================
+// Attributes
+// ========================================
+
+/// <summary>
+/// <c>[[ attributes ]]</c>, or <c>[[using ns: attributes]]</c> with <see cref="UsingNamespace"/>.
+/// </summary>
+public sealed class AttributeSpecifier(IReadOnlyList<CppAttribute> attributes) : CppNode
+{
+    public string UsingNamespace { get; init; }
+    public IReadOnlyList<CppAttribute> Attributes { get; } = attributes ?? [];
+}
+
+/// <summary>
+/// An attribute: <c>nodiscard</c>, <c>gnu::always_inline</c>, <c>deprecated("reason")</c>. The arguments are
+/// kept as written, without the parentheses: <c>"reason"</c>; they are null when there are no parentheses.
+/// (The name avoids a clash with <see cref="System.Attribute"/>.)
+/// </summary>
+public sealed class CppAttribute(string @namespace, string name, string arguments = null) : CppNode
+{
+    public string Namespace { get; } = @namespace;
+    public string Name { get; } = name;
+    public string Arguments { get; } = arguments;
+
+    /// <summary>The attribute is followed by <c>...</c>.</summary>
+    public bool IsPackExpansion { get; init; }
 }

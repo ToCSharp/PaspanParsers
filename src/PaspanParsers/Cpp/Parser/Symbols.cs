@@ -87,12 +87,18 @@ internal sealed class Symbols
 
     /// <summary>
     /// The kind of a name. A qualified name is looked up by its last identifier: members of namespaces
-    /// and classes are not tracked yet, so this is a guess that holds for names declared once.
+    /// and classes are not tracked yet, so this is a guess that holds for names declared once. A template-id
+    /// is a type or a concept-id when its template is known, and unknown otherwise.
     /// </summary>
     public SymbolKind? Lookup(Name name) => name switch
     {
         IdentifierName identifier => Lookup(identifier.Identifier),
-        TemplateIdName { Template: IdentifierName template } => Lookup(template.Identifier) is SymbolKind.Concept ? SymbolKind.Concept : SymbolKind.Type,
+        TemplateIdName { Template: IdentifierName template } => Lookup(template.Identifier) switch
+        {
+            SymbolKind.Concept => SymbolKind.Concept,
+            null => null,
+            _ => SymbolKind.Type,
+        },
         QualifiedName qualified => Lookup(qualified.Name),
         _ => null,
     };

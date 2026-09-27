@@ -113,8 +113,8 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// <c>requires constraint</c> after a declarator, or null when there is none; <paramref name="valid"/> is
-    /// false when the clause does not parse.
+    /// <c>requires constraint</c> after a declarator or template parameters, or null when there is none;
+    /// <paramref name="valid"/> is false when the clause does not parse.
     /// </summary>
     private Expression ParseOptionalRequiresClause(out bool valid)
     {
@@ -126,10 +126,51 @@ internal ref partial struct SyntaxParser
 
         var saved = _inConstraint;
         _inConstraint = true;
-        var constraint = ParseBinaryExpression(LogicalOrPrecedence);
+        var constraint = ParseConstraintLogicalOrExpression();
         _inConstraint = saved;
         valid = constraint != null;
         return constraint;
+    }
+
+    /// <summary>
+    /// constraint-logical-or-expression: primary expressions joined by <c>&amp;&amp;</c> and <c>||</c>. Postfix
+    /// operators are not part of it: in <c>[]&lt;class T&gt; requires (sizeof(T) &gt; 1) (T x) { }</c> the
+    /// parameters follow the constraint.
+    /// </summary>
+    private Expression ParseConstraintLogicalOrExpression()
+    {
+        var left = ParseConstraintLogicalAndExpression();
+        while (left != null && IsPunctuator("||"))
+        {
+            EatToken();
+            var right = ParseConstraintLogicalAndExpression();
+            if (right == null)
+            {
+                return null;
+            }
+
+            left = Finish(new BinaryExpression(left, "||", right), left);
+        }
+
+        return left;
+    }
+
+    private Expression ParseConstraintLogicalAndExpression()
+    {
+        var left = ParsePrimaryExpression();
+        while (left != null && IsPunctuator("&&"))
+        {
+            EatToken();
+            var right = ParsePrimaryExpression();
+            if (right == null)
+            {
+                return null;
+            }
+
+            left = Finish(new BinaryExpression(left, "&&", right), left);
+        }
+
+        return left;
     }
 
     /// <summary>
@@ -174,8 +215,8 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// The optional initializer after <paramref name="declarator"/>. The name is declared before the
-    /// initializer, which can refer to it.
+    /// The optional initializer after <paramref name="declarator"/>: <c>= value</c>, <c>= { list }</c>,
+    /// <c>(arguments)</c> or <c>{ list }</c>. The name is declared before the initializer, which can refer to it.
     /// </summary>
     private InitDeclarator ParseInitDeclaratorRest(DeclSpecifierSequence specifiers, Declarator declarator, Expression requiresClause)
     {
@@ -185,13 +226,22 @@ internal ref partial struct SyntaxParser
         var start = NodeStart;
         if (TryEatPunctuator("="))
         {
-            var value = ParseAssignmentExpression();
+            var value = ParseInitializerClause();
             if (value == null)
             {
                 return null;
             }
 
             initializer = Finish(new EqualsInitializer(value), start);
+        }
+        else if (IsPunctuator("(") || IsPunctuator("{"))
+        {
+            // A '(' that starts parameters was taken by the declarator
+            initializer = ParseDirectInitializer();
+            if (initializer == null)
+            {
+                return null;
+            }
         }
 
         return Finish(new InitDeclarator(declarator, initializer) { RequiresClause = requiresClause }, declarator);

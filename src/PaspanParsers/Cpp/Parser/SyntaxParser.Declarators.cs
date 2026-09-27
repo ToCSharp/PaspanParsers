@@ -16,6 +16,9 @@ internal enum DeclaratorKind
 
     /// <summary>The abstract declarator of a conversion function: pointer and reference operators only.</summary>
     Conversion,
+
+    /// <summary>The declarator of a new-expression: pointers and arrays, <c>new int *[n][3]</c>.</summary>
+    New,
 }
 
 // Declarators ([dcl.decl]): pointers, references, pointers to members, arrays, functions and parentheses.
@@ -31,8 +34,8 @@ internal ref partial struct SyntaxParser
         declarator = null;
         var start = NodeStart;
 
-        // ptr-operator: * cv, & , &&, nested-name-specifier * cv
-        if (IsPunctuator("*") || IsPunctuator("&") || IsPunctuator("&&"))
+        // ptr-operator: * cv, & , &&, nested-name-specifier * cv; a new-expression is followed by '&&' in new int && b
+        if (IsPunctuator("*") || (kind != DeclaratorKind.New && (IsPunctuator("&") || IsPunctuator("&&"))))
         {
             var @operator = EatToken().Text;
             var qualifiers = @operator == "*" ? ParseCvQualifiers() : null;
@@ -108,6 +111,11 @@ internal ref partial struct SyntaxParser
         declarator = null;
         var start = NodeStart;
 
+        if (kind == DeclaratorKind.New)
+        {
+            return TryParseNewArrayDeclarator(out declarator);
+        }
+
         if (IsPunctuator("(") && IsNestedDeclarator(kind))
         {
             EatToken();
@@ -179,10 +187,9 @@ internal ref partial struct SyntaxParser
                 Expression size = null;
                 if (!IsPunctuator("]"))
                 {
-                    var saved = _inTemplateArguments;
-                    _inTemplateArguments = false;
+                    var saved = EnterBrackets();
                     size = ParseAssignmentExpression();
-                    _inTemplateArguments = saved;
+                    LeaveBrackets(saved);
                     if (size == null)
                     {
                         return false;
@@ -200,6 +207,39 @@ internal ref partial struct SyntaxParser
             {
                 break;
             }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The array bounds of the type of a new-expression, if any: the first may be any expression or empty.
+    /// </summary>
+    private bool TryParseNewArrayDeclarator(out Declarator declarator)
+    {
+        declarator = null;
+        var start = NodeStart;
+        while (IsPunctuator("[") && !Peek(1).IsPunctuator("["))
+        {
+            EatToken();
+            Expression size = null;
+            if (!IsPunctuator("]"))
+            {
+                var saved = EnterBrackets();
+                size = ParseExpression();
+                LeaveBrackets(saved);
+                if (size == null)
+                {
+                    return false;
+                }
+            }
+
+            if (!TryEatPunctuator("]"))
+            {
+                return false;
+            }
+
+            declarator = Finish(new ArrayDeclarator(declarator, size), start);
         }
 
         return true;
@@ -258,10 +298,9 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        var saved = _inTemplateArguments;
-        _inTemplateArguments = false;
+        var saved = EnterBrackets();
         var parameters = ParseParameterClause(out var isVariadic);
-        _inTemplateArguments = saved;
+        LeaveBrackets(saved);
         if (parameters == null)
         {
             return null;
@@ -316,10 +355,9 @@ internal ref partial struct SyntaxParser
         Expression condition = null;
         if (TryEatPunctuator("("))
         {
-            var saved = _inTemplateArguments;
-            _inTemplateArguments = false;
+            var saved = EnterBrackets();
             condition = ParseAssignmentExpression();
-            _inTemplateArguments = saved;
+            LeaveBrackets(saved);
             if (condition == null || !TryEatPunctuator(")"))
             {
                 return null;
@@ -388,7 +426,7 @@ internal ref partial struct SyntaxParser
         Expression defaultValue = null;
         if (TryEatPunctuator("="))
         {
-            defaultValue = ParseAssignmentExpression();
+            defaultValue = ParseInitializerClause();
             if (defaultValue == null)
             {
                 return null;

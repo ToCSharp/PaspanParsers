@@ -3,3 +3,5 @@ src/PaspanParsers.Tests/Cpp/Corpus/01-Lexical.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/02-Preprocessor.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/03-Types.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/04-Declarators.cpp
+src/PaspanParsers.Tests/Cpp/Corpus/05-Expressions.cpp
+src/PaspanParsers.Tests/Cpp/Corpus/06-Lambdas.cpp
