@@ -80,6 +80,33 @@ internal ref partial struct SyntaxParser
         return new SyntaxParser(source, position, context);
     }
 
+    /// <summary>
+    /// The token at the position of <paramref name="reader"/>, like <c>At(ref reader, context).Current</c>. A token
+    /// that is already scanned comes from the cache without constructing a parser, which the combinator parsers of
+    /// the hybrid grammar do for nearly every token they look at.
+    /// </summary>
+    public static SyntaxToken CurrentToken(ref SpanReader reader, ParseContext context)
+    {
+        if (context is CSharpParseContext csharp && csharp.SyntaxCache.Tokens.TryGetValue(reader.GetCurrentPosition(), out var token))
+        {
+            return token;
+        }
+
+        return At(ref reader, context).Current;
+    }
+
+    /// <summary>
+    /// Moves <paramref name="reader"/> past <paramref name="token"/>, like <see cref="EatToken"/>.
+    /// </summary>
+    public static void Consume(ref SpanReader reader, ParseContext context, SyntaxToken token)
+    {
+        reader.RollBackState(token.End);
+        if (context is CSharpParseContext csharp && token.End > csharp.SyntaxCache.FurthestPosition)
+        {
+            csharp.SyntaxCache.FurthestPosition = token.End;
+        }
+    }
+
     // ========================================
     // Tokens
     // ========================================

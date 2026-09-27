@@ -41,7 +41,7 @@ internal static class SyntaxRules
     /// absent (attributes, constraints), it spares the parsers that would each fail on the first token.
     /// </summary>
     public static Parser<T> WhenStartsWith<T>(Func<SyntaxToken, bool> firstToken, Parser<T> parser, T otherwise) =>
-        new StartsWithParser<T>((ref SyntaxParser p) => firstToken(p.Current), parser, otherwise);
+        new FirstTokenParser<T>(firstToken, parser, otherwise);
 
     /// <summary>
     /// Like <see cref="WhenStartsWith{T}(Func{SyntaxToken, bool}, Parser{T}, T)"/> with a condition on the next tokens.
@@ -76,7 +76,7 @@ internal static class SyntaxRules
     {
         public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
         {
-            var first = SyntaxParser.At(ref reader, context).Current;
+            var first = SyntaxParser.CurrentToken(ref reader, context);
             var start = first.Start;
             if (!parser.Parse(ref reader, context, ref result))
             {
@@ -100,7 +100,7 @@ internal static class SyntaxRules
     {
         public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<Statement> result)
         {
-            var first = SyntaxParser.At(ref reader, context).Current;
+            var first = SyntaxParser.CurrentToken(ref reader, context);
             if (!parser.Parse(ref reader, context, ref result))
             {
                 return false;
@@ -117,6 +117,21 @@ internal static class SyntaxRules
             }
 
             result.Set(first.Start, end, statement);
+            return true;
+        }
+    }
+
+    private sealed class FirstTokenParser<T>(Func<SyntaxToken, bool> firstToken, Parser<T> parser, T otherwise) : Parser<T>
+    {
+        public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
+        {
+            if (firstToken(SyntaxParser.CurrentToken(ref reader, context)))
+            {
+                return parser.Parse(ref reader, context, ref result);
+            }
+
+            var position = reader.GetCurrentPosition();
+            result.Set(position, position, otherwise);
             return true;
         }
     }

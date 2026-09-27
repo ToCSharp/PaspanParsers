@@ -45,15 +45,13 @@ internal static class TokenParsers
 
         public sealed override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<SyntaxToken> result)
         {
-            var parser = SyntaxParser.At(ref reader, context);
-            var token = parser.Current;
+            var token = SyntaxParser.CurrentToken(ref reader, context);
             if (!Matches(token))
             {
                 return false;
             }
 
-            parser.EatToken();
-            reader.RollBackState(token.End);
+            SyntaxParser.Consume(ref reader, context, token);
             result.Set(token.Start, token.End, token);
             return true;
         }

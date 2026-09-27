@@ -76,13 +76,12 @@ internal sealed class TokenSwitch<T> : Parser<T>
 
     public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
     {
-        var parser = SyntaxParser.At(ref reader, context);
-        var token = parser.Current;
+        var token = SyntaxParser.CurrentToken(ref reader, context);
 
         // Contextual keywords written with '@' or escapes are plain identifiers
         if ((token.Kind != TokenKind.Identifier || !token.IsVerbatim) && _byToken.TryGetValue((token.Kind, token.Text), out var byToken))
         {
-            var outcome = TryParse(byToken, parser, ref reader, context, ref result);
+            var outcome = TryParse(byToken, ref reader, context, ref result);
             if (outcome.HasValue)
             {
                 return outcome.Value;
@@ -91,28 +90,29 @@ internal sealed class TokenSwitch<T> : Parser<T>
 
         if (_byKind.TryGetValue(token.Kind, out var byKind))
         {
-            var outcome = TryParse(byKind, parser, ref reader, context, ref result);
+            var outcome = TryParse(byKind, ref reader, context, ref result);
             if (outcome.HasValue)
             {
                 return outcome.Value;
             }
         }
 
-        return TryParse(_otherwise, parser, ref reader, context, ref result) ?? false;
+        return TryParse(_otherwise, ref reader, context, ref result) ?? false;
     }
 
     /// <summary>
     /// True when an alternative succeeded, false when a committed one failed, null to go on with the next ones.
     /// </summary>
-    private static bool? TryParse(List<Alternative> alternatives, scoped SyntaxParser parser, ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
+    private static bool? TryParse(List<Alternative> alternatives, ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
     {
         var start = reader.GetCurrentPosition();
         foreach (var alternative in alternatives)
         {
+            // A condition looks ahead on a parser of its own: moving it has no effect
             if (alternative.When != null)
             {
-                var copy = parser;
-                if (!alternative.When(ref copy))
+                var parser = SyntaxParser.At(ref reader, context);
+                if (!alternative.When(ref parser))
                 {
                     continue;
                 }
