@@ -666,6 +666,31 @@ var parser = If<MyContext, long>(
 parser.Parse(ref reader, new MyContext { AllowNegative = false });
 ```
 
+### Select
+
+Selects the parser to execute at runtime, either by its index in a fixed set of parsers, or with a function returning the parser.
+The selector is evaluated once per parse. An out-of-range index, or a `null` parser, fails without consuming input.
+
+```c#
+Parser<T> Select<T>(Func<int> selector, params Parser<T>[] parsers)
+Parser<T> Select<T>(Func<ParseContext, int> selector, params Parser<T>[] parsers)
+Parser<T> Select<C, T>(Func<C, int> selector, params Parser<T>[] parsers) where C : ParseContext
+Parser<T> Select<T>(Func<ParseContext, Parser<T>> selector)
+Parser<T> Select<C, T>(Func<C, Parser<T>> selector) where C : ParseContext
+```
+
+Usage:
+
+```c#
+var parser = Select<MyContext, string>(
+    context => context.Mode,  // 0, 1 or 2
+    Terms.Text("a"),
+    Terms.Text("b"),
+    Terms.Text("c"));
+
+parser.Parse(ref reader, new MyContext { Mode = 1 }); // parses "b"
+```
+
 ### ElseError
 
 Fails parsing with a custom error message.

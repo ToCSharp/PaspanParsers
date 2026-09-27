@@ -133,6 +133,24 @@ public static partial class Parsers
     public static Parser<T> Select<T>(Func<ParseContext, Parser<T>> selector) => new Select<ParseContext, T>(selector);
 
     /// <summary>
+    /// Evaluates a selector once and executes the parser at its index.
+    /// An out-of-range index fails without consuming input.
+    /// </summary>
+    public static Parser<T> Select<T>(Func<int> selector, params Parser<T>[] parsers) => new Select<ParseContext, T>(selector, parsers);
+
+    /// <summary>
+    /// Evaluates a selector once using the current context and executes the parser at its index.
+    /// An out-of-range index fails without consuming input.
+    /// </summary>
+    public static Parser<T> Select<T>(Func<ParseContext, int> selector, params Parser<T>[] parsers) => new Select<ParseContext, T>(selector, parsers);
+
+    /// <summary>
+    /// Evaluates a selector once using the concrete context and executes the parser at its index.
+    /// An out-of-range index fails without consuming input.
+    /// </summary>
+    public static Parser<T> Select<C, T>(Func<C, int> selector, params Parser<T>[] parsers) where C : ParseContext => new Select<C, T>(selector, parsers);
+
+    /// <summary>
     /// Builds a parser that can be defined later on. Use it when a parser need to be declared before its rule can be set.
     /// </summary>
     public static Deferred<T> Deferred<T>() => new();
