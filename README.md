@@ -2,7 +2,7 @@
 
 Paspan is a [Parlot](https://github.com/sebastienros/parlot) fork - a __fast__, __lightweight__, and easy-to-use .NET parser combinator library optimized for `Span<byte>` and UTF-8 parsing.
 
-This repository contains improved Paspan core library and a collection of production-ready language parsers written in pure C# using Paspan combinators.
+This repository contains improved Paspan core library and a collection of production-ready language parsers written in pure C# using Paspan combinators. The C# parser is an exception: for speed it is not a pure combinator parser (see [C# Parser](#c-parser)).
 
 ## 🚀 Features
 
@@ -31,6 +31,7 @@ This repository contains improved Paspan core library and a collection of produc
 ### Key Features by Parser
 
 #### C# Parser
+- **Not a pure parser combinator.** For speed, the C# parser moved away from pure Paspan combinators. A hand-written lexer and preprocessor scan each token once and cache it by position; on top of them a hand-written recursive descent parser (`SyntaxParser`, a `ref struct` in `src/PaspanParsers/CSharp/Parser/`) with a Pratt parser for expressions builds the AST. The same approach gives Roslyn's disambiguation rules (generic names, casts, lambdas, declarations), which look ahead over whole types. Combinators remain only at the boundary: the parser is exposed as a Paspan `Parser<CompilationUnit>` (`CSharpParser.CompilationUnitParser`) with a trivia parser around it. Measurements are in [src/PaspanParsers/CSharp/README.md](src/PaspanParsers/CSharp/README.md#performance)
 - C# 1–14: every file Roslyn parses without syntax errors is expected to parse to an equivalent tree
 - Checked against Roslyn on its own compiler sources, dotnet/runtime and ASP.NET Core libraries (6 600+ files, 100%)
 - Preprocessor (`#if` with symbols from `CSharpParseOptions`), `#nullable` kept in the AST
