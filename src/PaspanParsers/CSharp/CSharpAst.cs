@@ -71,7 +71,19 @@ public sealed class CompilationUnit(
 
     /// <summary><c>#nullable</c> directives after the last member.</summary>
     public IReadOnlyList<NullableDirective> EndNullableDirectives { get; init; }
+
+    /// <summary>
+    /// The syntax errors of the input in source order, or null when there are none. Only a parse with
+    /// <see cref="CSharpParseOptions.ErrorRecovery"/> returns a tree for invalid input.
+    /// </summary>
+    public IReadOnlyList<SyntaxError> Errors { get; internal set; }
 }
+
+/// <summary>
+/// A syntax error found by a parse with <see cref="CSharpParseOptions.ErrorRecovery"/>:
+/// <see cref="Span"/> is the unexpected token (empty at the end of the input).
+/// </summary>
+public sealed record SyntaxError(TextSpan Span, string Message);
 
 // ========================================
 // Preprocessor directives
@@ -172,6 +184,13 @@ public abstract class MemberDeclaration(IReadOnlyList<AttributeSection> attribut
 
     /// <summary><c>#nullable</c> directives before the declaration.</summary>
     public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
+
+    /// <summary>
+    /// The whitespace, comments and directives before the declaration, from the end of the previous token
+    /// (empty for a declaration the parser did not read from source); <see cref="DocumentationComment"/>
+    /// reads the documentation comment in it.
+    /// </summary>
+    public TextSpan LeadingTrivia { get; set; }
 }
 
 [Flags]
@@ -337,6 +356,12 @@ public sealed class EnumMember(string name, Expression value = null, IReadOnlyLi
     public IReadOnlyList<AttributeSection> Attributes { get; } = attributes;
     public string Name { get; } = name;
     public Expression Value { get; } = value;
+
+    /// <summary>
+    /// The whitespace, comments and directives before the member, from the end of the previous token;
+    /// <see cref="DocumentationComment"/> reads the documentation comment in it.
+    /// </summary>
+    public TextSpan LeadingTrivia { get; init; }
 }
 
 public sealed class DelegateDeclaration(
@@ -783,6 +808,17 @@ public sealed class GlobalStatement(Statement statement) : MemberDeclaration(nul
     public Statement Statement { get; } = statement;
 }
 
+/// <summary>
+/// Source that could not be parsed as a member declaration, skipped by a parse with
+/// <see cref="CSharpParseOptions.ErrorRecovery"/> up to the next ';', balanced '{...}' block or the '}'
+/// that closes the enclosing body. The error is in <see cref="CompilationUnit.Errors"/>.
+/// </summary>
+public sealed class IncompleteMemberDeclaration(string text) : MemberDeclaration(null, Modifiers.None)
+{
+    /// <summary>The skipped source text.</summary>
+    public string Text { get; } = text;
+}
+
 // ========================================
 // Type References
 // ========================================
@@ -931,6 +967,16 @@ public abstract class Statement : CSharpNode
 {
     /// <summary><c>#nullable</c> directives before the statement.</summary>
     public IReadOnlyList<NullableDirective> NullableDirectives { get; set; }
+}
+
+/// <summary>
+/// Source that could not be parsed as a statement, skipped by a parse with
+/// <see cref="CSharpParseOptions.ErrorRecovery"/> like <see cref="IncompleteMemberDeclaration"/>.
+/// </summary>
+public sealed class IncompleteStatement(string text) : Statement
+{
+    /// <summary>The skipped source text.</summary>
+    public string Text { get; } = text;
 }
 
 public sealed class BlockStatement(IReadOnlyList<Statement> statements = null) : Statement

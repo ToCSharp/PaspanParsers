@@ -301,6 +301,9 @@ public class CSharpWriter(string indentString = "    ")
             case GlobalStatement global:
                 WriteStatement(global.Statement);
                 break;
+            case IncompleteMemberDeclaration incomplete:
+                WriteLine(incomplete.Text);
+                break;
         }
     }
 
@@ -1173,6 +1176,9 @@ public class CSharpWriter(string indentString = "    ")
         {
             case BlockStatement block:
                 WriteBlockStatement(block);
+                break;
+            case IncompleteStatement incomplete:
+                WriteLine(incomplete.Text);
                 break;
             case ExpressionStatement expr:
                 WriteExpression(expr.Expression);

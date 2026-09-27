@@ -113,6 +113,14 @@ internal ref partial struct SyntaxParser
         return false;
     }
 
+    /// <summary>
+    /// Consumes the punctuator and returns its token, or returns null.
+    /// </summary>
+    private SyntaxToken? TryEatPunctuatorToken(string text)
+    {
+        return Current.IsPunctuator(text) ? EatToken() : null;
+    }
+
     private bool TryEatKeyword(string text)
     {
         if (Current.IsKeyword(text))

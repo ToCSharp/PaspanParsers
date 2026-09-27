@@ -37,6 +37,7 @@ internal ref partial struct SyntaxParser
         if (member != null)
         {
             member.NullableDirectives = nullableDirectives;
+            member.LeadingTrivia = new TextSpan(start, spanStart);
             return Finish(member, spanStart);
         }
 
@@ -326,7 +327,7 @@ internal ref partial struct SyntaxParser
             ParseExternsAndUsings(externs, usings);
             while (Current.Kind != TokenKind.EndOfFile)
             {
-                var member = ParseMemberDeclaration(MemberContext.Namespace);
+                var member = ParseMemberDeclarationOrRecover(MemberContext.Namespace, inBraces: false);
                 if (member == null)
                 {
                     return null;
@@ -346,7 +347,12 @@ internal ref partial struct SyntaxParser
         ParseExternsAndUsings(externs, usings);
         while (!IsPunctuator("}"))
         {
-            var member = ParseMemberDeclaration(MemberContext.Namespace);
+            if (IsMissingCloseBrace())
+            {
+                break;
+            }
+
+            var member = ParseMemberDeclarationOrRecover(MemberContext.Namespace, inBraces: true);
             if (member == null)
             {
                 return null;
@@ -355,7 +361,7 @@ internal ref partial struct SyntaxParser
             members.Add(member);
         }
 
-        var closeBraceDirectives = EatToken().NullableDirectives;
+        var closeBraceDirectives = TryEatPunctuatorToken("}")?.NullableDirectives;
         return new NamespaceDeclaration(name, NullIfEmpty(members), NullIfEmpty(usings), NullIfEmpty(externs))
         {
             HasTrailingSemicolon = TryEatPunctuator(";"),
@@ -508,7 +514,12 @@ internal ref partial struct SyntaxParser
         var members = new List<MemberDeclaration>();
         while (!IsPunctuator("}"))
         {
-            var member = ParseMemberDeclaration(MemberContext.Type);
+            if (IsMissingCloseBrace())
+            {
+                break;
+            }
+
+            var member = ParseMemberDeclarationOrRecover(MemberContext.Type, inBraces: true);
             if (member == null)
             {
                 return null;
@@ -517,7 +528,7 @@ internal ref partial struct SyntaxParser
             members.Add(member);
         }
 
-        closeBraceDirectives = EatToken().NullableDirectives;
+        closeBraceDirectives = TryEatPunctuatorToken("}")?.NullableDirectives;
         return members;
     }
 
@@ -552,6 +563,7 @@ internal ref partial struct SyntaxParser
         var hasTrailingComma = false;
         while (!TryEatPunctuator("}"))
         {
+            var triviaStart = _position;
             var memberStart = NodeStart;
             var memberAttributes = ParseAttributeSections();
             var memberName = TryEatIdentifier();
@@ -570,7 +582,7 @@ internal ref partial struct SyntaxParser
                 }
             }
 
-            members.Add(Finish(new EnumMember(memberName, value, NullIfEmpty(memberAttributes)), memberStart));
+            members.Add(Finish(new EnumMember(memberName, value, NullIfEmpty(memberAttributes)) { LeadingTrivia = new TextSpan(triviaStart, memberStart) }, memberStart));
 
             if (TryEatPunctuator(","))
             {
