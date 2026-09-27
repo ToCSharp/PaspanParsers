@@ -26,7 +26,7 @@ public sealed class IntegerLiteral(NumberOptions numberOptions = NumberOptions.A
             reader.SetValue(start, reader.GetCurrentPosition());
             if (reader.TryGetInt32(out var value))
             {
-                result.Set(value);
+                result.Set(start, reader.GetCurrentPosition(), value);
                 return true;
             }
         }

@@ -97,7 +97,7 @@ namespace PaspanParsers.Calc
             {
                 var inner = ParseUnaryExpression();
 
-                return inner == null ? throw new ParseException("Expected expression after '-'"/*, Position*/) : (Expression)new NegateExpression(inner);
+                return inner == null ? throw new ParseException("Expected expression after '-'", _reader.GetCurrentPosition()) : (Expression)new NegateExpression(inner);
             }
 
             return ParsePrimaryExpression();
@@ -123,13 +123,13 @@ namespace PaspanParsers.Calc
 
                 if (!_reader.Skip((byte)')'))
                 {
-                    throw new ParseException("Expected ')'"/*, , Position*/);
+                    throw new ParseException("Expected ')'", _reader.GetCurrentPosition());
                 }
 
                 return expression;
             }
 
-            throw new ParseException("Expected primary expression"/*, , Position*/);
+            throw new ParseException("Expected primary expression", _reader.GetCurrentPosition());
         }
     }
 }

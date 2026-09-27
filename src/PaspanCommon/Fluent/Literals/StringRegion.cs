@@ -22,7 +22,7 @@ public sealed class StringRegion(StringLiteralQuotes quotes) : Parser<Region>
         {
             var regionStart = reader.GetPosition(start, 1);
             var regionEnd = reader.GetCurrentPosition(-1);
-            result.Set(new Region(regionStart, regionEnd - regionStart));
+            result.Set(start, reader.GetCurrentPosition(), new Region(regionStart, regionEnd - regionStart));
             return true;
         }
 

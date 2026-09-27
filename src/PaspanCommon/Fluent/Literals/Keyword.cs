@@ -38,7 +38,7 @@ public sealed class Keyword(string text, StringComparison comparisonType) : Pars
         }
 
         // Все проверки пройдены
-        result.Set(textResult.Value);
+        result.Set(textResult.Start, textResult.End, textResult.Value);
         return true;
     }
 

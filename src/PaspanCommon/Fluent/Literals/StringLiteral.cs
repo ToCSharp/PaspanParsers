@@ -31,7 +31,7 @@ public sealed class StringLiteral(StringLiteralQuotes quotes) : Parser<string>
         {
             // Decode escape sequences
             value = DecodeString(value);
-            result.Set(value);
+            result.Set(start, reader.GetCurrentPosition(), value);
             return true;
         }
 

@@ -17,7 +17,7 @@ public sealed class Discard<T, U>(Parser<T> parser, U value) : Parser<U>
 
         if (_parser.Parse(ref reader, context, ref parsed))
         {
-            result.Set(_value);
+            result.Set(parsed.Start, parsed.End, _value);
             return true;
         }
 

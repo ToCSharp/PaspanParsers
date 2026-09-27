@@ -31,7 +31,7 @@ public sealed class PatternLiteral : Parser<Unit>
         }
 
         //result.Set(reader.GetValueAsSequence());
-        result.Set(Unit.Value);
+        result.Set(start, reader.GetCurrentPosition(), Unit.Value);
         return true;
     }
 }

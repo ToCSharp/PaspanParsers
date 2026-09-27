@@ -56,6 +56,33 @@ public ref partial struct SpanReader
 
     public int GetPosition(int pos, int offset = 0) => pos + offset;
 
+    /// <summary>
+    /// Computes the 1-based line and column (in characters, not bytes) of a byte offset in the buffer.
+    /// </summary>
+    public (int Line, int Column) GetLineAndColumn(int offset)
+    {
+        offset = Math.Clamp(offset, 0, _buffer.Length);
+
+        var line = 1;
+        var column = 1;
+
+        foreach (var b in _buffer[..offset])
+        {
+            if (b == LineFeed)
+            {
+                line++;
+                column = 1;
+            }
+            else if ((b & 0xC0) != 0x80)
+            {
+                // UTF-8 continuation bytes belong to the previous character
+                column++;
+            }
+        }
+
+        return (line, column);
+    }
+
     public void SetValue(int start, int end) => ValueSpan = _buffer[start..end];
 
     public bool Skip(byte b)
