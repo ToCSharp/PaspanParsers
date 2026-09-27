@@ -9,11 +9,6 @@ namespace PaspanParsers.CSharp;
 /// </summary>
 public partial class CSharpParser
 {
-    /// <summary>
-    /// The stack of the thread that parses input nested too deeply for the caller's stack.
-    /// </summary>
-    private const int LargeStackSize = 256 * 1024 * 1024;
-
     public static readonly Parser<CompilationUnit> CompilationUnitParser =
         WithTrivia(new SyntaxRuleParser<CompilationUnit>(SyntaxParser.ParseCompilationUnitRule));
 
@@ -61,21 +56,17 @@ public partial class CSharpParser
         CompilationUnit largeStackResult = null;
         ParseError largeStackError = null;
         var success = false;
-        var thread = new Thread(
-            () =>
+        LargeStack.Run(() =>
+        {
+            try
             {
-                try
-                {
-                    success = TryParseCore(source, options, out largeStackResult, out largeStackError);
-                }
-                catch (InsufficientExecutionStackException)
-                {
-                    largeStackError = new ParseError { Message = "The input is nested too deeply." };
-                }
-            },
-            LargeStackSize);
-        thread.Start();
-        thread.Join();
+                success = TryParseCore(source, options, out largeStackResult, out largeStackError);
+            }
+            catch (InsufficientExecutionStackException)
+            {
+                largeStackError = new ParseError { Message = "The input is nested too deeply." };
+            }
+        });
 
         result = largeStackResult;
         error = largeStackError;
@@ -112,21 +103,11 @@ public partial class CSharpParser
     /// The bytes the parser reads for <paramref name="input"/>: its UTF-8 encoding without the byte order mark.
     /// Node spans (<see cref="CSharpNode.Span"/>) are offsets into them.
     /// </summary>
-    public static byte[] GetUtf8Source(string input)
-    {
-        input ??= string.Empty;
-
-        // A byte order mark is not part of the source text
-        var start = input.Length > 0 && input[0] == '\uFEFF' ? 1 : 0;
-        return System.Text.Encoding.UTF8.GetBytes(input, start, input.Length - start);
-    }
+    public static byte[] GetUtf8Source(string input) => Utf8Source.FromString(input);
 
     /// <summary>
     /// The bytes the parser reads for the UTF-8 source <paramref name="utf8Source"/>: the source without
     /// its byte order mark. Node spans (<see cref="CSharpNode.Span"/>) are offsets into them.
     /// </summary>
-    public static ReadOnlyMemory<byte> GetUtf8Source(ReadOnlyMemory<byte> utf8Source)
-    {
-        return utf8Source.Span.StartsWith("\uFEFF"u8) ? utf8Source[3..] : utf8Source;
-    }
+    public static ReadOnlyMemory<byte> GetUtf8Source(ReadOnlyMemory<byte> utf8Source) => Utf8Source.WithoutByteOrderMark(utf8Source);
 }
