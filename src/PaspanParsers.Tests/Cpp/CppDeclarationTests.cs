@@ -530,6 +530,174 @@ public class CppDeclarationTests
     }
 
     // ========================================
+    // Real code: complete classes, friends and aliases
+    // ========================================
+
+    [TestMethod]
+    public void MemberFunctionBodies_SeeTheMembersDeclaredAfterThem()
+    {
+        // buffer is a template of a header, and a member declared below the function: buffer[i] = c; assigns
+        var options = new CppParseOptions(templateNames: ["buffer"]);
+        Assert.IsTrue(CppParser.TryParse("""
+            struct Escape
+            {
+                void set(int i, char c) { buffer[i] = c; }
+                struct Inner { int g() { return size * 2; } };
+                char buffer[8];
+                static const int size = 8;
+            };
+            """, options, out var unit, out var error), error?.Message);
+
+        var escape = Class(unit.Declarations[0]);
+        var set = (FunctionDefinition)escape.Members[0];
+        Assert.IsInstanceOfType<ExpressionStatement>(set.Body.Statements[0]);
+        var inner = Class(escape.Members[1]);
+        Assert.IsNotNull(((FunctionDefinition)inner.Members[0]).Body);
+    }
+
+    [TestMethod]
+    public void MemberFunctionBodies_SeeTheTemplateParametersOfMemberTemplates()
+    {
+        var escape = Class(Declarations("""
+            struct S
+            {
+                template <class T> T get() { T *p = nullptr; return *p; }
+                S() : value(0) { value = 1; }
+                int value;
+            };
+            """)[0]);
+
+        var get = (FunctionDefinition)((TemplateDeclaration)escape.Members[0]).Declaration;
+        Assert.IsInstanceOfType<DeclarationStatement>(get.Body.Statements[0]);
+        var constructor = (FunctionDefinition)escape.Members[1];
+        Assert.HasCount(1, constructor.Initializers);
+        Assert.IsInstanceOfType<ExpressionStatement>(constructor.Body.Statements[0]);
+    }
+
+    [TestMethod]
+    public void AnErrorInAMemberFunctionBody_IsReportedWhereItIs()
+    {
+        Assert.IsFalse(CppParser.TryParse("struct S {\n  void f() { return +; }\n  int x;\n};\n", out _, out var error));
+        Assert.AreEqual((2, 22), (error.Line, error.Column), error.Message);
+    }
+
+    [TestMethod]
+    public void FriendTypes_NeedNoClassKey()
+    {
+        var template = (TemplateDeclaration)Declarations("""
+            class Other;
+            template <class T> struct Traits { using base = int; };
+            template <class T> class A { friend Other; friend typename Traits<T>::base; friend A<int>; };
+            """)[2];
+
+        var members = Class(template.Declaration).Members;
+        Assert.HasCount(3, members);
+        Assert.IsTrue(members.All(m => m is SimpleDeclaration { Declarators.Count: 0 }));
+    }
+
+    [TestMethod]
+    public void TypeAliases_OfClasses_QualifyNames()
+    {
+        // json::pointer is a type: the declaration declares a function
+        var declarations = Declarations("""
+            template <class T = void> class basic;
+            using json = basic<>;
+            template <class T> class basic { public: using pointer = int *; };
+            void f() { json::pointer p(json::pointer(0)); }
+            """);
+
+        var function = (FunctionDefinition)declarations[3];
+        var declaration = (SimpleDeclaration)((DeclarationStatement)function.Body.Statements[0]).Declaration;
+        Assert.IsInstanceOfType<ParenthesizedInitializer>(declaration.Declarators[0].Initializer);
+        var cast = ((ParenthesizedInitializer)declaration.Declarators[0].Initializer).Arguments[0];
+        Assert.IsInstanceOfType<FunctionalCastExpression>(cast);
+    }
+
+    [TestMethod]
+    public void NamesOfHeaders_QualifiedAndMembers()
+    {
+        // std::system_error is a class, fmt's system_error() a function template; indent is a type and a member of
+        // raw_ostream, whose member functions see it; the injected name of a base template takes arguments
+        var options = new CppParseOptions(
+            typeNames: ["std::system_error", "indent"],
+            templateNames: ["formatter"],
+            functionTemplateNames: ["system_error"],
+            classMembers: new Dictionary<string, IReadOnlyCollection<string>> { ["raw_ostream"] = ["indent"], ["formatter"] = ["format"] });
+        Assert.IsTrue(CppParser.TryParse("""
+            void f(int e) { throw std::system_error(e); }
+            void g(int e) { throw system_error(e); }
+            void raw_ostream::write() { indent(2); }
+            template <class T> struct F : formatter<T> { int format(int x) { return formatter<T>::format(x); } };
+            """, options, out var unit, out var error), error?.Message);
+
+        Expression Thrown(int function) => ((ThrowExpression)((ExpressionStatement)((FunctionDefinition)unit.Declarations[function]).Body.Statements[0]).Expression).Operand;
+        Assert.IsInstanceOfType<FunctionalCastExpression>(Thrown(0));
+        Assert.IsInstanceOfType<CallExpression>(Thrown(1));
+        var write = (FunctionDefinition)unit.Declarations[2];
+        Assert.IsInstanceOfType<CallExpression>(((ExpressionStatement)write.Body.Statements[0]).Expression);
+        var format = (FunctionDefinition)Class(((TemplateDeclaration)unit.Declarations[3]).Declaration).Members[0];
+        var call = (CallExpression)((ReturnStatement)format.Body.Statements[0]).Expression;
+        Assert.IsInstanceOfType<QualifiedName>(((NameExpression)call.Callee).Name);
+    }
+
+    [TestMethod]
+    public void LocalDeclarations_WithUnknownArgumentsInitializeVariables()
+    {
+        // lock(mutex) with an unknown mutex initializes a variable; with a type it declares a function
+        var kinds = Declarations("""
+            typedef int T;
+            void f()
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                std::string text(source());
+                int g(T);
+            }
+            """);
+
+        var body = ((FunctionDefinition)kinds[1]).Body.Statements;
+        InitDeclarator Declarator(int i) => ((SimpleDeclaration)((DeclarationStatement)body[i]).Declaration).Declarators[0];
+        Assert.IsInstanceOfType<ParenthesizedInitializer>(Declarator(0).Initializer);
+        Assert.IsInstanceOfType<ParenthesizedInitializer>(Declarator(1).Initializer);
+        Assert.IsInstanceOfType<FunctionDeclarator>(Declarator(2).Declarator);
+    }
+
+    [TestMethod]
+    public void UnknownNamesThatDeclare_AreTypesInTheRestOfTheFile()
+    {
+        // StringRef declares s, so StringRef(s) is a functional cast; SmallVector<int> v makes SmallVector a template
+        var function = (FunctionDefinition)Declarations("""
+            void f(StringRef s)
+            {
+                auto t = StringRef(s);
+                SmallVector<int> v;
+                auto w = SmallVector<int>(v);
+                g(h);
+            }
+            """)[0];
+
+        Expression Initializer(int i) => ((EqualsInitializer)((SimpleDeclaration)((DeclarationStatement)function.Body.Statements[i]).Declaration).Declarators[0].Initializer).Value;
+        Assert.IsInstanceOfType<FunctionalCastExpression>(Initializer(0));
+        Assert.IsInstanceOfType<FunctionalCastExpression>(Initializer(2));
+        Assert.IsInstanceOfType<ExpressionStatement>(function.Body.Statements[3]);
+    }
+
+    [TestMethod]
+    public void GnuExtensions_OfRealCode()
+    {
+        var declarations = Declarations("""
+            __extension__ typedef long long wide;
+            struct S { S(const char *s) __attribute__((enable_if(s != 0, "null"))) : p(s) {} const char *p; };
+            void f() __attribute__((cold)) {}
+            template <int N> using bits = _BitInt(N);
+            """);
+
+        Assert.HasCount(1, Class(declarations[1]).Members.OfType<FunctionDefinition>().Single().DeclaratorAttributes);
+        Assert.HasCount(1, ((FunctionDefinition)declarations[2]).DeclaratorAttributes);
+        var alias = (AliasDeclaration)((TemplateDeclaration)declarations[3]).Declaration;
+        Assert.IsInstanceOfType<BitIntSpecifier>(alias.Type.Specifiers.Specifiers[0]);
+    }
+
+    // ========================================
     // Writer and oracle
     // ========================================
 
@@ -604,6 +772,10 @@ public class CppDeclarationTests
     [DataRow("struct B { B(int) {} virtual void f() = 0; };\nstruct D : B { D() try : B(1) {} catch (...) {} void f() final {} };")]
     [DataRow("static __attribute__((unused)) int a, __attribute__((unused)) b;\nint c __attribute__((aligned(8))) = 1;\nint d asm(\"d_symbol\");\nasm(\"nop\");\nvoid f() { __asm__ volatile(\"\" ::: \"memory\"); }")]
     [DataRow("template <class T> struct A { struct B; static int x; void f(); };\ntemplate <class T> struct A<T>::B { T y; };\ntemplate <class T> int A<T>::x = 1;\ntemplate <class T> void A<T>::f() {}\ntemplate <> void A<int>::f() {}")]
+    [DataRow("struct E { void set(int i) { buffer[i] = 'a'; } template <class T> T get() const { return T(buffer[0]); } char buffer[4]; };")]
+    [DataRow("class F;\ntemplate <class T> class G { friend F; friend G<int>; };\nstruct R { R &operator=(int) = delete; template <class T> R &operator=(T) = delete; };\ntemplate <class T> void h(T) = delete;")]
+    [DataRow("template <int N> using bits = _BitInt(N);\n__extension__ typedef long long wide;\nstruct S { S(const char *s) __attribute__((enable_if(s != 0, \"null\"))) : p(s) {} const char *p; };")]
+    [DataRow("template <class T = void> class basic;\nusing json = basic<>;\ntemplate <class T> class basic { public: using pointer = int; basic() = default; };\njson::pointer f() { return json::pointer(1); }")]
     public void Oracle_Snippets(string source)
     {
         CppTestHelper.AssertOracle(source);

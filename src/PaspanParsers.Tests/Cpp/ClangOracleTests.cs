@@ -16,7 +16,7 @@ public class ClangOracleTests
         Clang.RequireClang();
         var run = Clang.DumpAst(Encoding.UTF8.GetBytes(source), []);
         Assert.IsTrue(run.Succeeded, run.Errors);
-        return ClangAst.Read(run.Output);
+        return run.Ast;
     }
 
     [TestMethod]
@@ -52,7 +52,7 @@ public class ClangOracleTests
     {
         var source = "﻿int é = 1;"u8.ToArray();
         var run = Clang.DumpAst(source, []);
-        var nodes = ClangAst.Read(run.Output).Nodes(source, bomLength: 3);
+        var nodes = run.Ast.Nodes(source, bomLength: 3);
 
         var variable = nodes.Single(n => n.Kind == "VarDecl");
         // 'é' is two bytes
@@ -87,7 +87,7 @@ public class ClangOracleTests
         Clang.RequireClang();
         var source = Encoding.UTF8.GetBytes("auto a = 42; auto b = \"x\\n\"; auto c = 'c'; auto d = 1.5;\n");
         var unit = CppParser.Parse(Encoding.UTF8.GetString(source));
-        var nodes = ClangAst.Read(Clang.DumpAst(source, []).Output).Nodes(source, 0);
+        var nodes = Clang.DumpAst(source, []).Ast.Nodes(source, 0);
 
         Assert.IsNull(CppLiteralChecker.Check(unit, nodes));
 
@@ -112,7 +112,7 @@ public class ClangOracleTests
         Clang.RequireClang();
         var source = Encoding.UTF8.GetBytes("int a = 1;\nint main() { return a * 2; }\n");
         var unit = CppParser.Parse(Encoding.UTF8.GetString(source));
-        var ast = ClangAst.Read(Clang.DumpAst(source, []).Output);
+        var ast = Clang.DumpAst(source, []).Ast;
         var tokens = ClangAst.RawTokens(source, 0);
 
         Assert.IsNull(CppSpanChecker.Check(source, unit, ast.Nodes(source, 0), tokens));
@@ -137,6 +137,90 @@ public class ClangOracleTests
         // A GNU statement expression
         var result = CppTestHelper.AssertOracleFails("int f() { return ({ 1; }); }", OracleStatus.ParseFailed);
         StringAssert.StartsWith(result.Detail, "(1,19): Unexpected '{'");
+    }
+
+    [TestMethod]
+    public void Read_CollectsTheNamesOfTheHeaders()
+    {
+        Clang.RequireClang();
+        var source = Encoding.UTF8.GetBytes("#include <vector>\n#include <concepts>\nstruct mine {};\nint size_t_user(std::size_t n);\n");
+        var names = Clang.DumpAst(source, [], collectHeaderNames: true).Ast.HeaderNames;
+
+        Assert.Contains("size_t", names.TypeNames);
+        Assert.Contains("vector", names.TemplateNames);
+        Assert.Contains("move", names.FunctionTemplateNames);
+        Assert.Contains("integral", names.ConceptNames);
+
+        // Only the headers: not the file, the members of classes or the locals of functions
+        Assert.DoesNotContain("mine", names.TypeNames);
+        Assert.DoesNotContain("vector", names.FunctionTemplateNames);
+        Assert.DoesNotContain("value_type", names.FunctionTemplateNames);
+    }
+
+    [TestMethod]
+    public void Read_LeavesOutTypesThatHeadersDeclareAsFunctionsToo()
+    {
+        Clang.RequireClang();
+        var source = Encoding.UTF8.GetBytes("#include <sys/stat.h>\n#include <string>\nint a;\n");
+        var names = Clang.DumpAst(source, [], collectHeaderNames: true).Ast.HeaderNames;
+
+        // struct stat and int stat(const char *, struct stat *)
+        Assert.DoesNotContain("stat", names.TypeNames);
+
+        // A member function does not hide a class: std::string::size and std::size_t
+        Assert.Contains("string", names.TypeNames);
+    }
+
+    [TestMethod]
+    public void Preprocess_ExpandsTheMacrosOfTheFileAndKeepsItsLines()
+    {
+        Clang.RequireClang();
+        var source = Encoding.UTF8.GetBytes("#include <cstddef>\n#define TWICE(x) ((x) * 2)\n#if defined(__cplusplus)\nint a = TWICE(NULL != 0);\n#endif\n");
+        var preprocessed = ClangPreprocessor.Preprocess(source, ClangOracleOptions.Default);
+
+        var lines = Encoding.UTF8.GetString(preprocessed.Expanded).Split('\n');
+        Assert.AreEqual("#include <cstddef>", lines[0]);
+        Assert.AreEqual("#define TWICE(x) ((x) * 2)", lines[1]);
+        Assert.AreEqual("int a = ((__null != 0) * 2);", lines[3]);
+
+        // The macros of the headers, for conditional directives
+        Assert.AreEqual("__null", preprocessed.HeaderMacros["NULL"]);
+        Assert.IsFalse(preprocessed.HeaderMacros.ContainsKey("TWICE(x)"));
+    }
+
+    [TestMethod]
+    public void Normalize_IgnoresTheValuesThePreprocessorMadeFromTheLayout()
+    {
+        var original = DumpAst("int line = __LINE__; const char *text = __FILE__;\n#define S(x) #x\nconst char *s = S(1+2);\n");
+        var reformatted = DumpAst("\n\nint line = __LINE__;\nconst char *text = __FILE__;\n#define S(x) #x\nconst char *s = S(1 + 2);\n");
+
+        Assert.IsNull(ClangAst.FirstDifference(original.Normalize(), reformatted.Normalize()));
+    }
+
+    [TestMethod]
+    public void Nodes_EndAtTheFirstAngleOfASplitShift()
+    {
+        Clang.RequireClang();
+        var source = Encoding.UTF8.GetBytes("template <class T> struct A {};\ntemplate <class T, class U = A<T>> struct B {};\n");
+        var nodes = Clang.DumpAst(source, []).Ast.Nodes(source, 0);
+
+        var parameter = nodes.Single(n => n.Kind == "TemplateTypeParmDecl" && n.NameOffset == 57);
+        Assert.AreEqual("class U = A<T>", Encoding.UTF8.GetString(source[parameter.Span.Start..parameter.Span.End]));
+        Assert.IsFalse(parameter.FromMacro);
+    }
+
+    [TestMethod]
+    public void Oracle_ChecksTheModeWithNames()
+    {
+        Clang.RequireClang();
+        var source = Encoding.UTF8.GetBytes("#include <utility>\nint f(std::pair<int, int> p) { return std::get<0>(p); }\nauto g() { return std::pair<int, int>(1, 2); }\n");
+
+        var result = ClangOracle.Check(source, ClangOracleOptions.Default, out var names);
+        Assert.AreEqual(OracleStatus.SpanMismatch, result.Status, result.Detail);
+
+        var withNames = ClangOracleOptions.Default with { Headers = new HeaderKnowledge(names, new Dictionary<string, string>()) };
+        result = ClangOracle.Check(source, withNames);
+        Assert.AreEqual(OracleStatus.Passed, result.Status, result.Detail);
     }
 
     [TestMethod]

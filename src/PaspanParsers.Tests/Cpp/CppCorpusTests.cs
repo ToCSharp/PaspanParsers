@@ -79,8 +79,11 @@ public class CppCorpusTests
     [TestMethod]
     public void Oracle_ExternalCorpus()
     {
-        var directory = Environment.GetEnvironmentVariable("CPP_CORPUS_DIR");
-        if (string.IsNullOrEmpty(directory))
+        var directories = (Environment.GetEnvironmentVariable("CPP_CORPUS_DIR") ?? "")
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(Path.GetFullPath)
+            .ToList();
+        if (directories.Count == 0)
         {
             Assert.Inconclusive("Set CPP_CORPUS_DIR to a directory of C++ files to measure an external corpus.");
             return;
@@ -88,9 +91,14 @@ public class CppCorpusTests
 
         Clang.RequireClang();
 
-        var files = Directory.EnumerateFiles(directory, "*.*", SearchOption.AllDirectories)
+        // Several directories are separated by the path separator; the names of their files start with the directory name
+        var files = directories.SelectMany(directory => Directory.EnumerateFiles(directory, "*.*", SearchOption.AllDirectories)
             .Where(IsSourceFile)
-            .Select(path => (Path.GetRelativePath(directory, path).Replace('\\', '/'), path));
+            .Select(path =>
+            {
+                var name = Path.GetRelativePath(directory, path).Replace('\\', '/');
+                return (directories.Count > 1 ? Path.GetFileName(directory) + "/" + name : name, path);
+            }));
 
         var defines = (Environment.GetEnvironmentVariable("CPP_CORPUS_DEFINES") ?? "")
             .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -99,16 +107,87 @@ public class CppCorpusTests
             .Select(Path.GetFullPath)
             .ToArray();
 
-        var title = defines.Length == 0 ? $"External C++ corpus {directory}" : $"External C++ corpus {directory} with {string.Join(";", defines)}";
-        var report = Report(title, Run(files, new ClangOracleOptions(defines, includes), perFileWorkingDirectory: true));
+        var corpus = string.Join(Path.PathSeparator, directories);
+        var title = defines.Length == 0 ? $"External C++ corpus {corpus}" : $"External C++ corpus {corpus} with {string.Join(";", defines)}";
+        var results = Run(files, new ClangOracleOptions(defines, includes), perFileWorkingDirectory: true, CheckWithHeaders);
+        var report = ExternalReport(title, results);
         TestContext.WriteLine(report);
         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "cpp-oracle-external-report.txt"), report);
     }
 
-    private sealed record FileResult(string Name, OracleResult Result);
-
-    private static List<FileResult> Run(IEnumerable<(string Name, string Path)> files, ClangOracleOptions options, bool perFileWorkingDirectory = false)
+    /// <summary>
+    /// Why a file of an external corpus fails, found by checking it again with more knowledge.
+    /// </summary>
+    private enum FailureCategory
     {
+        /// <summary>
+        /// The file passes with the names and macros its headers declare: a heuristic for unknown names is wrong,
+        /// or a conditional directive tests a macro of a header.
+        /// </summary>
+        UnknownNames,
+
+        /// <summary>The file passes with its macros expanded: a macro is used in a syntactic position.</summary>
+        Macros,
+
+        /// <summary>The file fails even with its macros expanded: an error of our parser (or of the oracle).</summary>
+        ParserError,
+
+        /// <summary>Clang could not preprocess the file, or rejected it with its macros expanded.</summary>
+        Unclassified,
+    }
+
+    private sealed record FileResult(string Name, OracleResult Result)
+    {
+        /// <summary>The result with the names and macros of the headers, when the file fails without them.</summary>
+        public OracleResult WithNames { get; init; }
+
+        /// <summary>The result with the macros expanded, when the file fails with the names of the headers.</summary>
+        public OracleResult Expanded { get; init; }
+
+        public FailureCategory? Category { get; init; }
+    }
+
+    /// <summary>
+    /// Checks a file of an external corpus. A file that fails is checked again in the mode "with names", with
+    /// the names and macros its headers declare, and if it still fails, with its macros expanded by clang
+    /// (<see cref="ClangPreprocessor"/>) and the same names.
+    /// </summary>
+    private static FileResult CheckWithHeaders(string name, byte[] source, ClangOracleOptions options)
+    {
+        var result = ClangOracle.Check(source, options, out var headerNames);
+        if (result.Status is OracleStatus.Passed or OracleStatus.Invalid)
+        {
+            return new FileResult(name, result);
+        }
+
+        var preprocessed = ClangPreprocessor.Preprocess(source, options);
+        if (preprocessed == null || headerNames == null)
+        {
+            return new FileResult(name, result) { Category = FailureCategory.Unclassified };
+        }
+
+        var withHeaders = options with { Headers = new HeaderKnowledge(headerNames, preprocessed.HeaderMacros) };
+        var withNames = ClangOracle.Check(source, withHeaders);
+        if (withNames.Status == OracleStatus.Passed)
+        {
+            return new FileResult(name, result) { WithNames = withNames, Category = FailureCategory.UnknownNames };
+        }
+
+        var expanded = ClangOracle.Check(preprocessed.Expanded, withHeaders);
+        var category = expanded.Status switch
+        {
+            OracleStatus.Passed => FailureCategory.Macros,
+            OracleStatus.Invalid => FailureCategory.Unclassified,
+            _ => FailureCategory.ParserError,
+        };
+
+        return new FileResult(name, result) { WithNames = withNames, Expanded = expanded, Category = category };
+    }
+
+    private static List<FileResult> Run(IEnumerable<(string Name, string Path)> files, ClangOracleOptions options, bool perFileWorkingDirectory = false,
+        Func<string, byte[], ClangOracleOptions, FileResult> check = null)
+    {
+        check ??= (name, source, fileOptions) => new FileResult(name, ClangOracle.Check(source, fileOptions));
         var results = new ConcurrentBag<FileResult>();
 
         Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, file =>
@@ -117,12 +196,12 @@ public class CppCorpusTests
             var fileOptions = perFileWorkingDirectory ? options with { WorkingDirectory = Path.GetDirectoryName(file.Path) } : options;
 
             // A pathological input must not hang the whole run; clang has its own timeout
-            var check = Task.Run(() => ClangOracle.Check(source, fileOptions));
-            var result = check.Wait(FileTimeout + TimeSpan.FromMinutes(5))
-                ? check.Result
-                : new OracleResult(OracleStatus.ParseFailed, "timed out");
+            var task = Task.Run(() => check(file.Name, source, fileOptions));
+            var result = task.Wait(FileTimeout + TimeSpan.FromMinutes(15))
+                ? task.Result
+                : new FileResult(file.Name, new OracleResult(OracleStatus.ParseFailed, "timed out"));
 
-            results.Add(new FileResult(file.Name, result));
+            results.Add(result);
         });
 
         return results.OrderBy(r => r.Name, StringComparer.Ordinal).ToList();
@@ -132,10 +211,9 @@ public class CppCorpusTests
     {
         var valid = results.Where(r => r.Result.Status != OracleStatus.Invalid).ToList();
         var passed = valid.Count(r => r.Result.Status == OracleStatus.Passed);
-        var percent = valid.Count == 0 ? 0 : 100.0 * passed / valid.Count;
 
         var builder = new StringBuilder();
-        builder.AppendLine($"{title}: {passed}/{valid.Count} valid files pass ({percent:F1}%), {results.Count - valid.Count} invalid skipped");
+        builder.AppendLine($"{title}: {passed}/{valid.Count} valid files pass ({Percent(passed, valid.Count)}), {results.Count - valid.Count} invalid skipped");
 
         foreach (var group in valid.Where(r => r.Result.Status != OracleStatus.Passed).GroupBy(r => r.Result.Status).OrderBy(g => g.Key))
         {
@@ -149,6 +227,67 @@ public class CppCorpusTests
 
         return builder.ToString();
     }
+
+    /// <summary>
+    /// The report of an external corpus: the share of files that pass as they are, with the names of their
+    /// headers and with their macros expanded, and the failures by category.
+    /// </summary>
+    private static string ExternalReport(string title, List<FileResult> results)
+    {
+        var valid = results.Where(r => r.Result.Status != OracleStatus.Invalid).ToList();
+        var passed = valid.Count(r => r.Result.Status == OracleStatus.Passed);
+        var withNames = passed + valid.Count(r => r.Category == FailureCategory.UnknownNames);
+        var expanded = withNames + valid.Count(r => r.Category == FailureCategory.Macros);
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"{title}: {valid.Count} valid files, {results.Count - valid.Count} invalid skipped");
+        builder.AppendLine($"  pass as they are:              {passed,5} ({Percent(passed, valid.Count)})");
+        builder.AppendLine($"  pass with header names:        {withNames,5} ({Percent(withNames, valid.Count)})");
+        builder.AppendLine($"  pass with macros expanded too: {expanded,5} ({Percent(expanded, valid.Count)})");
+
+        var failed = valid.Where(r => r.Category != null).GroupBy(r => r.Category!.Value).OrderBy(g => g.Key).ToList();
+        foreach (var group in failed)
+        {
+            builder.AppendLine($"  {Describe(group.Key)}: {group.Count()}");
+        }
+
+        foreach (var group in failed)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"{Describe(group.Key)}:");
+            foreach (var r in group)
+            {
+                builder.AppendLine($"  {r.Result.Status,-13} {r.Name} {r.Result.Detail}");
+                if (r.Category is FailureCategory.ParserError or FailureCategory.Unclassified && r.Expanded != null)
+                {
+                    builder.AppendLine($"    expanded: {r.Expanded.Status} {r.Expanded.Detail}");
+                }
+            }
+        }
+
+        var invalid = results.Where(r => r.Result.Status == OracleStatus.Invalid).ToList();
+        if (invalid.Count != 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Invalid (clang reports errors):");
+            foreach (var r in invalid)
+            {
+                builder.AppendLine($"  {r.Name} {r.Result.Detail}");
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static string Describe(FailureCategory category) => category switch
+    {
+        FailureCategory.UnknownNames => "Wrong heuristics for unknown names, or conditions on macros of headers (pass with header names)",
+        FailureCategory.Macros => "Macros in syntactic positions (pass with macros expanded)",
+        FailureCategory.ParserError => "Parser errors (fail with macros expanded)",
+        _ => "Unclassified (clang rejects the preprocessed file)",
+    };
+
+    private static string Percent(int count, int total) => $"{(total == 0 ? 0 : 100.0 * count / total):F1}%";
 
     private static IEnumerable<(string Name, string Path)> BuiltInCorpus()
     {

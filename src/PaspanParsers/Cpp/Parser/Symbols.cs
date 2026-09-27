@@ -8,7 +8,12 @@ internal enum SymbolKind : byte
     /// <summary>A variable, function or enumerator.</summary>
     Value,
     Type,
+
+    /// <summary>A class or alias template: its template-ids are types.</summary>
     Template,
+
+    /// <summary>A function or variable template: its template-ids are expressions.</summary>
+    ValueTemplate,
     Concept,
     Namespace,
 }
@@ -26,6 +31,9 @@ internal enum ScopeKind : byte
 
     /// <summary>The template parameters of a template declaration.</summary>
     TemplateParameters,
+
+    /// <summary>A typedef or alias of a type, as a member of a scope: the scope of the type it names.</summary>
+    Alias,
 }
 
 /// <summary>
@@ -67,6 +75,11 @@ internal sealed class Symbols
 
         /// <summary>The namespaces and enumerations whose names are visible here, and the known base classes.</summary>
         public List<Scope> Nominated { get; set; }
+
+        /// <summary>For an alias, the name of the type it names, looked up from <see cref="Parent"/>.</summary>
+        public Name AliasTarget { get; init; }
+
+        public bool IsInline { get; set; }
     }
 
     private enum ChangeKind : byte
@@ -86,6 +99,9 @@ internal sealed class Symbols
     private readonly List<Change> _log = [];
     private readonly List<Scope> _active;
     private readonly Scope _global = new(ScopeKind.Namespace, null, null);
+
+    // The scopes of the classes whose members the options give, by name
+    private readonly Dictionary<string, Scope> _optionClasses = new(StringComparer.Ordinal);
 
     public Symbols(CppParseOptions options)
     {
@@ -143,6 +159,7 @@ internal sealed class Symbols
 
         if (isInline || name == null)
         {
+            scope.IsInline |= isInline;
             Nominate(parent, scope);
         }
 
@@ -196,7 +213,7 @@ internal sealed class Symbols
     /// </summary>
     public void AddBase(Name @base)
     {
-        var scope = ResolveScope(@base, global: false);
+        var scope = ResolveScope(@base, global: false) ?? OptionsClass(@base);
         if (scope != null && scope != Current)
         {
             Nominate(Current, scope);
@@ -210,7 +227,7 @@ internal sealed class Symbols
     /// </summary>
     public int EnterQualifiedScope(Name qualifier, bool global)
     {
-        var scope = ResolveScope(qualifier, global);
+        var scope = ResolveScope(qualifier, global) ?? OptionsClass(qualifier);
         var chain = new List<Scope>();
         for (; scope != null && !_active.Contains(scope); scope = scope.Parent)
         {
@@ -223,6 +240,31 @@ internal sealed class Symbols
         }
 
         return chain.Count;
+    }
+
+    /// <summary>
+    /// The number of active scopes.
+    /// </summary>
+    public int Depth => _active.Count;
+
+    /// <summary>
+    /// The active scopes from <paramref name="depth"/> on, innermost last, to enter again with
+    /// <see cref="EnterScopes"/>.
+    /// </summary>
+    public object[] ActiveScopes(int depth) => _active.Skip(depth).ToArray<object>();
+
+    /// <summary>
+    /// Enters again scopes from <see cref="ActiveScopes"/>, with the names declared in them. Returns their
+    /// number, for <see cref="ExitScopes"/>.
+    /// </summary>
+    public int EnterScopes(object[] scopes)
+    {
+        foreach (var scope in scopes)
+        {
+            Push((Scope)scope);
+        }
+
+        return scopes.Length;
     }
 
     public void ExitScopes(int count)
@@ -251,16 +293,29 @@ internal sealed class Symbols
 
     /// <summary>
     /// Declares <paramref name="name"/> in the innermost scope that is not the scope of template parameters.
-    /// The entity a template declaration declares is a template: <c>template &lt;class T&gt; T zero;</c>.
+    /// The entity a template declaration declares is a template: <c>template &lt;class T&gt; struct Box;</c>,
+    /// <c>template &lt;class T&gt; T zero;</c>. A function that overloads a function template leaves the name
+    /// a template: <c>f&lt;int&gt;(x)</c> still has template arguments.
     /// </summary>
     public void Declare(string name, SymbolKind kind, bool isPack = false)
     {
-        if (Current.Kind == ScopeKind.TemplateParameters && kind is SymbolKind.Type or SymbolKind.Value)
+        if (Current.Kind == ScopeKind.TemplateParameters)
         {
-            kind = SymbolKind.Template;
+            kind = kind switch
+            {
+                SymbolKind.Type => SymbolKind.Template,
+                SymbolKind.Value => SymbolKind.ValueTemplate,
+                _ => kind,
+            };
         }
 
-        Declare(DeclarationScope(), name, new Symbol(kind, isPack));
+        var scope = DeclarationScope();
+        if (kind == SymbolKind.Value && scope.Names.TryGetValue(name, out var previous) && previous.Kind == SymbolKind.ValueTemplate)
+        {
+            return;
+        }
+
+        Declare(scope, name, new Symbol(kind, isPack));
     }
 
     /// <summary>
@@ -288,6 +343,44 @@ internal sealed class Symbols
         if (ResolveScope(target, global: false) is { } scope)
         {
             AddMember(DeclarationScope(), alias, scope);
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="name"/> is the type of a declaration, so a name that is not known is a type declared outside
+    /// the file (<c>StringRef s;</c>, <c>llvm::Twine t;</c>, <c>SmallVector&lt;int&gt; v;</c>): its last identifier
+    /// is declared as a type, or a template, in the global scope, for the rest of the file.
+    /// </summary>
+    public void LearnType(Name name)
+    {
+        var last = name is QualifiedName qualified ? qualified.Name : name;
+        var (identifier, kind) = last switch
+        {
+            IdentifierName id => (id.Identifier, SymbolKind.Type),
+            TemplateIdName { Template: IdentifierName template } => (template.Identifier, SymbolKind.Template),
+            _ => (null, SymbolKind.Type),
+        };
+
+        if (identifier != null && Find(identifier) == null)
+        {
+            Declare(_global, identifier, new Symbol(kind, false));
+        }
+    }
+
+    /// <summary>
+    /// Declares <paramref name="alias"/> as a type, another name of the type <paramref name="target"/>: when that
+    /// is a class or enumeration of the file, names qualified by the alias are looked up in it
+    /// (<c>using json = basic_json&lt;&gt;;</c> and <c>json::json_pointer</c>). <paramref name="target"/> is null
+    /// for a type that is no class.
+    /// </summary>
+    public void DeclareTypeAlias(string alias, Name target)
+    {
+        Declare(alias, SymbolKind.Type);
+        if (target != null)
+        {
+            // Resolved when used: the class may be defined after the alias (class basic_json; using json = basic_json<>;)
+            var scope = DeclarationScope();
+            AddMember(scope, alias, new Scope(ScopeKind.Alias, alias, scope) { AliasTarget = target });
         }
     }
 
@@ -354,12 +447,81 @@ internal sealed class Symbols
             }
         }
 
+        return FromOptions(name);
+    }
+
+    /// <summary>
+    /// The kind of a name declared outside the file, as the options give it.
+    /// </summary>
+    private Symbol? FromOptions(string name)
+    {
         if (_options.TemplateNames.Contains(name))
         {
             return new Symbol(SymbolKind.Template, false);
         }
 
+        if (_options.FunctionTemplateNames.Contains(name))
+        {
+            return new Symbol(SymbolKind.ValueTemplate, false);
+        }
+
+        if (_options.ConceptNames.Contains(name))
+        {
+            return new Symbol(SymbolKind.Concept, false);
+        }
+
         return _options.TypeNames.Contains(name) ? new Symbol(SymbolKind.Type, false) : null;
+    }
+
+    /// <summary>
+    /// The kind of a name qualified by a namespace or class that is not known in the file (<c>std::</c>,
+    /// <c>T::</c>): none of the file's declarations is its member, so only the options can know it, by the
+    /// qualified name (<c>std::system_error</c>) or by the name alone.
+    /// </summary>
+    private SymbolKind? LookupMember(string qualifier, string name)
+    {
+        return (qualifier != null ? FromOptions(qualifier + "::" + name) : null)?.Kind ?? FromOptions(name)?.Kind;
+    }
+
+    /// <summary>
+    /// The qualifier of a name as written, without template arguments: <c>std::chrono</c>, <c>Box</c> for
+    /// <c>Box&lt;int&gt;::</c>; null when it has other components, such as <c>decltype(x)::</c>.
+    /// </summary>
+    private static string QualifierText(Name qualifier, bool global)
+    {
+        switch (qualifier)
+        {
+            case null:
+                return global ? "" : null;
+            case QualifiedName qualified:
+            {
+                var outer = QualifierText(qualified.Qualifier, qualified.Qualifier == null);
+                var last = LastIdentifier(qualified.Name);
+                return outer == null || last == null ? null : outer.Length == 0 ? last : outer + "::" + last;
+            }
+
+            default:
+                return LastIdentifier(qualifier);
+        }
+    }
+
+    /// <summary>
+    /// The name of a namespace or class of the file qualified by the namespaces and classes around it, without
+    /// inline and unnamed namespaces: <c>llvm::json</c>.
+    /// </summary>
+    private static string ScopeText(Scope scope)
+    {
+        var names = new List<string>();
+        for (; scope?.Name != null; scope = scope.Parent)
+        {
+            if (!scope.IsInline)
+            {
+                names.Add(scope.Name);
+            }
+        }
+
+        names.Reverse();
+        return string.Join("::", names);
     }
 
     private static Symbol? FindIn(Scope scope, string name, int depth)
@@ -386,9 +548,9 @@ internal sealed class Symbols
 
     /// <summary>
     /// The kind of a name. A qualified name is looked up in the namespace or class its qualifier names;
-    /// when the qualifier is not known (<c>std::</c>, <c>T::</c>), by its last identifier, a guess that
-    /// holds for names declared once. A template-id is a type or a concept-id when its template is known,
-    /// and unknown otherwise.
+    /// when the qualifier is not known (<c>std::</c>, <c>T::</c>), its last identifier in the options, a guess
+    /// that holds for names declared once. A template-id is a type, a value or a concept-id when its template
+    /// is known, and unknown otherwise.
     /// </summary>
     public SymbolKind? Lookup(Name name) => name switch
     {
@@ -410,7 +572,13 @@ internal sealed class Symbols
         }
 
         var scope = ResolveScope(qualifier, global);
-        return scope != null ? FindIn(scope, identifier, 0)?.Kind : Lookup(identifier);
+        if (scope == null)
+        {
+            return LookupMember(QualifierText(qualifier, global), identifier);
+        }
+
+        // A namespace of the file may be reopened in a header: std::string in a file that specializes std::hash
+        return FindIn(scope, identifier, 0)?.Kind ?? (scope.Kind == ScopeKind.Namespace ? LookupMember(ScopeText(scope), identifier) : null);
     }
 
     private SymbolKind? LookupComponent(Name qualifier, bool global, Name component) => component switch
@@ -428,21 +596,14 @@ internal sealed class Symbols
             return null;
         }
 
+        // A name known as no template (T::template size<int>() with a variable size elsewhere) is not the template
         return template switch
         {
+            SymbolKind.Template => SymbolKind.Type,
+            SymbolKind.ValueTemplate => SymbolKind.Value,
             SymbolKind.Concept => SymbolKind.Concept,
-            null => null,
-            _ => SymbolKind.Type,
+            _ => null,
         };
-    }
-
-    /// <summary>
-    /// The name designates a class defined in the file: <c>Box&lt;int&gt;</c>, <c>Outer::Inner</c>.
-    /// </summary>
-    public bool NamesClass(Name name)
-    {
-        var global = name is QualifiedName { Qualifier: null };
-        return ResolveScope(global ? ((QualifiedName)name).Name : name, global)?.Kind == ScopeKind.Class;
     }
 
     /// <summary>
@@ -503,7 +664,7 @@ internal sealed class Symbols
     {
         if (scope.Members != null && scope.Members.TryGetValue(name, out var member))
         {
-            return member;
+            return member.Kind == ScopeKind.Alias ? ResolveAlias(member, depth) : member;
         }
 
         if (scope.Nominated != null && depth < 16)
@@ -519,6 +680,116 @@ internal sealed class Symbols
 
         return null;
     }
+
+    /// <summary>
+    /// A scope with the members that the options give for the class <paramref name="name"/>, which is not
+    /// known in the file; null when they give none. A member function template is a template, and the name of
+    /// the class a type.
+    /// </summary>
+    private Scope OptionsClass(Name name)
+    {
+        var last = name is QualifiedName qualified ? qualified.Name : name;
+        if (LastIdentifier(last) is not { } className || !_options.ClassMembers.TryGetValue(className, out var members))
+        {
+            return null;
+        }
+
+        if (!_optionClasses.TryGetValue(className, out var scope))
+        {
+            scope = new Scope(ScopeKind.Class, className, null);
+            foreach (var member in members)
+            {
+                scope.Names[member] = new Symbol(_options.FunctionTemplateNames.Contains(member) ? SymbolKind.ValueTemplate : SymbolKind.Value, false);
+            }
+
+            // The injected-class-name: classes of the same name in other scopes may have a member of the name.
+            // That of a class template takes template arguments: formatter<T>::format in a derived class
+            scope.Names[className] = new Symbol(_options.TemplateNames.Contains(className) ? SymbolKind.Template : SymbolKind.Type, false);
+            _optionClasses[className] = scope;
+        }
+
+        return scope;
+    }
+
+    /// <summary>
+    /// The class or enumeration an alias names, looked up from the scope that declares the alias; null when it
+    /// is not known.
+    /// </summary>
+    private static Scope ResolveAlias(Scope alias, int depth)
+    {
+        if (depth >= 16)
+        {
+            return null;
+        }
+
+        var target = alias.AliasTarget;
+        var global = target is QualifiedName { Qualifier: null };
+        var first = global ? ((QualifiedName)target).Name : target;
+        var components = new List<string>();
+        for (var name = first; ; )
+        {
+            if (name is QualifiedName qualified)
+            {
+                if (LastIdentifier(qualified.Name) is not { } component)
+                {
+                    return null;
+                }
+
+                components.Add(component);
+                name = qualified.Qualifier;
+                continue;
+            }
+
+            if (LastIdentifier(name) is not { } identifier)
+            {
+                return null;
+            }
+
+            components.Add(identifier);
+            break;
+        }
+
+        components.Reverse();
+
+        // The first component is looked up in the enclosing scopes, the others in the scope before them
+        Scope scope = null;
+        if (global)
+        {
+            scope = MemberScope(FindRoot(alias), components[0], depth + 1);
+        }
+
+        for (var outer = global ? null : alias.Parent; outer != null && scope == null; outer = outer.Parent)
+        {
+            scope = MemberScope(outer, components[0], depth + 1);
+        }
+
+        for (var i = 1; i < components.Count && scope != null; i++)
+        {
+            scope = MemberScope(scope, components[i], depth + 1);
+        }
+
+        return scope?.Kind is ScopeKind.Class or ScopeKind.Enum ? scope : null;
+    }
+
+    private static Scope FindRoot(Scope scope)
+    {
+        while (scope.Parent != null)
+        {
+            scope = scope.Parent;
+        }
+
+        return scope;
+    }
+
+    /// <summary>
+    /// The identifier of an identifier or of the template of a template-id; null for other names.
+    /// </summary>
+    private static string LastIdentifier(Name name) => name switch
+    {
+        IdentifierName identifier => identifier.Identifier,
+        TemplateIdName { Template: IdentifierName template } => template.Identifier,
+        _ => null,
+    };
 
     // ========================================
     // Speculation

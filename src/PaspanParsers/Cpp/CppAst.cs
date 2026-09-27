@@ -186,11 +186,14 @@ public sealed class FunctionDefinition(DeclSpecifierSequence specifiers, Declara
     /// <summary>The constraint after the declarator: <c>requires C&lt;T&gt;</c>, or null.</summary>
     public Expression RequiresClause { get; init; }
 
+    /// <summary>The GNU attributes after the declarator: <c>void f() __attribute__((cold)) { … }</c>.</summary>
+    public IReadOnlyList<AttributeSpecifier> DeclaratorAttributes { get; init; } = [];
+
     /// <summary>The ctor-initializer: <c>a(1), Base{ 2 }</c> after ':'; null when there is none.</summary>
     public IReadOnlyList<MemberInitializer> Initializers { get; init; }
 
     /// <summary>The body; null for a defaulted or deleted function.</summary>
-    public CompoundStatement Body { get; } = body;
+    public CompoundStatement Body { get; internal set; } = body;
 
     /// <summary>The handlers of a function-try-block, whose <c>try</c> comes before the ctor-initializer; null otherwise.</summary>
     public IReadOnlyList<CatchClause> Handlers { get; init; }
@@ -468,6 +471,14 @@ public sealed class ElaboratedTypeSpecifier(string key, Name name) : DeclSpecifi
 public sealed class DecltypeSpecifier(Expression expression) : DeclSpecifier
 {
     public Expression Expression { get; } = expression;
+}
+
+/// <summary>
+/// <c>_BitInt(width)</c>, clang's bit-precise integer type from C23.
+/// </summary>
+public sealed class BitIntSpecifier(Expression width) : DeclSpecifier
+{
+    public Expression Width { get; } = width;
 }
 
 /// <summary>
@@ -1334,6 +1345,18 @@ public sealed class FunctionalCastExpression(DeclSpecifier type, Initializer ini
 {
     public DeclSpecifier Type { get; } = type;
     public Initializer Initializer { get; } = initializer;
+}
+
+/// <summary>
+/// A call of a clang builtin whose arguments can be types: <c>__builtin_offsetof(S, member)</c>,
+/// <c>__builtin_bit_cast(T, x)</c>, <c>__builtin_va_arg(list, T)</c> and type traits such as
+/// <c>__is_same(T, U)</c>. Each argument is a <see cref="TypeId"/> or an <see cref="Expression"/>; the member
+/// of <c>__builtin_offsetof</c> is an expression (<c>a.b[1]</c>).
+/// </summary>
+public sealed class BuiltinCallExpression(string name, IReadOnlyList<CppNode> arguments) : Expression
+{
+    public string Name { get; } = name;
+    public IReadOnlyList<CppNode> Arguments { get; } = arguments;
 }
 
 /// <summary>

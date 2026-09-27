@@ -71,10 +71,15 @@ public class CppDeclaratorTests
         var initializer = (EqualsInitializer)((SimpleDeclaration)((DeclarationStatement)statements[1]).Declaration).Declarators[0].Initializer;
         Assert.AreEqual(">", ((BinaryExpression)initializer.Value).Operator);
 
-        var options = new CppParseOptions(templateNames: ["make"]);
+        var options = new CppParseOptions(functionTemplateNames: ["make"]);
         Assert.IsTrue(CppParser.TryParse("int x = make<int>(1);", options, out var unit, out _));
         var call = (CallExpression)((EqualsInitializer)((SimpleDeclaration)unit.Declarations[0]).Declarators[0].Initializer).Value;
         Assert.IsInstanceOfType<TemplateIdName>(((NameExpression)call.Callee).Name);
+
+        // The template-id of a class template is a type
+        options = new CppParseOptions(templateNames: ["box"]);
+        Assert.IsTrue(CppParser.TryParse("int x = box<int>(1);", options, out unit, out _));
+        Assert.IsInstanceOfType<FunctionalCastExpression>(((EqualsInitializer)((SimpleDeclaration)unit.Declarations[0]).Declarators[0].Initializer).Value);
     }
 
     [TestMethod]

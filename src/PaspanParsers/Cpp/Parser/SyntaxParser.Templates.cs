@@ -186,7 +186,11 @@ internal ref partial struct SyntaxParser
             return false;
         }
 
-        return _cache.Symbols.Lookup(identifier) switch
+        // detail::fixed_string S is a non-type parameter of a class type
+        var kind = name is QualifiedName qualifiedName
+            ? _cache.Symbols.LookupComponent(qualifiedName.Qualifier, qualifiedName.Qualifier == null, identifier)
+            : _cache.Symbols.Lookup(identifier);
+        return kind switch
         {
             SymbolKind.Concept => true,
             null => !identifier.EndsWith("_t", StringComparison.Ordinal),

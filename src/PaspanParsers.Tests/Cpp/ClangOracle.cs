@@ -16,6 +16,13 @@ public sealed record ClangOracleOptions(
 {
     public static ClangOracleOptions Default { get; } = new();
 
+    /// <summary>
+    /// What the headers of the file declare, given to our parser in the mode "with names": the names of
+    /// types, templates and concepts, and the macros for conditional directives. Null by default: our
+    /// parser knows only the file.
+    /// </summary>
+    public HeaderKnowledge Headers { get; init; }
+
     public IEnumerable<string> ClangArguments()
     {
         foreach (var define in Defines ?? [])
@@ -55,9 +62,23 @@ public sealed record ClangOracleOptions(
             .Concat(Clang.SystemIncludeDirectories)
             .ToList();
 
-        return new CppParseOptions(CppLanguageVersion.Cpp23, macros, includeDirectories, workingDirectory);
+        foreach (var (name, replacement) in Headers?.Macros ?? new Dictionary<string, string>())
+        {
+            macros[name] = replacement;
+        }
+
+        var names = Headers?.Names;
+        return new CppParseOptions(CppLanguageVersion.Cpp23, macros, includeDirectories, workingDirectory,
+            names?.TypeNames.ToList(), names?.TemplateNames.ToList(), names?.ConceptNames.ToList(), names?.FunctionTemplateNames.ToList(),
+            names?.ClassMembers.ToDictionary(p => p.Key, p => (IReadOnlyCollection<string>)p.Value.ToList(), StringComparer.Ordinal));
     }
 }
+
+/// <summary>
+/// What the headers included by a file declare: the names of <see cref="HeaderNames"/> and the macros
+/// they define, by name (<c>F(x)</c> for a function-like macro) with their replacement text.
+/// </summary>
+public sealed record HeaderKnowledge(HeaderNames Names, IReadOnlyDictionary<string, string> Macros);
 
 /// <summary>
 /// Uses clang as the reference parser. For a file clang compiles without errors:
@@ -79,10 +100,25 @@ public static class ClangOracle
 
     public static OracleResult Check(byte[] source, ClangOracleOptions options = null)
     {
+        return Check(source, options, collectHeaderNames: false, out _);
+    }
+
+    /// <summary>
+    /// Checks <paramref name="source"/> and returns the names its headers declare, read from clang's AST
+    /// (null when clang fails), for <see cref="ClangOracleOptions.Headers"/>.
+    /// </summary>
+    public static OracleResult Check(byte[] source, ClangOracleOptions options, out HeaderNames headerNames)
+    {
+        return Check(source, options, collectHeaderNames: true, out headerNames);
+    }
+
+    private static OracleResult Check(byte[] source, ClangOracleOptions options, bool collectHeaderNames, out HeaderNames headerNames)
+    {
         options ??= ClangOracleOptions.Default;
         var arguments = options.ClangArguments().ToList();
 
-        var original = Clang.DumpAst(source, arguments, options.WorkingDirectory);
+        var original = Clang.DumpAst(source, arguments, options.WorkingDirectory, collectHeaderNames);
+        headerNames = original.Ast?.HeaderNames;
         if (!original.Succeeded)
         {
             return new OracleResult(OracleStatus.Invalid, original.FirstError());
@@ -113,8 +149,8 @@ public static class ClangOracle
             return new OracleResult(OracleStatus.Mismatch, "written code is invalid: " + regenerated.FirstError());
         }
 
-        var originalAst = ClangAst.Read(original.Output);
-        var difference = ClangAst.FirstDifference(originalAst.Normalize(), ClangAst.Read(regenerated.Output).Normalize());
+        var originalAst = original.Ast;
+        var difference = ClangAst.FirstDifference(originalAst.Normalize(), regenerated.Ast.Normalize());
         if (difference != null)
         {
             return new OracleResult(OracleStatus.Mismatch, difference);

@@ -400,6 +400,7 @@ public sealed class CppWriter
         WriteSpecifiersAndDeclarator(function.Specifiers, function.Declarator);
         WriteVirtSpecifiers(function.VirtSpecifiers);
         WriteRequiresClause(function.RequiresClause);
+        WriteAttributeSpecifiers(function.DeclaratorAttributes);
         if (function.IsDefaulted || function.IsDeleted)
         {
             Space();
@@ -654,6 +655,12 @@ public sealed class CppWriter
                 break;
             case AttributeDeclSpecifier attribute:
                 WriteAttributeSpecifiers([attribute.Attribute]);
+                break;
+            case BitIntSpecifier bitInt:
+                Token("_BitInt");
+                Token("(");
+                WriteExpression(bitInt.Width);
+                Token(")");
                 break;
             case DecltypeSpecifier decltype:
                 Token("decltype");
@@ -1586,6 +1593,29 @@ public sealed class CppWriter
             case FunctionalCastExpression cast:
                 WriteDeclSpecifier(cast.Type);
                 WriteInitializer(cast.Initializer);
+                break;
+            case BuiltinCallExpression builtin:
+                Token(builtin.Name);
+                Token("(");
+                for (var i = 0; i < builtin.Arguments.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        Token(",");
+                        Space();
+                    }
+
+                    if (builtin.Arguments[i] is TypeId type)
+                    {
+                        WriteTypeId(type);
+                    }
+                    else
+                    {
+                        WriteExpression((Expression)builtin.Arguments[i]);
+                    }
+                }
+
+                Token(")");
                 break;
             case SizeOfExpression size:
                 Token(size.Keyword);

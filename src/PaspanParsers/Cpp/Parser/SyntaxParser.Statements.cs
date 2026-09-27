@@ -177,6 +177,12 @@ internal ref partial struct SyntaxParser
                 return false;
             }
 
+            // __extension__ int x; and __extension__ (x)
+            while (Current.IsIdentifier && Current.Text == "__extension__")
+            {
+                EatToken();
+            }
+
             if (IsDeclSpecifierKeyword || (Current.IsIdentifier && ExtensionTypeNames.Contains(Current.Text)))
             {
                 return true;

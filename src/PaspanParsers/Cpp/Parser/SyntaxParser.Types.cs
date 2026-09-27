@@ -27,7 +27,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// Identifiers that clang treats as keywords for types: GNU extensions.
     /// </summary>
-    private static readonly HashSet<string> ExtensionTypeNames = ["__int128", "__float128", "_Float16", "__bf16"];
+    private static readonly HashSet<string> ExtensionTypeNames = ["__int128", "__float128", "_Float16", "__bf16", "_BitInt"];
 
     /// <summary>
     /// Keywords that are declaration specifiers but no types: cv-qualifiers, storage classes, function
@@ -129,12 +129,17 @@ internal ref partial struct SyntaxParser
             }
             else if (token.IsIdentifier && ExtensionTypeNames.Contains(token.Text))
             {
-                EatToken();
-                specifier = Finish(new KeywordSpecifier(token.Text), specifierStart);
+                specifier = ParseExtensionTypeSpecifier();
+                if (specifier == null)
+                {
+                    return null;
+                }
+
                 hasType = true;
             }
-            else if (IsRestrict(token))
+            else if (IsRestrict(token) || (token.IsIdentifier && token.Text == "__extension__" && context == SpecifierContext.Declaration))
             {
+                // __extension__ before a declaration: no warnings about extensions in it
                 EatToken();
                 specifier = Finish(new KeywordSpecifier(token.Text), specifierStart);
             }
@@ -153,7 +158,7 @@ internal ref partial struct SyntaxParser
                 var mark = Save();
                 var name = ParseName(NameContext.Type);
                 if (name == null || NamesFunctionWithoutType(name) || (IsPunctuator("::") && Peek(1).IsPunctuator("*"))
-                    || (name is IdentifierName && _cache.Symbols.Lookup(name) is SymbolKind.Value or SymbolKind.Namespace)
+                    || (name is IdentifierName or QualifiedName && _cache.Symbols.Lookup(name) is SymbolKind.Value or SymbolKind.ValueTemplate or SymbolKind.Namespace)
                     || (context == SpecifierContext.Declaration && IsPunctuator("(") && StartsFunctionWithoutType(name, className)))
                 {
                     // A declarator id, the class of a pointer to member, or a variable: int a(b); declares a variable
@@ -350,6 +355,29 @@ internal ref partial struct SyntaxParser
         }
 
         return Finish(new TypeId(specifiers, declarator), start);
+    }
+
+    /// <summary>
+    /// A type that clang has as an extension: <c>__int128</c>, <c>_Float16</c>, <c>_BitInt(N)</c>.
+    /// </summary>
+    private DeclSpecifier ParseExtensionTypeSpecifier()
+    {
+        var start = NodeStart;
+        var token = EatToken();
+        if (token.Text != "_BitInt")
+        {
+            return Finish(new KeywordSpecifier(token.Text), start);
+        }
+
+        if (!TryEatPunctuator("("))
+        {
+            return null;
+        }
+
+        var saved = EnterBrackets();
+        var width = ParseConditionalExpression();
+        LeaveBrackets(saved);
+        return width != null && TryEatPunctuator(")") ? Finish(new BitIntSpecifier(width), start) : null;
     }
 
     private static bool IsTypeSpecifier(DeclSpecifier specifier) => specifier switch

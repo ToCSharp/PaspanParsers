@@ -110,6 +110,8 @@ internal ref partial struct SyntaxParser
     {
         declarator = null;
         var start = NodeStart;
+        var inBlock = _inBlockDeclarator && kind == DeclaratorKind.Named;
+        _inBlockDeclarator = false;
 
         if (kind == DeclaratorKind.New)
         {
@@ -166,9 +168,15 @@ internal ref partial struct SyntaxParser
         {
             if (IsPunctuator("("))
             {
-                // In a declaration, a '(' after the name that starts no parameters starts an initializer
+                // In a declaration, a '(' after the name that starts no parameters starts an initializer. In a
+                // block, so does one whose parameters would only be unknown names: std::lock_guard<M> lock(mutex);
                 var mark = Save();
                 var function = ParseFunctionDeclaratorRest(declarator, start);
+                if (function != null && inBlock && declarator is NameDeclarator && MayBeInitializer(function))
+                {
+                    function = null;
+                }
+
                 if (function == null)
                 {
                     Restore(mark);
@@ -207,6 +215,33 @@ internal ref partial struct SyntaxParser
             else
             {
                 break;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The parameters of <paramref name="function"/> could be arguments: each is only a name the file does not
+    /// know, maybe followed by a name in parentheses or by <c>()</c> (<c>(mutex)</c>, <c>(f(x))</c>,
+    /// <c>(dbgs())</c>). A local function declaration is rarer than such an initializer.
+    /// </summary>
+    private readonly bool MayBeInitializer(FunctionDeclarator function)
+    {
+        if (function.Parameters.Count == 0 || function.IsVariadic || function.Qualifiers.Count != 0 || function.RefQualifier != null
+            || function.Noexcept != null || function.TrailingReturnType != null)
+        {
+            return false;
+        }
+
+        foreach (var parameter in function.Parameters)
+        {
+            if (parameter.DefaultValue != null || parameter.Attributes.Count != 0 || parameter.IsExplicitObject
+                || parameter.Specifiers?.Specifiers is not [NamedTypeSpecifier { IsTypename: false } named]
+                || _cache.Symbols.Lookup(named.Name) != null
+                || parameter.Declarator is not (null or ParenthesizedDeclarator { Inner: NameDeclarator } or FunctionDeclarator { Inner: null, Parameters.Count: 0 }))
+            {
+                return false;
             }
         }
 

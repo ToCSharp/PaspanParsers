@@ -138,6 +138,7 @@ src/PaspanParsers.Tests/Cpp/Clang.cs
 src/PaspanParsers.Tests/Cpp/ClangAst.cs
 src/PaspanParsers.Tests/Cpp/ClangOracle.cs
 src/PaspanParsers.Tests/Cpp/ClangOracleTests.cs
+src/PaspanParsers.Tests/Cpp/ClangPreprocessor.cs
 src/PaspanParsers.Tests/Cpp/CppCorpusTests.cs
 src/PaspanParsers.Tests/Cpp/CppDeclarationTests.cs
 src/PaspanParsers.Tests/Cpp/CppDeclaratorTests.cs

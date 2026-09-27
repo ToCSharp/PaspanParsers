@@ -50,7 +50,8 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// The base clause and the members of a class after its head. The class is declared before its bases,
     /// which can name it: <c>struct Node : Base&lt;Node&gt;</c>. A class defined with a qualified name
-    /// (<c>struct Outer::Inner { … }</c>) sees the names of the enclosing class.
+    /// (<c>struct Outer::Inner { … }</c>) sees the names of the enclosing class. The bodies of member
+    /// functions are parsed when the outermost class is complete, with all its members declared.
     /// </summary>
     private ClassSpecifier ParseClassSpecifierRest(int start, string key, IReadOnlyList<AttributeSpecifier> attributes, Name name, bool isFinal)
     {
@@ -69,8 +70,25 @@ internal ref partial struct SyntaxParser
             }
         }
 
-        var members = ParseDeclarationBlock(DeclarationContext.Class, out var closeBraceDirectives);
-        if (members == null)
+        var outer = _deferredBodies;
+        var deferred = outer ?? new DeferredBodies(symbols.Depth);
+        List<Declaration> members;
+        IReadOnlyList<PreprocessorDirective> closeBraceDirectives;
+        _deferredBodies = deferred;
+        try
+        {
+            members = ParseDeclarationBlock(DeclarationContext.Class, out closeBraceDirectives);
+            if (members == null)
+            {
+                return null;
+            }
+        }
+        finally
+        {
+            _deferredBodies = outer;
+        }
+
+        if (outer == null && !ParseDeferredBodies(deferred))
         {
             return null;
         }
@@ -83,6 +101,39 @@ internal ref partial struct SyntaxParser
             IsFinal = isFinal,
             CloseBraceDirectives = closeBraceDirectives,
         }, start);
+    }
+
+    /// <summary>
+    /// Parses the bodies of the member functions of a complete class, in the scopes they were defined in,
+    /// and returns to the end of the class.
+    /// </summary>
+    private bool ParseDeferredBodies(DeferredBodies deferred)
+    {
+        var end = _position;
+        var furthest = _cache.FurthestPosition;
+        var symbols = _cache.Symbols;
+        foreach (var (function, bodyStart, scopes) in deferred.Bodies)
+        {
+            // An error in a body is reported where it is, before the end of the class
+            _cache.FurthestPosition = bodyStart;
+            _position = bodyStart;
+            var entered = symbols.EnterScopes(scopes);
+            symbols.EnterScope();
+            DeclareParameters(function.Declarator);
+            var body = ParseCompoundStatement();
+            symbols.ExitScope();
+            symbols.ExitScopes(entered);
+            if (body == null)
+            {
+                return false;
+            }
+
+            function.Body = body;
+        }
+
+        _cache.FurthestPosition = Math.Max(furthest, _cache.FurthestPosition);
+        _position = end;
+        return true;
     }
 
     /// <summary>

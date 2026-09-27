@@ -26,10 +26,16 @@ public sealed class CppParseOptions
         IReadOnlyList<string> includeDirectories = null,
         string sourceDirectory = null,
         IReadOnlyCollection<string> typeNames = null,
-        IReadOnlyCollection<string> templateNames = null)
+        IReadOnlyCollection<string> templateNames = null,
+        IReadOnlyCollection<string> conceptNames = null,
+        IReadOnlyCollection<string> functionTemplateNames = null,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> classMembers = null)
     {
+        ClassMembers = classMembers ?? new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal);
+        FunctionTemplateNames = new HashSet<string>(functionTemplateNames ?? [], StringComparer.Ordinal);
         TypeNames = new HashSet<string>(typeNames ?? [], StringComparer.Ordinal);
         TemplateNames = new HashSet<string>(templateNames ?? [], StringComparer.Ordinal);
+        ConceptNames = new HashSet<string>(conceptNames ?? [], StringComparer.Ordinal);
         LanguageVersion = languageVersion;
         Macros = macros ?? new Dictionary<string, string>(StringComparer.Ordinal);
         IncludeDirectories = includeDirectories ?? [];
@@ -59,14 +65,37 @@ public sealed class CppParseOptions
 
     /// <summary>
     /// Identifiers of types declared outside the parsed file, such as in headers (<c>size_t</c>, <c>string</c>):
-    /// they tell declarations from expressions where the parser cannot see the declaration. A qualified name
-    /// is looked up by its last identifier.
+    /// they tell declarations from expressions where the parser cannot see the declaration. A qualified name of
+    /// the code whose qualifier the file does not declare is looked up by the qualified name (these names may
+    /// be qualified by their namespaces and classes, <c>std::system_error</c>), then by its last identifier.
+    /// The same holds for the other names of the options.
     /// </summary>
     public IReadOnlyCollection<string> TypeNames { get; }
 
     /// <summary>
-    /// Identifiers of class and function templates declared outside the parsed file (<c>vector</c>), so that
-    /// a '&lt;' after them starts template arguments in expressions.
+    /// Identifiers of class and alias templates declared outside the parsed file (<c>vector</c>), so that
+    /// a '&lt;' after them starts template arguments in expressions, and their template-ids are types.
     /// </summary>
     public IReadOnlyCollection<string> TemplateNames { get; }
+
+    /// <summary>
+    /// Identifiers of function and variable templates declared outside the parsed file (<c>get</c>,
+    /// <c>is_same_v</c>), so that a '&lt;' after them starts template arguments, and their template-ids are
+    /// expressions: <c>get&lt;0&gt;(t);</c> is a call.
+    /// </summary>
+    public IReadOnlyCollection<string> FunctionTemplateNames { get; }
+
+    /// <summary>
+    /// Identifiers of concepts declared outside the parsed file (<c>integral</c>), so that a template parameter
+    /// or a placeholder type they constrain is recognized.
+    /// </summary>
+    public IReadOnlyCollection<string> ConceptNames { get; }
+
+    /// <summary>
+    /// The variables and functions that classes declared outside the parsed file have as members, with those
+    /// of their bases, by the unqualified name of the class. The body of a member function defined in the
+    /// file (<c>void raw_ostream::f() { indent(2); }</c>) and a class of the file derived from such a class see
+    /// them: a member hides a type of the same name.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyCollection<string>> ClassMembers { get; }
 }

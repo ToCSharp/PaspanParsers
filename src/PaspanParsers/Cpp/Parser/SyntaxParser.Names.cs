@@ -13,6 +13,12 @@ internal enum NameContext
 
     /// <summary>A declarator id: like an expression, and a destructor name may start it.</summary>
     Declarator,
+
+    /// <summary>
+    /// A member after '.' or '-&gt;': like a declarator id, but its first component is looked up in the class of
+    /// the object, which is not known, so only a template the file or the options know is one.
+    /// </summary>
+    Member,
 }
 
 // Names ([basic.lookup], [temp.names]): qualified names, template-ids, operator and conversion function
@@ -22,9 +28,9 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// A position to go back to after a speculative parse, with the symbols declared up to it.
     /// </summary>
-    private readonly record struct Mark(int Position, int Symbols, bool InTemplateArguments, bool InConstraint);
+    private readonly record struct Mark(int Position, int Symbols, bool InTemplateArguments, bool InConstraint, int DeferredBodies);
 
-    private readonly Mark Save() => new(_position, _cache.Symbols.Checkpoint(), _inTemplateArguments, _inConstraint);
+    private readonly Mark Save() => new(_position, _cache.Symbols.Checkpoint(), _inTemplateArguments, _inConstraint, _deferredBodies?.Bodies.Count ?? 0);
 
     private void Restore(Mark mark)
     {
@@ -32,6 +38,12 @@ internal ref partial struct SyntaxParser
         _cache.Symbols.Rollback(mark.Symbols);
         _inTemplateArguments = mark.InTemplateArguments;
         _inConstraint = mark.InConstraint;
+
+        // The member functions of a declaration that is parsed again
+        if (_deferredBodies != null && mark.DeferredBodies < _deferredBodies.Bodies.Count)
+        {
+            _deferredBodies.Bodies.RemoveRange(mark.DeferredBodies, _deferredBodies.Bodies.Count - mark.DeferredBodies);
+        }
     }
 
     /// <summary>
@@ -42,7 +54,7 @@ internal ref partial struct SyntaxParser
         return token.IsIdentifier || token.IsKeyword("operator")
             || (token.IsPunctuator("::") && IsNameComponentStart(TokenAt(token.End)))
             || (token.IsKeyword("decltype") && context == NameContext.Type)
-            || (token.IsPunctuator("~") && context == NameContext.Declarator);
+            || (token.IsPunctuator("~") && context is NameContext.Declarator or NameContext.Member);
     }
 
     /// <summary>
@@ -115,9 +127,15 @@ internal ref partial struct SyntaxParser
                 return identifier;
             }
 
-            // The component is looked up in the scope of its qualifier: ns::Tmpl<int>
+            // The component is looked up in the scope of its qualifier: ns::Tmpl<int>. A variable of the file does
+            // not hide a member template: path.leaf<Leaf>()
             var kind = _cache.Symbols.LookupComponent(qualifier, global, identifier.Identifier);
-            if (isTemplate || context == NameContext.Type || kind is SymbolKind.Template or SymbolKind.Concept)
+            if (context == NameContext.Member && !qualified && kind is not (SymbolKind.Template or SymbolKind.ValueTemplate))
+            {
+                kind = null;
+            }
+
+            if (isTemplate || context == NameContext.Type || kind is SymbolKind.Template or SymbolKind.ValueTemplate or SymbolKind.Concept)
             {
                 return ParseTemplateId(identifier, start, commit: isTemplate || context == NameContext.Type);
             }
@@ -147,7 +165,7 @@ internal ref partial struct SyntaxParser
             return ParseOperatorName();
         }
 
-        if (token.IsPunctuator("~") && (qualified || context == NameContext.Declarator))
+        if (token.IsPunctuator("~") && (qualified || context is NameContext.Declarator or NameContext.Member))
         {
             EatToken();
             var typeStart = NodeStart;
@@ -340,7 +358,7 @@ internal ref partial struct SyntaxParser
     private readonly bool IsValueName(TypeId type)
     {
         return type.Declarator == null && type.Specifiers.Specifiers is [NamedTypeSpecifier { IsTypename: false } named]
-            && _cache.Symbols.Lookup(named.Name) == SymbolKind.Value;
+            && _cache.Symbols.Lookup(named.Name) is SymbolKind.Value or SymbolKind.ValueTemplate;
     }
 
     // ========================================
@@ -368,9 +386,22 @@ internal ref partial struct SyntaxParser
         if (@operator != null)
         {
             Name name = Finish(new OperatorFunctionName(@operator), start);
-            return IsPunctuator("<") && _cache.Symbols.Lookup(name) is SymbolKind.Template
-                ? ParseTemplateId(name, start, commit: false)
-                : name;
+            if (!IsPunctuator("<"))
+            {
+                return name;
+            }
+
+            // Operator functions are not declared in the symbols: template arguments are recognized as those of an
+            // unknown template, operator()<bool>(value), friend bool operator< <>(A, A)
+            var mark = Save();
+            var templateId = ParseTemplateId(name, start, commit: false);
+            if (templateId is TemplateIdName && (FollowsTemplateId(Current) || IsPunctuator("::")))
+            {
+                return templateId;
+            }
+
+            Restore(mark);
+            return name;
         }
 
         // A conversion function: its type has no parentheses or arrays, so it ends before them

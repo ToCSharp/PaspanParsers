@@ -31,6 +31,12 @@ internal ref partial struct SyntaxParser
     // In the declarator of a parameter whose type names a pack, where '...' starts a pack: void f(Ts...)
     private bool _parameterTypeIsPack;
 
+    // In the members of a class: the bodies of its member functions, parsed when the outermost class is complete
+    private DeferredBodies _deferredBodies;
+
+    // Before the declarator of a declaration in a block, where T x(y) with an unknown y initializes x
+    private bool _inBlockDeclarator;
+
     public SyntaxParser(ReadOnlySpan<byte> source, int position, ParseContext context)
     {
         _source = source;
@@ -336,6 +342,24 @@ internal ref partial struct SyntaxParser
         return error;
     }
 }
+
+/// <summary>
+/// The bodies of member functions defined in a class, which are parsed when the outermost enclosing class is
+/// complete ([class.mem]): they see the members declared after them. <see cref="ClassDepth"/> is the
+/// number of active scopes up to the scope of that class.
+/// </summary>
+internal sealed class DeferredBodies(int classDepth)
+{
+    public int ClassDepth { get; } = classDepth;
+
+    public List<DeferredBody> Bodies { get; } = [];
+}
+
+/// <summary>
+/// The body of <see cref="Function"/>, which starts at <see cref="Start"/>, and the scopes inside the
+/// outermost class that were active at the function, such as those of nested classes and template parameters.
+/// </summary>
+internal readonly record struct DeferredBody(FunctionDefinition Function, int Start, object[] Scopes);
 
 /// <summary>
 /// Token caches shared by all <see cref="SyntaxParser"/> runs over the same input.

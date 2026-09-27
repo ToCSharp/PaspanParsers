@@ -118,10 +118,12 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        // A declaration without declarators declares a class or enumeration: struct Point; struct Point { };
+        // A declaration without declarators declares a class or enumeration (struct Point; struct Point { };), or
+        // befriends a type: friend Node; friend typename T::type;
         if (IsPunctuator(";"))
         {
-            if (specifiers?.Specifiers.Any(s => s is ElaboratedTypeSpecifier or ClassSpecifier or EnumSpecifier) != true)
+            if (specifiers?.Specifiers.Any(s => s is ElaboratedTypeSpecifier or ClassSpecifier or EnumSpecifier
+                    || (s is KeywordSpecifier { Keyword: "friend" } && context == DeclarationContext.Class)) != true)
             {
                 return null;
             }
@@ -134,7 +136,10 @@ internal ref partial struct SyntaxParser
         Declarator declarator = null;
         if (!IsUnnamedBitField(context, specifiers))
         {
-            if (!TryParseDeclarator(DeclaratorKind.Named, out declarator))
+            _inBlockDeclarator = context == DeclarationContext.Block;
+            var parsed = TryParseDeclarator(DeclaratorKind.Named, out declarator);
+            _inBlockDeclarator = false;
+            if (!parsed)
             {
                 return null;
             }
@@ -152,9 +157,17 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        if (context != DeclarationContext.Block && declarator != null && DeclaresFunction(declarator) && StartsFunctionBody())
+        if (context != DeclarationContext.Block && declarator != null && DeclaresFunction(declarator))
         {
-            return ParseFunctionDefinitionRest(start, attributes, specifiers, declarator, virtSpecifiers, requiresClause);
+            // GNU attributes after the declarator of a function definition; those of a declaration belong to its init-declarator
+            var mark = Save();
+            var declaratorAttributes = IsGnuAttributeStart ? ParseGnuAttributeSpecifiers() : [];
+            if (declaratorAttributes != null && StartsFunctionBody())
+            {
+                return ParseFunctionDefinitionRest(context, start, attributes, specifiers, declarator, virtSpecifiers, requiresClause, declaratorAttributes);
+            }
+
+            Restore(mark);
         }
 
         return ParseSimpleDeclarationRest(context, start, attributes, specifiers, declarator, virtSpecifiers, requiresClause);
@@ -290,11 +303,12 @@ internal ref partial struct SyntaxParser
     /// The body of a function definition: <c>= default;</c>, <c>= delete;</c>, or a block with a
     /// ctor-initializer before it and handlers after it for a function-try-block. The parameters are declared
     /// in the scope of the body; the body of a function defined outside its class or namespace
-    /// (<c>int S::f() { … }</c>) sees the names declared there.
+    /// (<c>int S::f() { … }</c>) sees the names declared there. The block of a member function defined in its
+    /// class is skipped, and parsed when the class is complete (<see cref="ParseDeferredBodies"/>).
     /// </summary>
     private FunctionDefinition ParseFunctionDefinitionRest(
-        int start, IReadOnlyList<AttributeSpecifier> attributes, DeclSpecifierSequence specifiers, Declarator declarator,
-        IReadOnlyList<string> virtSpecifiers, Expression requiresClause)
+        DeclarationContext context, int start, IReadOnlyList<AttributeSpecifier> attributes, DeclSpecifierSequence specifiers,
+        Declarator declarator, IReadOnlyList<string> virtSpecifiers, Expression requiresClause, IReadOnlyList<AttributeSpecifier> declaratorAttributes)
     {
         DeclareName(specifiers, declarator);
         if (TryEatPunctuator("="))
@@ -306,6 +320,7 @@ internal ref partial struct SyntaxParser
                     Attributes = attributes,
                     VirtSpecifiers = virtSpecifiers,
                     RequiresClause = requiresClause,
+                    DeclaratorAttributes = declaratorAttributes,
                     IsDefaulted = keyword == "default",
                     IsDeleted = keyword == "delete",
                 }, start)
@@ -317,13 +332,7 @@ internal ref partial struct SyntaxParser
             ? symbols.EnterQualifiedScope(qualified.Qualifier, qualified.Qualifier == null)
             : 0;
         symbols.EnterScope();
-        if (InnermostOperator(declarator) is FunctionDeclarator function)
-        {
-            foreach (var parameter in function.Parameters)
-            {
-                DeclareName(parameter.Specifiers, parameter.Declarator);
-            }
-        }
+        DeclareParameters(declarator);
 
         var isTryBlock = TryEatKeyword("try");
         List<MemberInitializer> initializers = null;
@@ -336,7 +345,37 @@ internal ref partial struct SyntaxParser
             }
         }
 
+        if (context == DeclarationContext.Class && _deferredBodies != null && !isTryBlock)
+        {
+            var deferred = _deferredBodies;
+            var bodyStart = _position;
+            var scopes = symbols.ActiveScopes(deferred.ClassDepth);
+            if (!SkipBracedBlock())
+            {
+                return null;
+            }
+
+            symbols.ExitScope();
+            symbols.ExitScopes(qualifiedScopes);
+
+            // Without the function's own scope, which is entered again with the parameters
+            var function = Finish(new FunctionDefinition(specifiers, declarator, null)
+            {
+                Attributes = attributes,
+                VirtSpecifiers = virtSpecifiers,
+                RequiresClause = requiresClause,
+                DeclaratorAttributes = declaratorAttributes,
+                Initializers = initializers,
+            }, start);
+            deferred.Bodies.Add(new DeferredBody(function, bodyStart, scopes[..^1]));
+            return function;
+        }
+
+        // A local class in the body has members of its own
+        var outer = _deferredBodies;
+        _deferredBodies = null;
         var body = ParseCompoundStatement();
+        _deferredBodies = outer;
         if (body == null)
         {
             return null;
@@ -359,9 +398,57 @@ internal ref partial struct SyntaxParser
             Attributes = attributes,
             VirtSpecifiers = virtSpecifiers,
             RequiresClause = requiresClause,
+            DeclaratorAttributes = declaratorAttributes,
             Initializers = initializers,
             Handlers = handlers,
         }, start);
+    }
+
+    /// <summary>
+    /// Declares the parameters of a function declarator in the current scope.
+    /// </summary>
+    private readonly void DeclareParameters(Declarator declarator)
+    {
+        if (InnermostOperator(declarator) is FunctionDeclarator function)
+        {
+            foreach (var parameter in function.Parameters)
+            {
+                DeclareName(parameter.Specifiers, parameter.Declarator);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Skips a block <c>{ … }</c> by its balanced braces.
+    /// </summary>
+    private bool SkipBracedBlock()
+    {
+        if (!IsPunctuator("{"))
+        {
+            return false;
+        }
+
+        var depth = 0;
+        do
+        {
+            var token = EatToken();
+            if (token.Kind == TokenKind.EndOfFile)
+            {
+                return false;
+            }
+
+            if (token.IsPunctuator("{"))
+            {
+                depth++;
+            }
+            else if (token.IsPunctuator("}"))
+            {
+                depth--;
+            }
+        }
+        while (depth > 0);
+
+        return true;
     }
 
     /// <summary>
@@ -503,9 +590,15 @@ internal ref partial struct SyntaxParser
             }
 
             declarator = null;
-            if (!IsUnnamedBitField(context, specifiers) && !TryParseDeclarator(DeclaratorKind.Named, out declarator))
+            if (!IsUnnamedBitField(context, specifiers))
             {
-                return null;
+                _inBlockDeclarator = context == DeclarationContext.Block;
+                var parsed = TryParseDeclarator(DeclaratorKind.Named, out declarator);
+                _inBlockDeclarator = false;
+                if (!parsed)
+                {
+                    return null;
+                }
             }
 
             virtSpecifiers = ParseVirtSpecifiers(declarator);
@@ -609,13 +702,20 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// Declares the name of <paramref name="declarator"/> in the current scope: a type after <c>typedef</c>,
     /// otherwise a value; the names of a structured binding are values. Qualified names declare nothing new,
-    /// and neither do the names of constructors and deduction guides, which have no type specifiers.
+    /// and neither do the names of constructors and deduction guides, which have no type specifiers. An unknown
+    /// name among the specifiers becomes a known type (<see cref="Symbols.LearnType"/>).
     /// </summary>
     private readonly void DeclareName(DeclSpecifierSequence specifiers, Declarator declarator)
     {
         if (specifiers?.Specifiers.Any(IsTypeSpecifier) != true)
         {
             return;
+        }
+
+        // A name that is not known and declares something is a type in the rest of the file: StringRef s; then StringRef(s)
+        if (DeclaredName(declarator) != null && specifiers.Specifiers.OfType<NamedTypeSpecifier>().FirstOrDefault() is { IsTypename: false } named)
+        {
+            _cache.Symbols.LearnType(named.Name);
         }
 
         if (StructuredBinding(declarator) is { } binding)
@@ -631,7 +731,30 @@ internal ref partial struct SyntaxParser
         if (DeclaredName(declarator)?.Name is IdentifierName identifier)
         {
             var isTypedef = specifiers?.Specifiers.Any(s => s is KeywordSpecifier { Keyword: "typedef" }) == true;
-            _cache.Symbols.Declare(identifier.Identifier, isTypedef ? SymbolKind.Type : SymbolKind.Value);
+            if (isTypedef)
+            {
+                _cache.Symbols.DeclareTypeAlias(identifier.Identifier, AliasedClass(specifiers, declarator is NameDeclarator ? null : declarator));
+            }
+            else
+            {
+                _cache.Symbols.Declare(identifier.Identifier, SymbolKind.Value);
+            }
         }
+    }
+
+    /// <summary>
+    /// The name of the class a typedef or alias declaration names, when its type is only a name
+    /// (<c>typedef Box&lt;int&gt; IntBox;</c>); otherwise null. <paramref name="declarator"/> is the declarator of
+    /// the type, null when there is none.
+    /// </summary>
+    private static Name AliasedClass(DeclSpecifierSequence specifiers, Declarator declarator)
+    {
+        if (declarator != null || specifiers == null)
+        {
+            return null;
+        }
+
+        var types = specifiers.Specifiers.Where(IsTypeSpecifier).ToList();
+        return types is [NamedTypeSpecifier named] ? named.Name : null;
     }
 }

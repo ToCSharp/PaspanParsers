@@ -12,10 +12,11 @@ public abstract record KindRule;
 /// <c>if</c> and loops that end with such a statement.
 /// With <see cref="OrAbsent"/>, a node that no clang node has the span of passes when it starts and ends at
 /// token boundaries: clang has no <c>InitListExpr</c> for the braces of a constructor call.
-/// <see cref="ClangStart"/>, when set, is where clang starts the node instead: at the unqualified concept of
+/// <see cref="ClangStart"/>, when set, is where clang may start the node instead: at the unqualified concept of
 /// a constrained template parameter, <c>integral T</c> in <c>std::integral T</c>. With
-/// <see cref="ClangEndBefore"/>, clang ends the node at the last token that ends before that offset: before
-/// the attributes after the name of a parameter, <c>int a [[maybe_unused]]</c>.
+/// <see cref="ClangEndBefore"/>, clang may end the node at the last token that ends at or before that offset:
+/// before the attributes after the name of a parameter, <c>int a [[maybe_unused]]</c>. Clang's start and end
+/// are tried alone and together.
 /// </summary>
 public sealed record ExactRule(params string[] Kinds) : KindRule
 {
@@ -80,13 +81,17 @@ public static class CppKindMap
         Expression when IsInType(parent) => Tokens,
 
         // Declarations: clang starts a function after its standard attributes, and a declaration statement
-        // before them; a specialization or a member of a class template defined outside it at the 'template'.
-        // A defaulted or deleted function ends before its ';'.
+        // before them; otherwise a specialization or a member of a class template defined outside it at the
+        // 'template'. A defaulted or deleted function ends before its ';'.
         FunctionDefinition function => new ExactRule(FunctionKinds)
         {
             WithoutSemicolon = true,
-            ClangStart = OutermostTemplate(parent)?.Span.Start
-                ?? (function.Attributes.Count > 0 ? function.Specifiers?.Span.Start ?? function.Declarator.Span.Start : null),
+            ClangStart = function.Attributes.Count > 0
+                ? function.Specifiers?.Span.Start ?? function.Declarator.Span.Start
+                : OutermostTemplate(parent)?.Span.Start,
+            ClangEndBefore = OutermostTemplate(parent) != null || function is { IsDefaulted: true, Declarator: var declarator } && DeclaredName(declarator)?.Name is QualifiedName
+                ? DeletedTemplateEnd(function)
+                : null,
         },
         SimpleDeclaration => Tokens,
         StaticAssertDeclaration => new ExactRule("StaticAssertDecl") { WithoutSemicolon = true },
@@ -103,11 +108,17 @@ public static class CppKindMap
         {
             OtherEnd = n => ((UsingDeclarator)n).Name.Span.End,
         },
-        AliasDeclaration => new ExactRule("TypeAliasDecl") { WithoutSemicolon = true },
+        AliasDeclaration alias => new ExactRule("TypeAliasDecl") { WithoutSemicolon = true, ClangEndBefore = BitIntEnd(alias) },
         LinkageSpecification => new ExactRule("LinkageSpecDecl") { WithoutSemicolon = true },
         // The inner of template <> template <> has no declaration of its own
         TemplateDeclaration { Parameters.Count: 0 } when parent.Node is TemplateDeclaration => new ExactRule(TemplateKinds) { WithoutSemicolon = true, OrAbsent = true },
-        TemplateDeclaration => new ExactRule(TemplateKinds) { WithoutSemicolon = true },
+        TemplateDeclaration { Declaration: AliasDeclaration alias } => new ExactRule(TemplateKinds) { WithoutSemicolon = true, ClangEndBefore = BitIntEnd(alias) },
+        TemplateDeclaration template => new ExactRule(TemplateKinds)
+        {
+            WithoutSemicolon = true,
+            ClangEndBefore = DeletedTemplateEnd(InnermostDeclaration(template))
+                ?? (InnermostDeclaration(template) is SimpleDeclaration { Declarators: [var only] } ? DecltypeReturnEnd(only) : null),
+        },
         ExplicitInstantiation => new ExactRule("ClassTemplateSpecializationDecl", "VarTemplateSpecializationDecl") { WithoutSemicolon = true, OrAbsent = true },
         ConceptDefinition => Tokens,
         AsmDeclaration when parent.Node is DeclarationStatement => Tokens,
@@ -133,6 +144,7 @@ public static class CppKindMap
             OtherEnd = n => ((InitDeclarator)n) switch
             {
                 { Initializer: ParenthesizedInitializer { Arguments: [.., var last] } } => last.Span.End,
+                _ when DecltypeReturnEnd((InitDeclarator)n) is { } nameEnd => nameEnd,
 
                 // Clang ends a declaration before its asm label and GNU attributes, and before the attributes of its name
                 { AsmLabel: not null, Initializer: null, Declarator: { } declarator } => declarator.Span.End,
@@ -169,7 +181,7 @@ public static class CppKindMap
         // Clang ends an unnamed pack at its key: typename...
         TypeTemplateParameter { IsPack: true, Identifier: null, Default: null } parameter => new ExactRule("TemplateTypeParmDecl")
         {
-            ClangEndBefore = parameter.Span.End,
+            ClangEndBefore = parameter.Span.End - 1,
         },
         TypeTemplateParameter => new ExactRule("TemplateTypeParmDecl"),
         NonTypeTemplateParameter => new ExactRule("NonTypeTemplateParmDecl"),
@@ -211,6 +223,7 @@ public static class CppKindMap
         LiteralExpression => new ExactRule(
             "IntegerLiteral", "FloatingLiteral", "CharacterLiteral", "StringLiteral", "CXXBoolLiteralExpr",
             "CXXNullPtrLiteralExpr", "UserDefinedLiteral"),
+        NameExpression when parent.Node is CallExpression call && call.Callee == node && IsSourceLocationBuiltin(call) => Tokens,
         NameExpression => new ExactRule(
             "DeclRefExpr", "UnresolvedLookupExpr", "DependentScopeDeclRefExpr", "MemberExpr",
             "CXXDependentScopeMemberExpr", "UnresolvedMemberExpr", "PredefinedExpr", "ConceptSpecializationExpr"),
@@ -218,6 +231,8 @@ public static class CppKindMap
         UnaryExpression => new ExactRule("UnaryOperator", "CXXOperatorCallExpr", "CoawaitExpr", "DependentCoawaitExpr"),
         BinaryExpression => new ExactRule("BinaryOperator", "CompoundAssignOperator", "CXXOperatorCallExpr", "CXXRewrittenBinaryOperator"),
         ConditionalExpression => new ExactRule("ConditionalOperator", "BinaryConditionalOperator"),
+        // Clang has a node of its own for the builtins that give the source location of a call: __builtin_LINE()
+        CallExpression sourceLocation when IsSourceLocationBuiltin(sourceLocation) => new ExactRule("SourceLocExpr"),
         CallExpression => new ExactRule(
             "CallExpr", "CXXMemberCallExpr", "CXXOperatorCallExpr", "CXXConstructExpr", "CXXTemporaryObjectExpr",
             "CXXFunctionalCastExpr", "CXXUnresolvedConstructExpr", "UserDefinedLiteral"),
@@ -232,6 +247,8 @@ public static class CppKindMap
         FunctionalCastExpression => new ExactRule(
             "CXXFunctionalCastExpr", "CXXTemporaryObjectExpr", "CXXConstructExpr", "CXXScalarValueInitExpr", "CXXUnresolvedConstructExpr"),
         SizeOfExpression => new ExactRule("UnaryExprOrTypeTraitExpr"),
+        BuiltinCallExpression => new ExactRule(
+            "OffsetOfExpr", "BuiltinBitCastExpr", "VAArgExpr", "ConvertVectorExpr", "TypeTraitExpr", "ArrayTypeTraitExpr", "ExpressionTraitExpr"),
         SizeOfPackExpression => new ExactRule("SizeOfPackExpr"),
         NoexceptExpression => new ExactRule("CXXNoexceptExpr"),
         TypeidExpression => new ExactRule("CXXTypeidExpr"),
@@ -239,7 +256,8 @@ public static class CppKindMap
         DeleteExpression => new ExactRule("CXXDeleteExpr"),
         ThrowExpression => new ExactRule("CXXThrowExpr"),
         YieldExpression => new ExactRule("CoyieldExpr"),
-        InitializerListExpression => new ExactRule("InitListExpr") { OrAbsent = true },
+        // The braces of a list-initialized class are its constructor call
+        InitializerListExpression => new ExactRule("InitListExpr", "CXXConstructExpr", "CXXTemporaryObjectExpr") { OrAbsent = true },
         DesignatedInitializerExpression or Designator => Tokens,
         PackExpansionExpression => new ExactRule("PackExpansionExpr"),
         FoldExpression => new ExactRule("CXXFoldExpr"),
@@ -286,6 +304,57 @@ public static class CppKindMap
         }
     }
 
+    /// <summary>
+    /// Clang ends a deleted or defaulted function template, and a function defaulted outside its class
+    /// (<c>S::~S() = default;</c>), which gets a body, at its declarator, before <c>= delete</c>: the end of the
+    /// declarator when <paramref name="declaration"/> is such a function; otherwise null.
+    /// </summary>
+    private static int? DeletedTemplateEnd(Declaration declaration)
+    {
+        return declaration is FunctionDefinition { IsDeleted: true } or FunctionDefinition { IsDefaulted: true }
+            ? ((FunctionDefinition)declaration).Declarator.Span.End
+            : null;
+    }
+
+    /// <summary>
+    /// Clang 18 ends the declaration of a function whose return type is a trailing <c>decltype(e)</c>, without a
+    /// body or initializer, at its name: <c>auto f() -&gt; decltype(x);</c>. The end of the name for such a
+    /// declarator; otherwise null.
+    /// </summary>
+    private static int? DecltypeReturnEnd(InitDeclarator declarator)
+    {
+        return declarator is { Initializer: null, IsPure: false, Declarator: FunctionDeclarator { TrailingReturnType: { Declarator: null, Specifiers.Specifiers: [DecltypeSpecifier] } } function }
+            && DeclaredName(function) is { } name
+                ? name.Name.Span.End
+                : null;
+    }
+
+    private static Declaration InnermostDeclaration(TemplateDeclaration template)
+    {
+        var declaration = template.Declaration;
+        while (declaration is TemplateDeclaration inner)
+        {
+            declaration = inner.Declaration;
+        }
+
+        return declaration;
+    }
+
+    /// <summary>
+    /// Clang 18 ends the type <c>_BitInt(N)</c> at the keyword, and with it an alias of it: <c>using I = _BitInt(N);</c>.
+    /// The end of the keyword when the alias declaration ends with the type; otherwise null.
+    /// </summary>
+    private static int? BitIntEnd(AliasDeclaration alias)
+    {
+        return alias.Type is { Declarator: null, Specifiers.Specifiers: [.., BitIntSpecifier bitInt] } ? bitInt.Span.Start + "_BitInt".Length : null;
+    }
+
+    private static bool IsSourceLocationBuiltin(CallExpression call)
+    {
+        return call.Callee is NameExpression { Name: IdentifierName { Identifier: "__builtin_FILE" or "__builtin_FILE_NAME" or "__builtin_LINE"
+            or "__builtin_COLUMN" or "__builtin_FUNCTION" or "__builtin_FUNCSIG" or "__builtin_source_location" } };
+    }
+
     private static bool IsInExplicitInstantiation(Ancestry parent)
     {
         for (var ancestor = parent; ancestor != null; ancestor = ancestor.Parent)
@@ -315,7 +384,8 @@ public static class CppKindMap
 
     /// <summary>
     /// An expression is part of a type, a designator or an attribute: the nearest ancestor that is not an
-    /// expression is a declarator, a specifier, a type-id, a name, a designator or an attribute specifier.
+    /// expression is a declarator, a specifier, a type-id, a name, a designator or an attribute specifier, or
+    /// the expression is in the member of <c>__builtin_offsetof</c>.
     /// </summary>
     private static bool IsInType(Ancestry parent)
     {
@@ -323,9 +393,11 @@ public static class CppKindMap
         {
             switch (ancestor.Node)
             {
-                case Declarator or DeclSpecifier or DeclSpecifierSequence or TypeId or Name or NoexceptSpecifier or Designator or AttributeSpecifier:
+                // The member of __builtin_offsetof(S, a.b) is no expression for clang
+                case Declarator or DeclSpecifier or DeclSpecifierSequence or TypeId or Name or NoexceptSpecifier or Designator or AttributeSpecifier
+                    or BuiltinCallExpression { Name: "__builtin_offsetof" }:
                     return true;
-                case Expression:
+                case Expression or Initializer:
                     continue;
                 default:
                     return false;

@@ -420,6 +420,81 @@ public class CppExpressionTests
     }
 
     // ========================================
+    // Real code: templates, builtins and extensions
+    // ========================================
+
+    [TestMethod]
+    public void TemplateIds_OfFunctionTemplatesAreCalls_OfClassTemplatesCasts()
+    {
+        AssertLines(
+            ["call get<0>(t)", "box<int>(1)", "call make<int>(1)", "box(2)", "std::pair(1, 2)"],
+            ShapesWith(
+                new CppParseOptions(templateNames: ["box", "pair"], functionTemplateNames: ["get", "make"]),
+                "get<0>(t)", "box<int>(1)", "make<int>(1)", "box(2)", "std::pair(1, 2)"));
+    }
+
+    /// <summary>
+    /// Like <see cref="Shapes"/> with <paramref name="options"/>, without declarations.
+    /// </summary>
+    private static List<string> ShapesWith(CppParseOptions options, params string[] expressions)
+    {
+        var source = CppTestHelper.InFunction(string.Join("\n", expressions.Select(e => e + ";")));
+        Assert.IsTrue(CppParser.TryParse(source, options, out var unit, out var error), error?.Message);
+        return ((FunctionDefinition)unit.Declarations[0]).Body.Statements
+            .Select(s => Shape(((ExpressionStatement)s).Expression, source))
+            .ToList();
+    }
+
+    [TestMethod]
+    public void FunctionTemplatesOfTheFile_TakeTemplateArgumentsInStatements()
+    {
+        var statements = CppTestHelper.Statements("""
+            struct S { template <class T> void operator()(T) {} void operator()(bool b) { operator()<bool>(b); } };
+            """);
+        var declarations = CppTestHelper.Parse("""
+            template <typename C> void reset(int &b) {}
+            template <typename C> void g(int b) { reset<C>(b); }
+            """).Declarations;
+
+        Assert.IsInstanceOfType<ExpressionStatement>(((FunctionDefinition)((TemplateDeclaration)declarations[1]).Declaration).Body.Statements[0]);
+        Assert.HasCount(1, statements);
+    }
+
+    [TestMethod]
+    public void MemberTemplates_AreNotHiddenByVariablesOfTheFile()
+    {
+        // leaf is a variable of the file, but the member of path is a template
+        var shapes = Shapes("int leaf = 0, path = 0, Leaf = 0;", "path.leaf<Leaf>()");
+        AssertLines(["call path.leaf<Leaf>()"], shapes);
+    }
+
+    [TestMethod]
+    public void Builtins_TakeTypes()
+    {
+        var offset = CppTestHelper.Expression<BuiltinCallExpression>("__builtin_offsetof(S, a.b[1])");
+        Assert.IsInstanceOfType<TypeId>(offset.Arguments[0]);
+        Assert.IsInstanceOfType<SubscriptExpression>(offset.Arguments[1]);
+
+        var trait = CppTestHelper.Expression<BuiltinCallExpression>("__is_constructible(T, Args...)");
+        Assert.IsTrue(((TypeId)trait.Arguments[1]).IsPackExpansion);
+
+        var cast = CppTestHelper.Expression<BuiltinCallExpression>("__builtin_bit_cast(float, u)");
+        Assert.IsInstanceOfType<NameExpression>(cast.Arguments[1]);
+
+        // A function whose name looks like a trait is called as usual
+        CppTestHelper.Expression<CallExpression>("std::__is_constant_evaluated()");
+    }
+
+    [TestMethod]
+    public void Extensions_OfRealCode()
+    {
+        var extension = CppTestHelper.Expression<UnaryExpression>("__extension__ __PRETTY_FUNCTION__");
+        Assert.AreEqual("__extension__", extension.Operator);
+        CppTestHelper.Expression<FunctionalCastExpression>("_BitInt(8)(1)");
+        Assert.IsInstanceOfType<DeclarationStatement>(CppTestHelper.Statement("__extension__ long long x = 0;"));
+    }
+
+    // ========================================
     // Initializers
     // ========================================
 
@@ -517,6 +592,9 @@ public class CppExpressionTests
     [DataRow("void f(int *p) { if (p) p[0] = 1; else { *p = 2; } while (*p) --*p; }")]
     [DataRow("typedef int T;\nint f(T a) { T b = T(a) + T{a} + T(); return (T)b + sizeof(T) + (T)(a); }")]
     [DataRow("int x = [](auto&&... a) { return (a + ... + 1); }(1, 2.0, 3L);\nauto y = [x = 1]<typename T = int>(T v = T{}) mutable -> T { return v + ++x; };")]
+    [DataRow("#include <cstdarg>\nstruct A { int a; struct { int c[3]; } b; };\nunsigned long o = __builtin_offsetof(A, b.c[1]);\nfloat f(unsigned u) { return __builtin_bit_cast(float, u); }\ntemplate <class T, class... U> constexpr bool g = __is_same(T, int) && __is_constructible(T, U...);\nint h(int n, ...) { va_list ap; va_start(ap, n); int x = __builtin_va_arg(ap, int); va_end(ap); return x; }")]
+    [DataRow("struct S { template <class T> void operator()(T) {} void operator()(bool b) { operator()<bool>(b); } };\nint f(int x) { return __extension__ x; }\nunsigned g() { return __builtin_LINE() + __builtin_FILE()[0]; }")]
+    [DataRow("template <class T> struct Box { Box(T) {} Box make() { return Box(*this); } };\nauto b = Box(1);\ntemplate <class T> T zero() { return T(); }\nint z = zero<int>();")]
     public void Oracle_Snippets(string source)
     {
         CppTestHelper.AssertOracle(source);

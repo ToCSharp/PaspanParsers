@@ -4,11 +4,17 @@ using System.Text;
 namespace PaspanParsers.Tests.Cpp;
 
 /// <summary>
-/// The output of a clang run: the exit code, the standard output as bytes and the standard error.
+/// The output of a clang run: the exit code, the standard output as bytes and the standard error. The
+/// output of <see cref="Clang.DumpAst"/> is read while clang writes it, into <see cref="Ast"/>.
 /// </summary>
 public sealed record ClangRun(int ExitCode, byte[] Output, string Errors)
 {
     public bool Succeeded => ExitCode == 0;
+
+    /// <summary>
+    /// The AST that <see cref="Clang.DumpAst"/> read, or null when clang failed.
+    /// </summary>
+    public ClangAst Ast { get; init; }
 
     /// <summary>
     /// The first error message, like <c>(3,5): error: expected ';'</c>.
@@ -91,6 +97,22 @@ public static class Clang
     /// </summary>
     public static ClangRun Run(byte[] source, IEnumerable<string> arguments, string workingDirectory = null)
     {
+        var (run, output) = Run(source, arguments, workingDirectory, stream =>
+        {
+            var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            return buffer.ToArray();
+        });
+
+        return run with { Output = output ?? [] };
+    }
+
+    /// <summary>
+    /// Runs clang like <see cref="Run(byte[], IEnumerable{string}, string)"/> and reads its standard output
+    /// with <paramref name="readOutput"/> while clang writes it; the result is default when clang fails.
+    /// </summary>
+    public static (ClangRun Run, T Output) Run<T>(byte[] source, IEnumerable<string> arguments, string workingDirectory, Func<Stream, T> readOutput)
+    {
         var startInfo = new ProcessStartInfo(Path)
         {
             RedirectStandardInput = true,
@@ -114,8 +136,19 @@ public static class Clang
         startInfo.ArgumentList.Add("-");
 
         using var process = Process.Start(startInfo)!;
-        var output = new MemoryStream();
-        var outputTask = process.StandardOutput.BaseStream.CopyToAsync(output);
+        var outputTask = Task.Run(() =>
+        {
+            var stream = process.StandardOutput.BaseStream;
+            try
+            {
+                return readOutput(stream);
+            }
+            finally
+            {
+                // Let clang finish writing when the reader stops early or fails
+                stream.CopyTo(Stream.Null);
+            }
+        });
         var errorsTask = process.StandardError.ReadToEndAsync();
 
         try
@@ -131,19 +164,33 @@ public static class Clang
         if (!process.WaitForExit(Timeout))
         {
             process.Kill(entireProcessTree: true);
-            return new ClangRun(-1, [], $"clang timed out after {Timeout.TotalSeconds}s");
+            return (new ClangRun(-1, [], $"clang timed out after {Timeout.TotalSeconds}s"), default);
         }
 
-        outputTask.Wait();
-        return new ClangRun(process.ExitCode, output.ToArray(), errorsTask.Result);
+        var run = new ClangRun(process.ExitCode, [], errorsTask.Result);
+        try
+        {
+            var output = outputTask.Result;
+            return (run, run.Succeeded ? output : default);
+        }
+        catch (AggregateException) when (!run.Succeeded)
+        {
+            // The output of a failed run is incomplete
+            return (run, default);
+        }
     }
 
     /// <summary>
-    /// The JSON AST dump of <paramref name="source"/>.
+    /// The AST of <paramref name="source"/>, read from clang's JSON dump into <see cref="ClangRun.Ast"/>;
+    /// with <paramref name="collectHeaderNames"/>, including the names the headers declare
+    /// (<see cref="ClangAst.HeaderNames"/>). The dump of a file that includes many headers can be larger
+    /// than 2 GB, so it is never held in memory.
     /// </summary>
-    public static ClangRun DumpAst(byte[] source, IEnumerable<string> arguments, string workingDirectory = null)
+    public static ClangRun DumpAst(byte[] source, IEnumerable<string> arguments, string workingDirectory = null, bool collectHeaderNames = false)
     {
-        return Run(source, ["-fsyntax-only", "-Xclang", "-ast-dump=json", .. arguments], workingDirectory);
+        var (run, ast) = Run(source, ["-fsyntax-only", "-Xclang", "-ast-dump=json", .. arguments], workingDirectory,
+            stream => ClangAst.Read(stream, collectHeaderNames));
+        return run with { Ast = ast };
     }
 
     private static string FindExecutable()

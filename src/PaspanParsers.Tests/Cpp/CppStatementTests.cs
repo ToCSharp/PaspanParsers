@@ -349,8 +349,8 @@ public class CppStatementTests
             X volatile *v;
             X::Y w;
             X<int>::type *t = nullptr;
-            X(y);
-            X(y) + 1;
+            V(y);
+            V(y) + 1;
             x.y = 1;
             x ? y : z;
             """);

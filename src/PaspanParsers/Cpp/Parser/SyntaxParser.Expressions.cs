@@ -548,6 +548,14 @@ internal ref partial struct SyntaxParser
 
             case TokenKind.Identifier when token.Text is "_Alignof" or "__alignof" or "__alignof__" && Peek(1).IsPunctuator("("):
                 return ParseSizeOfExpression();
+
+            case TokenKind.Identifier when token.Text == "__extension__":
+            {
+                // GNU: no warnings about extensions in the operand
+                EatToken();
+                var operand = ParseCastExpression();
+                return operand == null ? null : Finish(new UnaryExpression(token.Text, operand), start);
+            }
         }
 
         return ParsePostfixExpression();
@@ -882,8 +890,8 @@ internal ref partial struct SyntaxParser
                     EatToken();
                     var isTemplate = TryEatKeyword("template");
                     var member = isTemplate
-                        ? ParseNameComponent(NameContext.Declarator, qualified: false, isTemplate: true)
-                        : ParseName(NameContext.Declarator);
+                        ? ParseNameComponent(NameContext.Member, qualified: false, isTemplate: true)
+                        : ParseName(NameContext.Member);
                     if (member == null)
                     {
                         return null;
@@ -949,9 +957,14 @@ internal ref partial struct SyntaxParser
                 return Finish(Literals.Concatenate(parts), start);
             }
 
+            case TokenKind.Identifier when Peek(1).IsPunctuator("(") && BuiltinArguments(token.Text) != null:
+                return ParseBuiltinCallExpression();
+
             case TokenKind.Identifier when ExtensionTypeNames.Contains(token.Text):
-                EatToken();
-                return ParseFunctionalCastRest(Finish(new KeywordSpecifier(token.Text), start), start);
+            {
+                var type = ParseExtensionTypeSpecifier();
+                return type == null ? null : ParseFunctionalCastRest(type, start);
+            }
 
             case TokenKind.Identifier:
             case TokenKind.Keyword when token.Text == "operator":
@@ -1079,8 +1092,9 @@ internal ref partial struct SyntaxParser
 
     /// <summary>
     /// A name in an expression is a type: it is known as one, or before a brace (<paramref name="beforeBrace"/>)
-    /// it is not known or is a template-id. A template-id before '(' is a type when it names a class template
-    /// defined in the file, and a call otherwise: it may name a function template.
+    /// it is not known or is a template-id. A template-id before '(' is a type when it names a class or alias
+    /// template, and a call when it names a function template or an unknown one. The name of a class template
+    /// alone is a type too: its injected-class-name, or a type whose arguments are deduced (<c>Box(1)</c>).
     /// </summary>
     private readonly bool IsTypeInExpression(Name name, bool beforeBrace)
     {
@@ -1096,7 +1110,96 @@ internal ref partial struct SyntaxParser
             return kind is null or SymbolKind.Type or SymbolKind.Template;
         }
 
-        return kind == SymbolKind.Type && (last is IdentifierName || _cache.Symbols.NamesClass(name));
+        return kind == SymbolKind.Type || (kind == SymbolKind.Template && last is IdentifierName);
+    }
+
+    /// <summary>
+    /// Clang's type traits ([meta] as builtins): their arguments are types.
+    /// </summary>
+    private static readonly HashSet<string> TypeTraits =
+    [
+        "__has_nothrow_assign", "__has_nothrow_move_assign", "__has_nothrow_copy", "__has_nothrow_constructor",
+        "__has_trivial_assign", "__has_trivial_move_assign", "__has_trivial_copy", "__has_trivial_constructor",
+        "__has_trivial_move_constructor", "__has_trivial_destructor", "__has_virtual_destructor",
+        "__has_unique_object_representations", "__is_abstract", "__is_aggregate", "__is_arithmetic", "__is_array",
+        "__is_assignable", "__is_base_of", "__is_bounded_array", "__is_class", "__is_complete_type", "__is_compound",
+        "__is_const", "__is_constructible", "__is_convertible", "__is_convertible_to", "__is_destructible",
+        "__is_empty", "__is_enum", "__is_final", "__is_floating_point", "__is_function", "__is_fundamental",
+        "__is_integral", "__is_interface_class", "__is_layout_compatible", "__is_literal", "__is_literal_type",
+        "__is_lvalue_reference", "__is_member_function_pointer", "__is_member_object_pointer", "__is_member_pointer",
+        "__is_nothrow_assignable", "__is_nothrow_constructible", "__is_nothrow_destructible", "__is_nullptr",
+        "__is_object", "__is_pod", "__is_pointer", "__is_pointer_interconvertible_base_of", "__is_polymorphic",
+        "__is_reference", "__is_referenceable", "__is_rvalue_reference", "__is_same", "__is_scalar", "__is_scoped_enum",
+        "__is_sealed", "__is_signed", "__is_standard_layout", "__is_trivial", "__is_trivially_assignable",
+        "__is_trivially_constructible", "__is_trivially_copyable", "__is_trivially_destructible",
+        "__is_trivially_equality_comparable", "__is_trivially_relocatable", "__is_unbounded_array", "__is_union",
+        "__is_unsigned", "__is_void", "__is_volatile", "__reference_binds_to_temporary",
+        "__reference_constructs_from_temporary", "__reference_converts_from_temporary", "__can_pass_in_regs",
+        "__array_rank",
+    ];
+
+    /// <summary>
+    /// What the arguments of a clang builtin that takes types are: 'T' a type-id, 'E' an expression, and the
+    /// last one repeats; null for any other name.
+    /// </summary>
+    private static string BuiltinArguments(string name) => name switch
+    {
+        "__builtin_offsetof" => "TE",
+        "__builtin_bit_cast" => "TE",
+        "__builtin_va_arg" or "__builtin_convertvector" => "ET",
+        "__array_extent" => "TE",
+        "__is_lvalue_expr" or "__is_rvalue_expr" => "E",
+        _ => TypeTraits.Contains(name) ? "T" : null,
+    };
+
+    /// <summary>
+    /// A call of a clang builtin that takes types: <c>__builtin_offsetof(S, member)</c>, <c>__is_same(T, U)</c>.
+    /// </summary>
+    private BuiltinCallExpression ParseBuiltinCallExpression()
+    {
+        var start = NodeStart;
+        var name = EatToken().Text;
+        var kinds = BuiltinArguments(name);
+        EatToken();
+        var saved = EnterBrackets();
+        var arguments = new List<CppNode>();
+        while (!IsPunctuator(")"))
+        {
+            if (arguments.Count > 0 && !TryEatPunctuator(","))
+            {
+                LeaveBrackets(saved);
+                return null;
+            }
+
+            CppNode argument;
+            if (kinds[Math.Min(arguments.Count, kinds.Length - 1)] == 'T')
+            {
+                var type = ParseTypeId();
+                if (type != null && TryEatPunctuator("..."))
+                {
+                    type = Finish(new TypeId(type.Specifiers, type.Declarator) { IsPackExpansion = true }, type);
+                }
+
+                argument = type;
+            }
+            else
+            {
+                var expression = ParseAssignmentExpression();
+                argument = expression == null ? null : TryParsePackExpansion(expression);
+            }
+
+            if (argument == null)
+            {
+                LeaveBrackets(saved);
+                return null;
+            }
+
+            arguments.Add(argument);
+        }
+
+        LeaveBrackets(saved);
+        EatToken();
+        return Finish(new BuiltinCallExpression(name, arguments), start);
     }
 
     /// <summary>

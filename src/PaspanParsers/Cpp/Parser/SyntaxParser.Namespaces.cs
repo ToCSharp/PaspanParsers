@@ -179,7 +179,8 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// <c>Alias [[attributes]] = type-id;</c> after <c>using</c>. The alias is declared as a type.
+    /// <c>Alias [[attributes]] = type-id;</c> after <c>using</c>. The alias is declared as a type, and names
+    /// qualified by it are looked up in the class it names.
     /// </summary>
     private AliasDeclaration ParseAliasDeclarationRest(int start)
     {
@@ -196,7 +197,7 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        _cache.Symbols.Declare(identifier, SymbolKind.Type);
+        _cache.Symbols.DeclareTypeAlias(identifier, AliasedClass(type.Specifiers, type.Declarator));
         return Finish(new AliasDeclaration(identifier, type) { Attributes = attributes }, start);
     }
 
