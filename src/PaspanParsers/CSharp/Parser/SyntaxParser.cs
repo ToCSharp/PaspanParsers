@@ -27,6 +27,9 @@ internal ref partial struct SyntaxParser
     private readonly SyntaxCache _cache;
     private int _position;
 
+    // The combinator grammar of the hybrid parser, which parses blocks and statements, or null
+    private readonly HybridGrammar _grammar;
+
     // Query clauses make their contextual keywords reserved inside the query
     private int _queryDepth;
 
@@ -47,6 +50,7 @@ internal ref partial struct SyntaxParser
         if (context is CSharpParseContext csharp)
         {
             (_queryDepth, _noLambdaArrow, _allowOmittedTypeArguments) = csharp.SyntaxState;
+            _grammar = csharp.Grammar;
         }
 
         // About one token per ten bytes of source code; sizing the cache up front avoids rehashing it
@@ -427,10 +431,27 @@ internal ref partial struct SyntaxParser
 
     public static CompilationUnit ParseCompilationUnitRule(ref SyntaxParser parser) => parser.ParseCompilationUnit();
 
-    /// <summary>
-    /// A statement, for the combinator grammar of the hybrid parser (<see cref="CSharpHybridParser"/>).
-    /// </summary>
-    public static Statement ParseStatementRule(ref SyntaxParser parser) => parser.ParseStatement();
+    // Rules of the hybrid grammar (HybridGrammar): the parts of the grammar it leaves to this parser
+
+    public static Expression ParseNestedExpressionRule(ref SyntaxParser parser) => parser.ParseExpressionInNestedContext();
+
+    public static TypeReference ParseTypeRule(ref SyntaxParser parser) => parser.ParseType(TypeMode.Normal);
+
+    public static TypeReference ParseLocalTypeRule(ref SyntaxParser parser) => parser.ParseLocalType();
+
+    public static Expression ParseVariableInitializerRule(ref SyntaxParser parser) => parser.ParseVariableInitializer();
+
+    public static LocalDeclarationStatement ParseVariableDeclarationRule(ref SyntaxParser parser) => parser.TryParseVariableDeclaration();
+
+    public static Pattern ParsePatternRule(ref SyntaxParser parser) => parser.ParsePattern();
+
+    public static List<AttributeSection> ParseAttributeSectionsRule(ref SyntaxParser parser) => parser.ParseAttributeSections();
+
+    public static List<TypeParameter> ParseTypeParameterListRule(ref SyntaxParser parser) => parser.ParseTypeParameterList();
+
+    public static List<Parameter> ParseParameterListRule(ref SyntaxParser parser) => parser.ParseParameterList(allowImplicitTypes: false);
+
+    public static List<TypeParameterConstraint> ParseConstraintClausesRule(ref SyntaxParser parser) => parser.ParseConstraintClauses();
 
     /// <summary>
     /// The expressions in the holes of interpolated strings, which are scanned by <see cref="InterpolatedStringToken"/>.
@@ -442,23 +463,13 @@ internal ref partial struct SyntaxParser
     // ========================================
 
     /// <summary>
-    /// The block of a lambda or an anonymous method. The hybrid parser (<see cref="CSharpHybridParser"/>)
-    /// parses it with its combinator grammar; otherwise it is <see cref="ParseBlock"/>.
-    /// </summary>
-    private BlockStatement ParseEmbeddedBlock()
-    {
-        return _context is CSharpParseContext { BlockParser: { } blockParser } csharp
-            ? RunCombinator(blockParser, csharp)
-            : ParseBlock();
-    }
-
-    /// <summary>
     /// Runs a combinator parser at the current position and moves past what it consumed. The state of this
     /// parser is handed over through the context, so that rules the combinator parser runs through
     /// <see cref="SyntaxRuleParser{T}"/> continue it.
     /// </summary>
-    private T RunCombinator<T>(Parser<T> parser, CSharpParseContext context) where T : class
+    private T RunCombinator<T>(Parser<T> parser) where T : class
     {
+        var context = (CSharpParseContext)_context;
         var callerState = context.SyntaxState;
         context.SyntaxState = new SyntaxState(_queryDepth, _noLambdaArrow, _allowOmittedTypeArguments);
         try

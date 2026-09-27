@@ -5,6 +5,12 @@ internal ref partial struct SyntaxParser
 {
     public BlockStatement ParseBlock()
     {
+        // The hybrid parser parses blocks with its combinator grammar
+        if (_grammar != null)
+        {
+            return RunCombinator(_grammar.Block);
+        }
+
         var start = NodeStart;
         var nullableDirectives = Current.NullableDirectives;
         if (!TryEatPunctuator("{"))
@@ -48,6 +54,11 @@ internal ref partial struct SyntaxParser
 
     public Statement ParseStatement()
     {
+        if (_grammar != null)
+        {
+            return RunCombinator(_grammar.Statement);
+        }
+
         // A block keeps the directives before its brace itself, also as the body of a member
         var nullableDirectives = Current.NullableDirectives;
         var start = NodeStart;
@@ -332,14 +343,23 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
+    /// False when the statement here cannot be a local declaration or function: a simple name followed by
+    /// a punctuator that does not continue a type, like in most expression statements (<c>a.b(c);</c>).
+    /// </summary>
+    internal bool MayStartLocalDeclaration()
+    {
+        var afterType = TokenAfterSimpleType(out var isSimpleType);
+        return !(isSimpleType && afterType.Kind == TokenKind.Punctuator && !IsTypeContinuation(afterType));
+    }
+
+    /// <summary>
     /// Type identifier ... : a local declaration when '=', ';' or ',' follows the identifier,
     /// a local function when '(' or '&lt;' follows it. Returns null (position unspecified) otherwise.
     /// </summary>
     private Statement TryParseLocalDeclarationOrFunction(List<AttributeSection> attributes, List<Modifiers> modifiers)
     {
         // Most statements are expressions like a.b(c); only a name follows the type of a declaration
-        var afterType = TokenAfterSimpleType(out var isSimpleType);
-        if (isSimpleType && afterType.Kind == TokenKind.Punctuator && !IsTypeContinuation(afterType))
+        if (!MayStartLocalDeclaration())
         {
             return null;
         }
@@ -373,7 +393,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// The type of a local: [scoped] [ref [readonly]] Type.
     /// </summary>
-    private TypeReference ParseLocalType()
+    internal TypeReference ParseLocalType()
     {
         if (IsContextual("scoped"))
         {
@@ -671,7 +691,7 @@ internal ref partial struct SyntaxParser
     /// A local variable declaration without the ';': [scoped] [ref] Type identifier ['=' initializer], ...
     /// Returns null (position unspecified) when no declaration is here.
     /// </summary>
-    private LocalDeclarationStatement TryParseVariableDeclaration()
+    internal LocalDeclarationStatement TryParseVariableDeclaration()
     {
         var start = NodeStart;
         var type = ParseLocalType();

@@ -78,6 +78,22 @@ public class CSharpPerformanceTests
         Assert.Contains("F(() =>", WriteDeep(unit));
     }
 
+    [TestMethod]
+    [DataRow(2000, CSharpParserVariant.RecursiveDescent)]
+    [DataRow(2000, CSharpParserVariant.Hybrid)]
+    public void NestedStatements_Parse(int depth, CSharpParserVariant variant)
+    {
+        var nestedIfs = string.Concat(Enumerable.Repeat("if (a) ", depth)) + "x();";
+        var elseIfs = "if (a) x();" + string.Concat(Enumerable.Repeat(" else if (a) x();", depth));
+        var labels = string.Concat(Enumerable.Range(0, depth).Select(i => $"l{i}: ")) + "x();";
+
+        foreach (var statements in new[] { nestedIfs, elseIfs, labels })
+        {
+            var unit = ParseDeep($"class C {{ void M() {{ {statements} }} }}", variant);
+            Assert.IsNull(ParserVariants.Compare(ParseDeep($"class C {{ void M() {{ {statements} }} }}"), unit));
+        }
+    }
+
     /// <summary>
     /// Parses on a thread with a 1 MB stack, like thread pool threads, within a time limit. Input nested
     /// deeper than the stack allows is parsed again on a larger stack by <see cref="CSharpParser"/>.

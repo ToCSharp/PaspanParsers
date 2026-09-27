@@ -132,18 +132,25 @@ public class HybridParserTests
     // ========================================
 
     /// <summary>
-    /// The hand-written parser runs the block parser of the context for the bodies of lambdas and
-    /// anonymous methods, and the rules the block runs continue at the position after its '{'.
+    /// The hand-written parser runs the combinator grammar for every block and statement it meets: member
+    /// bodies, lambdas, anonymous methods and top-level statements. Inside the grammar, blocks and statements
+    /// are the grammar's own rules.
     /// </summary>
     [TestMethod]
-    public void LambdaAndAnonymousMethodBodies_UseTheBlockParserOfTheContext()
+    public void BlocksAndStatements_AreParsedByTheGrammar()
     {
-        const string source = "class C { void M() { F(() => { G(x => { return; }); }); H(delegate { }); } }";
-        var counting = new CountingParser<BlockStatement>(CSharpHybridParser.Block);
+        const string source = "F(); class C { void M() { F(() => { G(x => { return; }); }); H(delegate { }); } int P { get { return 0; } } }";
+        var blocks = 0;
+        var statements = 0;
+        var grammar = HybridGrammar.Instance.WithEntryPoints(
+            block => new CountingParser<BlockStatement>(block, () => blocks++),
+            statement => new CountingParser<Statement>(statement, () => statements++));
 
-        Assert.IsTrue(CSharpParser.TryParse(source, null, CSharpHybridParser.CompilationUnitParser, counting, out var unit, out _));
+        Assert.IsTrue(CSharpParser.TryParse(source, null, CSharpHybridParser.CompilationUnitParser, grammar, out var unit, out _));
 
-        Assert.AreEqual(3, counting.Successes);
+        // M's body, the two lambdas, the anonymous method and the getter; the top-level statement
+        Assert.AreEqual(5, blocks);
+        Assert.AreEqual(1, statements);
         Assert.IsNull(ParserVariants.Compare(CSharpParser.Parse(source), unit));
     }
 
@@ -205,6 +212,41 @@ public class HybridParserTests
         Assert.IsEmpty(differences, "The hybrid parser differs from the recursive descent parser:\n" + string.Join("\n", differences));
     }
 
+    /// <summary>
+    /// Invalid code too: every statement of the built-in corpus with one token removed (the first, one in the
+    /// middle, the last) is rejected by both parsers, or parsed by both to the same AST. This checks that the
+    /// grammar commits to a statement where the hand-written parser does.
+    /// </summary>
+    [TestMethod]
+    public void BuiltInCorpus_BrokenStatements_SameResult()
+    {
+        var options = new Microsoft.CodeAnalysis.CSharp.CSharpParseOptions(LanguageVersion.CSharp14);
+        var differences = new List<string>();
+        var variants = 0;
+
+        foreach (var (name, path) in CSharpCorpusTests.BuiltInCorpus())
+        {
+            var bodies = CSharpSyntaxTree.ParseText(File.ReadAllText(path), options).GetRoot().DescendantNodes().OfType<BlockSyntax>()
+                .Where(block => block.Parent is BaseMethodDeclarationSyntax or AccessorDeclarationSyntax);
+            foreach (var statement in bodies.SelectMany(body => body.Statements))
+            {
+                var text = statement.ToString();
+                var tokens = statement.DescendantTokens().Where(t => t.Span.Length != 0).ToList();
+                foreach (var index in new[] { 0, tokens.Count / 2, tokens.Count - 1 }.Distinct())
+                {
+                    var removed = tokens[index].Span.Start - statement.SpanStart;
+                    var broken = text.Remove(removed, tokens[index].Span.Length);
+                    variants++;
+                    var line = statement.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    Compare($"{name}:{line} without '{tokens[index].Text}'", SyntaxTestHelper.InMethod(broken), differences);
+                }
+            }
+        }
+
+        TestContext.WriteLine($"Compared {variants} broken statements");
+        Assert.IsEmpty(differences, "The hybrid parser differs from the recursive descent parser:\n" + string.Join("\n", differences.Take(50)));
+    }
+
     private static void Compare(string name, string source, List<string> differences)
     {
         CSharpParser.TryParse(source, out var expected, out _);
@@ -229,10 +271,8 @@ public class HybridParserTests
         return (success, result.Value, result.Start, reader.GetCurrentPosition());
     }
 
-    private sealed class CountingParser<T>(Parser<T> parser) : Parser<T>
+    private sealed class CountingParser<T>(Parser<T> parser, Action success) : Parser<T>
     {
-        public int Successes { get; private set; }
-
         public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<T> result)
         {
             if (!parser.Parse(ref reader, context, ref result))
@@ -240,7 +280,7 @@ public class HybridParserTests
                 return false;
             }
 
-            Successes++;
+            success();
             return true;
         }
     }

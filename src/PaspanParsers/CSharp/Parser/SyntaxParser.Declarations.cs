@@ -199,7 +199,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// '(' [parameter (',' parameter)*] ')'
     /// </summary>
-    private List<Parameter> ParseParameterList(bool allowImplicitTypes)
+    internal List<Parameter> ParseParameterList(bool allowImplicitTypes)
     {
         if (!TryEatPunctuator("("))
         {

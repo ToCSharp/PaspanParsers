@@ -144,7 +144,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// 'await' is an operator when an operand follows it; otherwise it is an identifier.
     /// </summary>
-    private bool IsAwaitExpression()
+    internal bool IsAwaitExpression()
     {
         var next = Peek(1);
         switch (next.Kind)
@@ -488,7 +488,7 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// A full expression inside brackets or a conditional branch, where lambdas are always allowed.
     /// </summary>
-    private Expression ParseExpressionInNestedContext()
+    internal Expression ParseExpressionInNestedContext()
     {
         var noLambdaArrow = _noLambdaArrow;
         _noLambdaArrow = false;
@@ -1941,7 +1941,7 @@ internal ref partial struct SyntaxParser
         var start = NodeStart;
         if (IsPunctuator("{"))
         {
-            var block = ParseEmbeddedBlock();
+            var block = ParseBlock();
             return block == null ? null : Finish(new BlockLambdaBody(block), start);
         }
 
@@ -1972,7 +1972,7 @@ internal ref partial struct SyntaxParser
             return null;
         }
 
-        var block = ParseEmbeddedBlock();
+        var block = ParseBlock();
         return block == null ? null : Finish(new AnonymousMethodExpression(block, parameters, modifiers), start);
     }
 

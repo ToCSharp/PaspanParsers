@@ -17,6 +17,22 @@ internal static class SyntaxRules
     public static Parser<T> Node<T>(Parser<T> parser) where T : CSharpNode => new NodeParser<T>(parser);
 
     /// <summary>
+    /// A statement: its span like <see cref="Node{T}(Parser{T})"/>, and the <c>#nullable</c> directives before its
+    /// first token when it does not keep them itself, like <c>SyntaxParser.ParseStatement</c>.
+    /// </summary>
+    public static Parser<Statement> StatementNode(Parser<Statement> parser) => new StatementNodeParser(parser);
+
+    /// <summary>
+    /// Succeeds without consuming anything when <paramref name="condition"/> holds at the next token.
+    /// </summary>
+    public static Parser<Unit> Lookahead(TokenCondition condition) => new LookaheadParser(condition);
+
+    /// <summary>
+    /// A rule of the hand-written parser (<see cref="SyntaxRuleParser{T}"/>).
+    /// </summary>
+    public static Parser<T> Rule<T>(SyntaxParser.Rule<T> rule) => new SyntaxRuleParser<T>(rule);
+
+    /// <summary>
     /// A block resets the state that only holds inside an expression, like <c>SyntaxParser.ParseBlock</c>:
     /// query keywords are not reserved and <c>x =&gt; ...</c> is a lambda again.
     /// </summary>
@@ -36,6 +52,47 @@ internal static class SyntaxRules
             var end = Math.Max(start, reader.GetCurrentPosition());
             result.Value.Span = new TextSpan(start, end);
             result.Set(start, end, result.Value);
+            return true;
+        }
+    }
+
+    private sealed class StatementNodeParser(Parser<Statement> parser) : Parser<Statement>
+    {
+        public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<Statement> result)
+        {
+            var first = SyntaxParser.At(ref reader, context).Current;
+            if (!parser.Parse(ref reader, context, ref result))
+            {
+                return false;
+            }
+
+            var statement = result.Value;
+            var end = Math.Max(first.Start, reader.GetCurrentPosition());
+            statement.Span = new TextSpan(first.Start, end);
+
+            // A block keeps the directives before its brace itself
+            if (first.NullableDirectives != null)
+            {
+                statement.NullableDirectives ??= first.NullableDirectives;
+            }
+
+            result.Set(first.Start, end, statement);
+            return true;
+        }
+    }
+
+    private sealed class LookaheadParser(TokenCondition condition) : Parser<Unit>
+    {
+        public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<Unit> result)
+        {
+            var parser = SyntaxParser.At(ref reader, context);
+            if (!condition(ref parser))
+            {
+                return false;
+            }
+
+            var position = reader.GetCurrentPosition();
+            result.Set(position, position, Unit.Value);
             return true;
         }
     }
