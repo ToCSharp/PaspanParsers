@@ -85,36 +85,62 @@ public sealed class StringValue : Parser<string>
 public sealed class PooledStringValue : Parser<string>
 {
     //public static DictionaryBytes<string> StringPool = new();
-    public static Dictionary<byte[], string> StringPool = [];
+    public static Dictionary<byte[], string> StringPool = new(ByteArrayComparer.Instance);
+    private static readonly Lock _lock = new();
+
     public override bool Parse(ref SpanReader reader, ParseContext context, ref ParseResult<string> result)
     {
         context.EnterParser(this);
 
-        var bytes = reader.GetValue();
-        if (StringPool.TryGetValue(bytes.ToArray(), out var value))
-        {
-            result.Set(value);
-        }
-        else
-        {
-            result.Set(Encoding.UTF8.GetString(bytes));
-            StringPool.Add(bytes.ToArray(), result.Value);
-        }
+        result.Set(GetString(reader.GetValue()));
         return true;
     }
+
     public static string GetString(ReadOnlySpan<byte> bytes)
     {
-        if (StringPool.TryGetValue(bytes.ToArray(), out var value))
+        lock (_lock)
         {
+            // Look up by span to avoid allocating a key when the string is already pooled
+            if (StringPool.TryGetAlternateLookup<ReadOnlySpan<byte>>(out var lookup))
+            {
+                if (lookup.TryGetValue(bytes, out var pooled))
+                {
+                    return pooled;
+                }
+            }
+            else if (StringPool.TryGetValue(bytes.ToArray(), out var pooled))
+            {
+                return pooled;
+            }
+
+            var value = Encoding.UTF8.GetString(bytes);
+            StringPool.Add(bytes.ToArray(), value);
             return value;
         }
-        else
-        {
-            var valueAdded = Encoding.UTF8.GetString(bytes);
-            StringPool.Add(bytes.ToArray(), valueAdded);
-            return valueAdded;
-        }
     }
+}
+
+/// <summary>
+/// Compares byte arrays by content. Without it a <see cref="Dictionary{TKey, TValue}"/> keyed by byte[] compares references.
+/// </summary>
+internal sealed class ByteArrayComparer : IEqualityComparer<byte[]>, IAlternateEqualityComparer<ReadOnlySpan<byte>, byte[]>
+{
+    public static readonly ByteArrayComparer Instance = new();
+
+    public bool Equals(byte[] x, byte[] y) => ReferenceEquals(x, y) || (x != null && y != null && x.AsSpan().SequenceEqual(y));
+
+    public int GetHashCode(byte[] obj) => GetHashCode(obj.AsSpan());
+
+    public bool Equals(ReadOnlySpan<byte> alternate, byte[] other) => other != null && alternate.SequenceEqual(other);
+
+    public int GetHashCode(ReadOnlySpan<byte> alternate)
+    {
+        var hash = new HashCode();
+        hash.AddBytes(alternate);
+        return hash.ToHashCode();
+    }
+
+    public byte[] Create(ReadOnlySpan<byte> alternate) => alternate.ToArray();
 }
 
 public sealed class AsObject<T>(Parser<T> parser) : Parser<object>
@@ -143,13 +169,12 @@ public sealed class RegionToString(Parser<Region> parser) : Parser<string>
     {
         context.EnterParser(this);
 
-        var start = reader.CaptureState();
         var parsed = new ParseResult<Region>();
         if (_parser.Parse(ref reader, context, ref parsed))
         {
             var region = parsed.Value;
-            // Используем сохраненную позицию start для чтения строки
-            if (reader.TryGetString(start, region.Length, out var str))
+            // Регион хранит абсолютную позицию; позиция до разбора может включать пропущенные пробелы (Terms)
+            if (reader.TryGetString(region.Start, region.Length, out var str))
             {
                 result.Set(str);
                 return true;

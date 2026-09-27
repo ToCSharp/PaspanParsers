@@ -11,8 +11,13 @@ internal sealed class ListOfChars : Parser<Region>
     {
         foreach (var c in values)
         {
-            var b = (byte)c;
-            _map.Add(b);
+            // The parser matches single bytes, a non-ASCII char would be silently truncated
+            if (!char.IsAscii(c))
+            {
+                throw new ArgumentException($"Only ASCII chars are supported, found '{c}'.", nameof(values));
+            }
+
+            _map.Add((byte)c);
         }
 
         _minSize = minSize;
@@ -31,21 +36,19 @@ internal sealed class ListOfChars : Parser<Region>
         var size = 0;
         var maxLength = _maxSize > 0 ? Math.Min(reader.Length, _maxSize) : reader.Length;
 
-        for (var i = 0; i < maxLength; i++)
-        {
-            if (!reader.ReadByte(out var b) || _map.Contains(b) == _negate)
-            {
-                break;
-            }
+        var remaining = reader.GetRemaining();
 
+        while (size < maxLength && _map.Contains(remaining[size]) != _negate)
+        {
             size++;
         }
 
         if (size < _minSize)
         {
-            reader.RollBackState(start);
             return false;
         }
+
+        reader.RollBackState(start + size);
 
         reader.SetValue(start, start + size);
         result.Set(start, start + size, new Region(start, size));

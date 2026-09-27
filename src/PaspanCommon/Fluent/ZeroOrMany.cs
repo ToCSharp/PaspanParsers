@@ -16,11 +16,22 @@ public sealed class ZeroOrMany<T>(Parser<T> parser) : Parser<List<T>>
         var first = true;
         var parsed = new ParseResult<T>();
 
-        // TODO: it's not restoring an intermediate failed text position
-        // is the inner parser supposed to be clean?
-
-        while (_parser.Parse(ref reader, context, ref parsed))
+        while (true)
         {
+            var before = reader.CaptureState();
+
+            if (!_parser.Parse(ref reader, context, ref parsed))
+            {
+                reader.RollBackState(before);
+                break;
+            }
+
+            // A parser that succeeds without consuming anything would loop forever
+            if (reader.GetCurrentPosition() == before)
+            {
+                break;
+            }
+
             if (first)
             {
                 first = false;

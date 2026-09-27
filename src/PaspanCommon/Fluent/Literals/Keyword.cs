@@ -1,9 +1,11 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Text;
 
 namespace Paspan.Fluent;
 
 /// <summary>
-/// Парсер для ключевых слов. Проверяет, что после ключевого слова не идет буква или цифра (word boundary).
+/// Парсер для ключевых слов. Проверяет, что после ключевого слова не идет буква (word boundary). Цифры и '_' допустимы.
 /// </summary>
 public sealed class Keyword(string text, StringComparison comparisonType) : Parser<string>
 {
@@ -27,10 +29,8 @@ public sealed class Keyword(string text, StringComparison comparisonType) : Pars
         // Цифры допустимы (например, "return123" - валидно)
         if (!reader.Eof())
         {
-            var nextByte = reader.Current;
-            
-            // Если следующий байт - буква, это не keyword
-            if (IsLetter(nextByte))
+            // Если следующий символ - буква (включая не-ASCII, например кириллицу), это не keyword
+            if (IsLetter(reader.GetRemaining()))
             {
                 reader.RollBackState(start);
                 return false;
@@ -43,11 +43,18 @@ public sealed class Keyword(string text, StringComparison comparisonType) : Pars
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool IsLetter(byte b)
+    private static bool IsLetter(ReadOnlySpan<byte> next)
     {
-        // Проверяем ASCII буквы (A-Z, a-z)
-        return (b >= 65 && b <= 90) ||   // A-Z
-               (b >= 97 && b <= 122);    // a-z
+        var b = next[0];
+
+        if (b < 0x80)
+        {
+            // ASCII буквы (A-Z, a-z)
+            return (b >= 65 && b <= 90) ||   // A-Z
+                   (b >= 97 && b <= 122);    // a-z
+        }
+
+        return Rune.DecodeFromUtf8(next, out var rune, out _) == OperationStatus.Done && Rune.IsLetter(rune);
     }
 
     public override string ToString() => $"Keyword '{_text}'";

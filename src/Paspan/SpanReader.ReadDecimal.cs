@@ -82,18 +82,13 @@ public ref partial struct SpanReader
 
             var numberIsEmpty = number.IsEmpty;
 
-            if (!ReadInteger(out number))
+            // A decimal separator must be followed by a number if there is no integral part, e.g. `[NaN].[NaN]`.
+            // Otherwise a trailing separator is accepted and an exponent can still follow, e.g. `1.e5`
+            if (!ReadInteger(out number) && numberIsEmpty)
             {
-                // A decimal separator must be followed by a number if there is no integral part, e.g. `[NaN].[NaN]`
-                if (numberIsEmpty)
-                {
-                    RollBackState(beforeDecimalSeparator);
+                RollBackState(beforeDecimalSeparator);
 
-                    return false;
-                }
-
-                number = _buffer[start.._consumed];
-                return true;
+                return false;
             }
         }
 

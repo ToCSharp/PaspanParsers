@@ -26,7 +26,7 @@ public static partial class Character
     internal static readonly SearchValues<char> _newLines = SearchValues.Create(NewLines);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsDecimalDigit(char ch) => _decimalDigits.Contains((byte)ch);
+    public static bool IsDecimalDigit(char ch) => char.IsAsciiDigit(ch);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool IsIdentifierStart(char ch) => _identifierStart.Contains(ch);
@@ -35,5 +35,5 @@ public static partial class Character
     public static bool IsIdentifierPart(char ch) => _identifierPart.Contains(ch);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsHexDigit(char ch) => _hexDigits.Contains((byte)ch);
+    public static bool IsHexDigit(char ch) => char.IsAsciiHexDigit(ch);
 }

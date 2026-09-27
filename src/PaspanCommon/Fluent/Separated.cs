@@ -38,13 +38,22 @@ public sealed class Separated<U, T>(Parser<U> separator, Parser<T> parser) : Par
                     reader.RollBackState(positionBeforeSeparator);
                     break;
                 }
+
+                // A separator and a value that both consume nothing would loop forever
+                if (reader.GetCurrentPosition() == positionBeforeSeparator)
+                {
+                    break;
+                }
             }
             else
             {
                 // First element
+                var startPosition = reader.CaptureState();
+
                 if (!_parser.Parse(ref reader, context, ref parsed))
                 {
                     // If first element fails to parse, the entire parser fails
+                    reader.RollBackState(startPosition);
                     return false;
                 }
             }
