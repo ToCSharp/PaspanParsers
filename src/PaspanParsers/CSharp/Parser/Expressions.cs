@@ -32,13 +32,13 @@ public partial class CSharpParser
             .Or(nameExpr);
 
         // Unary expressions
-        var unaryPlus = Terms.Char('+').SkipAnd(primary)
+        var unaryPlus = Punct("+").SkipAnd(primary)
             .Then<Expression>(expr => new UnaryExpression(UnaryOperator.Plus, expr));
-        var unaryMinus = Terms.Char('-').SkipAnd(primary)
+        var unaryMinus = Punct("-").SkipAnd(primary)
             .Then<Expression>(expr => new UnaryExpression(UnaryOperator.Minus, expr));
-        var logicalNot = Terms.Char('!').SkipAnd(primary)
+        var logicalNot = Punct("!").SkipAnd(primary)
             .Then<Expression>(expr => new UnaryExpression(UnaryOperator.Not, expr));
-        var bitwiseNot = Terms.Char('~').SkipAnd(primary)
+        var bitwiseNot = Punct("~").SkipAnd(primary)
             .Then<Expression>(expr => new UnaryExpression(UnaryOperator.BitwiseNot, expr));
 
         var unary = unaryPlus.Or(unaryMinus).Or(logicalNot).Or(bitwiseNot).Or(primary);
@@ -59,52 +59,53 @@ public partial class CSharpParser
 
         // Binary expressions with precedence
         var multiplicative = switchExpression.LeftAssociative(
-            (Terms.Char('*'), (a, b) => new BinaryExpression(a, BinaryOperator.Multiply, b)),
-            (Terms.Char('/'), (a, b) => new BinaryExpression(a, BinaryOperator.Divide, b)),
-            (Terms.Char('%'), (a, b) => new BinaryExpression(a, BinaryOperator.Modulo, b))
+            (Punct("*"), (a, b) => new BinaryExpression(a, BinaryOperator.Multiply, b)),
+            (Punct("/"), (a, b) => new BinaryExpression(a, BinaryOperator.Divide, b)),
+            (Punct("%"), (a, b) => new BinaryExpression(a, BinaryOperator.Modulo, b))
         );
 
         var additive = multiplicative.LeftAssociative(
-            (Terms.Char('+'), (a, b) => new BinaryExpression(a, BinaryOperator.Add, b)),
-            (Terms.Char('-'), (a, b) => new BinaryExpression(a, BinaryOperator.Subtract, b))
+            (Punct("+"), (a, b) => new BinaryExpression(a, BinaryOperator.Add, b)),
+            (Punct("-"), (a, b) => new BinaryExpression(a, BinaryOperator.Subtract, b))
         );
 
         var shift = additive.LeftAssociative(
-            (Terms.Text("<<"), (a, b) => new BinaryExpression(a, BinaryOperator.LeftShift, b)),
-            (Terms.Text(">>"), (a, b) => new BinaryExpression(a, BinaryOperator.RightShift, b))
+            (Punct("<<"), (a, b) => new BinaryExpression(a, BinaryOperator.LeftShift, b)),
+            (Punct(">>"), (a, b) => new BinaryExpression(a, BinaryOperator.RightShift, b)),
+            (Punct(">>>"), (a, b) => new BinaryExpression(a, BinaryOperator.UnsignedRightShift, b))
         );
 
         relational = shift.LeftAssociative(
-            (Terms.Text("<="), (a, b) => new BinaryExpression(a, BinaryOperator.LessThanOrEqual, b)),
-            (Terms.Text(">="), (a, b) => new BinaryExpression(a, BinaryOperator.GreaterThanOrEqual, b)),
-            (Terms.Text("<"), (a, b) => new BinaryExpression(a, BinaryOperator.LessThan, b)),
-            (Terms.Text(">"), (a, b) => new BinaryExpression(a, BinaryOperator.GreaterThan, b))
+            (Punct("<="), (a, b) => new BinaryExpression(a, BinaryOperator.LessThanOrEqual, b)),
+            (Punct(">="), (a, b) => new BinaryExpression(a, BinaryOperator.GreaterThanOrEqual, b)),
+            (Punct("<"), (a, b) => new BinaryExpression(a, BinaryOperator.LessThan, b)),
+            (Punct(">"), (a, b) => new BinaryExpression(a, BinaryOperator.GreaterThan, b))
         );
 
         // isExpression (relational [is pattern]) is defined in Patterns.cs
         var equality = isExpression.LeftAssociative(
-            (Terms.Text("=="), (a, b) => new BinaryExpression(a, BinaryOperator.Equal, b)),
-            (Terms.Text("!="), (a, b) => new BinaryExpression(a, BinaryOperator.NotEqual, b))
+            (Punct("=="), (a, b) => new BinaryExpression(a, BinaryOperator.Equal, b)),
+            (Punct("!="), (a, b) => new BinaryExpression(a, BinaryOperator.NotEqual, b))
         );
 
         var bitwiseAnd = equality.LeftAssociative(
-            (Terms.Char('&'), (a, b) => new BinaryExpression(a, BinaryOperator.BitwiseAnd, b))
+            (Punct("&"), (a, b) => new BinaryExpression(a, BinaryOperator.BitwiseAnd, b))
         );
 
         var bitwiseXor = bitwiseAnd.LeftAssociative(
-            (Terms.Char('^'), (a, b) => new BinaryExpression(a, BinaryOperator.BitwiseXor, b))
+            (Punct("^"), (a, b) => new BinaryExpression(a, BinaryOperator.BitwiseXor, b))
         );
 
         var bitwiseOr = bitwiseXor.LeftAssociative(
-            (Terms.Char('|'), (a, b) => new BinaryExpression(a, BinaryOperator.BitwiseOr, b))
+            (Punct("|"), (a, b) => new BinaryExpression(a, BinaryOperator.BitwiseOr, b))
         );
 
         var logicalAnd = bitwiseOr.LeftAssociative(
-            (Terms.Text("&&"), (a, b) => new BinaryExpression(a, BinaryOperator.And, b))
+            (Punct("&&"), (a, b) => new BinaryExpression(a, BinaryOperator.And, b))
         );
 
         var logicalOr = logicalAnd.LeftAssociative(
-            (Terms.Text("||"), (a, b) => new BinaryExpression(a, BinaryOperator.Or, b))
+            (Punct("||"), (a, b) => new BinaryExpression(a, BinaryOperator.Or, b))
         );
 
         // Conditional expression

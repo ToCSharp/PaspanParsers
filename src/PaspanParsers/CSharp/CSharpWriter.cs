@@ -115,7 +115,7 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteExternAliasDirective(ExternAliasDirective directive)
     {
-        WriteLine($"extern alias {directive.Identifier};");
+        WriteLine($"extern alias {Id(directive.Identifier)};");
     }
 
     private void WriteUsingDirective(UsingDirective directive)
@@ -128,7 +128,7 @@ public class CSharpWriter(string indentString = "    ")
                 WriteLine(";");
                 break;
             case UsingAliasDirective alias:
-                Write($"using {alias.Alias} = ");
+                Write($"using {Id(alias.Alias)} = ");
                 WriteNameExpression(alias.Target);
                 WriteLine(";");
                 break;
@@ -275,7 +275,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         WriteAttributes(cls.Attributes);
         WriteModifiers(cls.Modifiers);
-        Write($"class {cls.Name}");
+        Write($"class {Id(cls.Name)}");
 
         if (cls.TypeParameters != null && cls.TypeParameters.Count > 0)
         {
@@ -323,7 +323,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         WriteAttributes(str.Attributes);
         WriteModifiers(str.Modifiers);
-        Write($"struct {str.Name}");
+        Write($"struct {Id(str.Name)}");
 
         if (str.TypeParameters != null && str.TypeParameters.Count > 0)
         {
@@ -371,7 +371,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         WriteAttributes(iface.Attributes);
         WriteModifiers(iface.Modifiers);
-        Write($"interface {iface.Name}");
+        Write($"interface {Id(iface.Name)}");
 
         if (iface.TypeParameters != null && iface.TypeParameters.Count > 0)
         {
@@ -419,7 +419,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         WriteAttributes(enm.Attributes);
         WriteModifiers(enm.Modifiers);
-        Write($"enum {enm.Name}");
+        Write($"enum {Id(enm.Name)}");
 
         if (enm.BaseType != null)
         {
@@ -451,7 +451,7 @@ public class CSharpWriter(string indentString = "    ")
     private void WriteEnumMember(EnumMember member)
     {
         WriteAttributes(member.Attributes);
-        Write(member.Name);
+        Write(Id(member.Name));
         if (member.Value != null)
         {
             Write(" = ");
@@ -465,7 +465,7 @@ public class CSharpWriter(string indentString = "    ")
         WriteModifiers(del.Modifiers);
         Write("delegate ");
         WriteTypeReference(del.ReturnType);
-        Write($" {del.Name}");
+        Write($" {Id(del.Name)}");
 
         if (del.TypeParameters != null && del.TypeParameters.Count > 0)
         {
@@ -497,7 +497,7 @@ public class CSharpWriter(string indentString = "    ")
         WriteAttributes(rec.Attributes);
         WriteModifiers(rec.Modifiers);
         Write(rec.IsRecordStruct ? "record struct " : "record ");
-        Write(rec.Name);
+        Write(Id(rec.Name));
 
         if (rec.TypeParameters != null && rec.TypeParameters.Count > 0)
         {
@@ -564,7 +564,7 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteVariableDeclarator(VariableDeclarator variable)
     {
-        Write(variable.Name);
+        Write(Id(variable.Name));
         if (variable.Initializer != null)
         {
             Write(" = ");
@@ -577,7 +577,7 @@ public class CSharpWriter(string indentString = "    ")
         WriteAttributes(method.Attributes);
         WriteModifiers(method.Modifiers);
         WriteTypeReference(method.ReturnType);
-        Write($" {method.Name}");
+        Write($" {Id(method.Name)}");
 
         if (method.TypeParameters != null && method.TypeParameters.Count > 0)
         {
@@ -632,7 +632,7 @@ public class CSharpWriter(string indentString = "    ")
         WriteAttributes(prop.Attributes);
         WriteModifiers(prop.Modifiers);
         WriteTypeReference(prop.Type);
-        Write($" {prop.Name}");
+        Write($" {Id(prop.Name)}");
 
         if (prop.ExpressionBody != null)
         {
@@ -765,7 +765,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         WriteAttributes(ctor.Attributes);
         WriteModifiers(ctor.Modifiers);
-        Write($"{ctor.Name}(");
+        Write($"{Id(ctor.Name)}(");
         WriteList(ctor.Parameters, WriteParameter);
         Write(")");
 
@@ -807,12 +807,12 @@ public class CSharpWriter(string indentString = "    ")
                 _ => throw new ArgumentException($"Unknown variance: {param.Variance}")
             });
         }
-        Write(param.Name);
+        Write(Id(param.Name));
     }
 
     private void WriteTypeParameterConstraint(TypeParameterConstraint constraint)
     {
-        Write($"where {constraint.TypeParameterName} : ");
+        Write($"where {Id(constraint.TypeParameterName)} : ");
         WriteList(constraint.Constraints, WriteTypeConstraint);
     }
 
@@ -865,7 +865,7 @@ public class CSharpWriter(string indentString = "    ")
         }
 
         WriteTypeReference(param.Type);
-        Write($" {param.Name}");
+        Write($" {Id(param.Name)}");
 
         if (param.DefaultValue != null)
         {
@@ -941,7 +941,7 @@ public class CSharpWriter(string indentString = "    ")
         WriteTypeReference(element.Type);
         if (!string.IsNullOrEmpty(element.Name))
         {
-            Write($" {element.Name}");
+            Write($" {Id(element.Name)}");
         }
     }
 
@@ -1014,7 +1014,7 @@ public class CSharpWriter(string indentString = "    ")
                 WriteLabeledStatement(labeled);
                 break;
             case GotoStatement gotoStmt:
-                WriteLine($"goto {gotoStmt.Label};");
+                WriteLine($"goto {Id(gotoStmt.Label)};");
                 break;
         }
     }
@@ -1216,7 +1216,7 @@ public class CSharpWriter(string indentString = "    ")
             Write(" await");
         Write(" (");
         WriteTypeReference(forEachStmt.Type);
-        Write($" {forEachStmt.Identifier} in ");
+        Write($" {Id(forEachStmt.Identifier)} in ");
         WriteExpression(forEachStmt.Collection);
         WriteLine(")");
         WriteStatement(forEachStmt.Body);
@@ -1274,7 +1274,7 @@ public class CSharpWriter(string indentString = "    ")
             WriteTypeReference(catchClause.ExceptionType);
             if (!string.IsNullOrEmpty(catchClause.Identifier))
             {
-                Write($" {catchClause.Identifier}");
+                Write($" {Id(catchClause.Identifier)}");
             }
             Write(")");
         }
@@ -1322,7 +1322,7 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteLabeledStatement(LabeledStatement labeled)
     {
-        WriteLine($"{labeled.Label}:");
+        WriteLine($"{Id(labeled.Label)}:");
         WriteStatement(labeled.Statement);
     }
 
@@ -1336,6 +1336,9 @@ public class CSharpWriter(string indentString = "    ")
         {
             case LiteralExpression lit:
                 WriteLiteralExpression(lit);
+                break;
+            case InterpolatedStringExpression interpolated:
+                WriteInterpolatedString(interpolated);
                 break;
             case NameExpression name:
                 WriteNameExpression(name);
@@ -1425,8 +1428,51 @@ public class CSharpWriter(string indentString = "    ")
         }
     }
 
+    /// <summary>
+    /// An identifier as written in source: reserved keywords need the '@' prefix.
+    /// </summary>
+    private static string Id(string name) =>
+        name != null && Lexer.ReservedKeywords.Contains(name) ? "@" + name : name;
+
+    private void WriteInterpolatedString(InterpolatedStringExpression interpolated)
+    {
+        Write(interpolated.StartToken);
+        foreach (var content in interpolated.Contents)
+        {
+            switch (content)
+            {
+                case InterpolatedStringText text:
+                    Write(text.Text);
+                    break;
+                case Interpolation interpolation:
+                    Write(new string('{', interpolated.BraceCount));
+                    WriteExpression(interpolation.Expression);
+                    if (interpolation.Alignment != null)
+                    {
+                        Write(",");
+                        WriteExpression(interpolation.Alignment);
+                    }
+                    if (interpolation.Format != null)
+                    {
+                        Write(":");
+                        Write(interpolation.Format);
+                    }
+                    Write(new string('}', interpolated.BraceCount));
+                    break;
+            }
+        }
+        Write(interpolated.EndToken);
+    }
+
     private void WriteLiteralExpression(LiteralExpression lit)
     {
+        // Literals parsed from source are written exactly as they were
+        if (lit.Text != null)
+        {
+            Write(lit.Text);
+            return;
+        }
+
         switch (lit.Kind)
         {
             case LiteralKind.Null:
@@ -1436,10 +1482,8 @@ public class CSharpWriter(string indentString = "    ")
                 Write((bool)lit.Value ? "true" : "false");
                 break;
             case LiteralKind.Integer:
-                Write(lit.Value.ToString());
-                break;
             case LiteralKind.Real:
-                Write(lit.Value.ToString());
+                Write(FormatNumber(lit.Value));
                 break;
             case LiteralKind.Character:
                 Write($"'{EscapeChar((char)lit.Value)}'");
@@ -1447,7 +1491,30 @@ public class CSharpWriter(string indentString = "    ")
             case LiteralKind.String:
                 Write($"\"{EscapeString((string)lit.Value)}\"");
                 break;
+            case LiteralKind.Utf8String:
+                var utf8 = lit.Value is byte[] bytes ? Encoding.UTF8.GetString(bytes) : (string)lit.Value;
+                Write($"\"{EscapeString(utf8)}\"u8");
+                break;
         }
+    }
+
+    /// <summary>
+    /// A numeric literal whose C# type matches the value's type.
+    /// </summary>
+    private static string FormatNumber(object value)
+    {
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        return value switch
+        {
+            uint u => u.ToString(invariant) + "U",
+            long l => l.ToString(invariant) + "L",
+            ulong ul => ul.ToString(invariant) + "UL",
+            float f => f.ToString("R", invariant) + "F",
+            double d => d.ToString("R", invariant) + "D",
+            decimal m => m.ToString(invariant) + "M",
+            IFormattable formattable => formattable.ToString(null, invariant),
+            _ => value.ToString(),
+        };
     }
 
     private string EscapeChar(char c)
@@ -1493,7 +1560,7 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteNameExpression(NameExpression name)
     {
-        Write(string.Join(".", name.Parts));
+        Write(string.Join(".", name.Parts.Select(Id)));
         if (name.TypeArguments != null && name.TypeArguments.Count > 0)
         {
             Write("<");
@@ -1602,7 +1669,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         if (!string.IsNullOrEmpty(arg.Name))
         {
-            Write($"{arg.Name}: ");
+            Write($"{Id(arg.Name)}: ");
         }
 
         switch (arg.RefKind)
@@ -1628,7 +1695,7 @@ public class CSharpWriter(string indentString = "    ")
             WriteExpression(memberAccess.Target);
             Write(memberAccess.IsConditional ? "?." : ".");
         }
-        Write(memberAccess.MemberName);
+        Write(Id(memberAccess.MemberName));
     }
 
     private void WriteElementAccessExpression(ElementAccessExpression elementAccess)
@@ -1663,7 +1730,7 @@ public class CSharpWriter(string indentString = "    ")
 
     private void WriteMemberInitializer(MemberInitializer member)
     {
-        Write($"{member.Name} = ");
+        Write($"{Id(member.Name)} = ");
         WriteExpression(member.Value);
     }
 
@@ -1722,7 +1789,7 @@ public class CSharpWriter(string indentString = "    ")
         }
         else if (lambda.Parameters.Count == 1 && lambda.Parameters[0].Type == null)
         {
-            Write(lambda.Parameters[0].Name);
+            Write(Id(lambda.Parameters[0].Name));
         }
         else
         {
@@ -1769,7 +1836,7 @@ public class CSharpWriter(string indentString = "    ")
             WriteTypeReference(fromClause.Type);
             Write(" ");
         }
-        Write($"{fromClause.Identifier} in ");
+        Write($"{Id(fromClause.Identifier)} in ");
         WriteExpression(fromClause.Expression);
     }
 
@@ -1784,7 +1851,7 @@ public class CSharpWriter(string indentString = "    ")
                 WriteJoinClause(join);
                 break;
             case LetClause let:
-                Write($"let {let.Identifier} = ");
+                Write($"let {Id(let.Identifier)} = ");
                 WriteExpression(let.Expression);
                 break;
             case WhereClause where:
@@ -1806,7 +1873,7 @@ public class CSharpWriter(string indentString = "    ")
             WriteTypeReference(join.Type);
             Write(" ");
         }
-        Write($"{join.Identifier} in ");
+        Write($"{Id(join.Identifier)} in ");
         WriteExpression(join.InExpression);
         Write(" on ");
         WriteExpression(join.LeftExpression);
@@ -1815,7 +1882,7 @@ public class CSharpWriter(string indentString = "    ")
 
         if (!string.IsNullOrEmpty(join.IntoIdentifier))
         {
-            Write($" into {join.IntoIdentifier}");
+            Write($" into {Id(join.IntoIdentifier)}");
         }
     }
 
@@ -1890,7 +1957,7 @@ public class CSharpWriter(string indentString = "    ")
     {
         if (!string.IsNullOrEmpty(element.Name))
         {
-            Write($"{element.Name}: ");
+            Write($"{Id(element.Name)}: ");
         }
         WriteExpression(element.Expression);
     }
@@ -1930,7 +1997,7 @@ public class CSharpWriter(string indentString = "    ")
                 WriteExpression(constant.Expression);
                 break;
             case VarPattern varPattern:
-                Write($"var {varPattern.Identifier}");
+                Write($"var {Id(varPattern.Identifier)}");
                 break;
             case DiscardPattern:
                 Write("_");
@@ -1939,7 +2006,7 @@ public class CSharpWriter(string indentString = "    ")
                 WriteTypeReference(declaration.Type);
                 if (!string.IsNullOrEmpty(declaration.Identifier))
                 {
-                    Write($" {declaration.Identifier}");
+                    Write($" {Id(declaration.Identifier)}");
                 }
                 break;
             case RecursivePattern recursive:
@@ -1986,13 +2053,13 @@ public class CSharpWriter(string indentString = "    ")
 
         if (!string.IsNullOrEmpty(pattern.Designation))
         {
-            Write($" {pattern.Designation}");
+            Write($" {Id(pattern.Designation)}");
         }
     }
 
     private void WritePropertySubPattern(PropertySubPattern subPattern)
     {
-        Write($"{subPattern.PropertyName}: ");
+        Write($"{Id(subPattern.PropertyName)}: ");
         WritePattern(subPattern.Pattern);
     }
 

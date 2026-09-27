@@ -92,14 +92,14 @@ public static class RoslynOracle
             var e = expectedChildren[i];
             var a = actualChildren[i];
 
-            if (e.IsNode && a.IsNode && e.Kind() == a.Kind())
+            if (e.IsNode && a.IsNode && e.IsKind(a.Kind()))
             {
                 if (!SyntaxFactory.AreEquivalent(e.AsNode(), a.AsNode(), topLevel: false))
                 {
                     return FirstDifference(e.AsNode(), a.AsNode());
                 }
             }
-            else if (e.Kind() != a.Kind() || (e.IsToken && e.AsToken().ValueText != a.AsToken().ValueText))
+            else if (!e.IsKind(a.Kind()) || (e.IsToken && e.AsToken().ValueText != a.AsToken().ValueText))
             {
                 return Mismatch(e, a);
             }

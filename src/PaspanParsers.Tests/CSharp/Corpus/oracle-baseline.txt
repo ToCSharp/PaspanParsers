@@ -1,1 +1,2 @@
 src/PaspanParsers.Tests/CSharp/Corpus/00-Basics.cs
+src/PaspanParsers.Tests/CSharp/Corpus/17-Lexical.cs

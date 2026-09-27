@@ -8,9 +8,8 @@ namespace PaspanParsers.CSharp;
 public partial class CSharpParser
 {
     // Punctuation
-    private static Parser<Unit> COMMA, DOT, SEMICOLON, COLON, LPAREN, RPAREN, LBRACE, RBRACE,
-        LBRACKET, RBRACKET, LT, GT, EQ, QUESTION, AT;
-    private static Parser<string> ARROW;
+    private static Parser<string> COMMA, DOT, SEMICOLON, COLON, LPAREN, RPAREN, LBRACE, RBRACE,
+        LBRACKET, RBRACKET, LT, GT, EQ, QUESTION, ARROW;
 
     // Keywords
     private static Parser<string> NAMESPACE, USING, CLASS, STRUCT, INTERFACE, ENUM, RECORD, DELEGATE;
@@ -43,49 +42,38 @@ public partial class CSharpParser
     private static Parser<string> FROM, SELECT, WHERE_KW, LET, JOIN, ON, EQUALS, INTO, ORDERBY,
         ASCENDING, DESCENDING, GROUP, BY;
 
-    // Keywords set - includes LINQ contextual keywords to prevent them being parsed as identifiers
-    private static readonly HashSet<string> keywords =
-    [
-        "namespace", "using", "class", "struct", "interface", "enum", "record", "delegate",
-        "public", "private", "protected", "internal", "static", "readonly", "const",
-        "virtual", "override", "abstract", "sealed", "partial", "async", "extern", "unsafe",
-        "volatile", "new", "required", "ref", "out", "in", "params",
-        "if", "else", "while", "do", "for", "foreach", "switch", "case", "default",
-        "break", "continue", "return", "throw", "try", "catch", "finally", "lock",
-        "yield", "await", "var", "void", "get", "set", "init", "add", "remove",
-        "where", "this", "base", "operator", "implicit", "explicit", "as", "is",
-        "typeof", "sizeof", "nameof", "when", "true", "false", "null",
-        "object", "string", "bool", "byte", "sbyte", "short", "ushort",
-        "int", "uint", "long", "ulong", "float", "double", "decimal", "char", "dynamic",
-        // LINQ contextual keywords - treated as keywords to ensure proper parsing
-        "from", "select", "let", "join", "on", "equals", "into",
-        "orderby", "ascending", "descending", "group", "by"
-    ];
-
     // Literals
-    private static Parser<Expression> integerLiteral, decimalLiteral, stringLiteral, charLiteral,
+    private static Parser<Expression> numericLiteral, stringLiteral, charLiteral, interpolatedString,
         boolLiteral, nullLiteral, literal;
 
-    private static Parser<string> Keyword(string text) => Terms.Keyword(text, caseInsensitive: false);
+    /// <summary>
+    /// A reserved or contextual keyword, preceded by trivia.
+    /// </summary>
+    private static Parser<string> Keyword(string text) => SkipWhiteSpace(new KeywordToken(text));
+
+    /// <summary>
+    /// An operator or punctuator, preceded by trivia, that is not the start of a longer one.
+    /// </summary>
+    private static Parser<string> Punct(string text) => SkipWhiteSpace(new PunctuatorToken(text));
 
     private static void InitializeLexical()
     {
-        COMMA = Terms.Char(',');
-        DOT = Terms.Char('.');
-        SEMICOLON = Terms.Char(';');
-        COLON = Terms.Char(':');
-        LPAREN = Terms.Char('(');
-        RPAREN = Terms.Char(')');
-        LBRACE = Terms.Char('{');
-        RBRACE = Terms.Char('}');
-        LBRACKET = Terms.Char('[');
-        RBRACKET = Terms.Char(']');
-        LT = Terms.Char('<');
-        GT = Terms.Char('>');
-        EQ = Terms.Char('=');
-        QUESTION = Terms.Char('?');
-        AT = Terms.Char('@');
-        ARROW = Terms.Text("=>");
+        COMMA = Punct(",");
+        DOT = Punct(".");
+        SEMICOLON = Punct(";");
+        COLON = Punct(":");
+        LPAREN = Punct("(");
+        RPAREN = Punct(")");
+        LBRACE = Punct("{");
+        RBRACE = Punct("}");
+        LBRACKET = Punct("[");
+        RBRACKET = Punct("]");
+        LT = Punct("<");
+        // '>' closing a type argument list may be followed by another '>' or by '=' (List<List<int>>)
+        GT = SkipWhiteSpace(new PunctuatorToken(">", maximalMunch: false));
+        EQ = Punct("=");
+        QUESTION = Punct("?");
+        ARROW = Punct("=>");
 
         NAMESPACE = Keyword("namespace");
         USING = Keyword("using");
@@ -207,23 +195,16 @@ public partial class CSharpParser
         GROUP = Keyword("group");
         BY = Keyword("by");
 
-        integerLiteral = Terms.Integer()
-            .Then<Expression>(i => new LiteralExpression((int)i, LiteralKind.Integer));
+        numericLiteral = SkipWhiteSpace(new NumericLiteralToken());
+        stringLiteral = SkipWhiteSpace(new StringLiteralToken());
+        charLiteral = SkipWhiteSpace(new CharacterLiteralToken());
+        interpolatedString = SkipWhiteSpace(new InterpolatedStringToken(expression));
 
-        decimalLiteral = Terms.Decimal()
-            .Then<Expression>(d => new LiteralExpression((decimal)d, LiteralKind.Real));
+        boolLiteral = TRUE.Then<Expression>(_ => new LiteralExpression(true, LiteralKind.Boolean, "true"))
+            .Or(FALSE.Then<Expression>(_ => new LiteralExpression(false, LiteralKind.Boolean, "false")));
 
-        stringLiteral = Terms.String(StringLiteralQuotes.Double)
-            .Then<Expression>(s => new LiteralExpression(s.ToString(), LiteralKind.String));
+        nullLiteral = NULL.Then<Expression>(_ => new LiteralExpression(null, LiteralKind.Null, "null"));
 
-        charLiteral = Between(Terms.Char('\''), Literals.NoneOf("'"), Terms.Char('\''))
-            .Then<Expression>(c => new LiteralExpression(c.ToString()[0], LiteralKind.Character));
-
-        boolLiteral = TRUE.Then<Expression>(new LiteralExpression(true, LiteralKind.Boolean))
-            .Or(FALSE.Then<Expression>(new LiteralExpression(false, LiteralKind.Boolean)));
-
-        nullLiteral = NULL.Then<Expression>(new LiteralExpression(null, LiteralKind.Null));
-
-        literal = decimalLiteral.Or(integerLiteral).Or(stringLiteral).Or(charLiteral).Or(boolLiteral).Or(nullLiteral);
+        literal = numericLiteral.Or(stringLiteral).Or(interpolatedString).Or(charLiteral).Or(boolLiteral).Or(nullLiteral);
     }
 }

@@ -12,14 +12,7 @@ public partial class CSharpParser
     /// </summary>
     private static Parser<T> WithTrivia<T>(Parser<T> parser)
     {
-        return new EndOfInput<T>(parser).WithComments(comments =>
-        {
-            comments
-                .WithWhiteSpaceOrNewLine()
-                .WithSingleLine("//")
-                .WithMultiLine("/*", "*/")
-                ;
-        });
+        return new EndOfInput<T>(parser).WithWhiteSpaceParser(new TriviaParser());
     }
 
     /// <summary>

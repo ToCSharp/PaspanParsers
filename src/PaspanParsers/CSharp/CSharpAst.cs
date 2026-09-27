@@ -699,10 +699,16 @@ public abstract class Expression : ICSharpNode
 {
 }
 
-public sealed class LiteralExpression(object value, LiteralKind kind) : Expression
+/// <summary>
+/// A literal. <see cref="Value"/> has the type C# gives the literal (int, uint, long, ulong,
+/// float, double, decimal, char, string, or byte[] for UTF-8 strings); <see cref="Text"/> is
+/// the literal as written in the source, when it came from source.
+/// </summary>
+public sealed class LiteralExpression(object value, LiteralKind kind, string text = null) : Expression
 {
     public object Value { get; } = value;
     public LiteralKind Kind { get; } = kind;
+    public string Text { get; } = text;
 }
 
 public enum LiteralKind
@@ -712,7 +718,49 @@ public enum LiteralKind
     Integer,
     Real,
     Character,
-    String
+    String,
+    Utf8String
+}
+
+/// <summary>
+/// An interpolated string: $"...", $@"...", or a raw $"""...""" string.
+/// <see cref="StartToken"/> and <see cref="EndToken"/> are the delimiters as written
+/// (for multi-line raw strings including the new lines next to the content);
+/// <see cref="BraceCount"/> is the number of braces that open an interpolation.
+/// </summary>
+public sealed class InterpolatedStringExpression(
+    string startToken,
+    IReadOnlyList<InterpolatedStringContent> contents,
+    string endToken,
+    int braceCount = 1) : Expression
+{
+    public string StartToken { get; } = startToken;
+    public IReadOnlyList<InterpolatedStringContent> Contents { get; } = contents;
+    public string EndToken { get; } = endToken;
+    public int BraceCount { get; } = braceCount;
+}
+
+public abstract class InterpolatedStringContent : ICSharpNode
+{
+}
+
+/// <summary>
+/// Literal text of an interpolated string: <see cref="Text"/> as written, <see cref="Value"/> decoded.
+/// </summary>
+public sealed class InterpolatedStringText(string text, string value) : InterpolatedStringContent
+{
+    public string Text { get; } = text;
+    public string Value { get; } = value;
+}
+
+/// <summary>
+/// An interpolation hole: {expression,alignment:format}.
+/// </summary>
+public sealed class Interpolation(Expression expression, Expression alignment = null, string format = null) : InterpolatedStringContent
+{
+    public Expression Expression { get; } = expression;
+    public Expression Alignment { get; } = alignment;
+    public string Format { get; } = format;
 }
 
 public sealed class NameExpression(IReadOnlyList<string> parts, IReadOnlyList<TypeReference> typeArguments = null) : Expression

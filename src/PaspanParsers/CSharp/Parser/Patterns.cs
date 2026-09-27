@@ -16,7 +16,7 @@ public partial class CSharpParser
             });
 
         // Discard pattern: _
-        var discardPattern = Terms.Char('_')
+        var discardPattern = identifier.When(id => id == "_")
             .Then<Pattern>(_ => new DiscardPattern());
 
         // Constant pattern: literal or constant expression
@@ -41,10 +41,10 @@ public partial class CSharpParser
 
         // Relational pattern: < expr, <= expr, > expr, >= expr
         var relationalPattern =
-            Terms.Text("<=").SkipAnd(primary).Then<Pattern>(expr => new RelationalPattern(RelationalOperator.LessThanOrEqual, expr))
-            .Or(Terms.Text(">=").SkipAnd(primary).Then<Pattern>(expr => new RelationalPattern(RelationalOperator.GreaterThanOrEqual, expr)))
-            .Or(Terms.Text("<").SkipAnd(primary).Then<Pattern>(expr => new RelationalPattern(RelationalOperator.LessThan, expr)))
-            .Or(Terms.Text(">").SkipAnd(primary).Then<Pattern>(expr => new RelationalPattern(RelationalOperator.GreaterThan, expr)));
+            Punct("<=").SkipAnd(primary).Then<Pattern>(expr => new RelationalPattern(RelationalOperator.LessThanOrEqual, expr))
+            .Or(Punct(">=").SkipAnd(primary).Then<Pattern>(expr => new RelationalPattern(RelationalOperator.GreaterThanOrEqual, expr)))
+            .Or(Punct("<").SkipAnd(primary).Then<Pattern>(expr => new RelationalPattern(RelationalOperator.LessThan, expr)))
+            .Or(Punct(">").SkipAnd(primary).Then<Pattern>(expr => new RelationalPattern(RelationalOperator.GreaterThan, expr)));
 
         // Property subpattern: PropertyName: pattern
         var propertySubPattern = anyIdentifier.AndSkip(COLON).And(pattern)

@@ -75,4 +75,19 @@ public class CSharpParserEntryPointTests
     {
         Assert.AreEqual(OracleStatus.Invalid, RoslynOracle.Check("class { ").Status);
     }
+
+    [TestMethod]
+    [DataRow("1_000", "1000")]
+    [DataRow("0xFF", "255")]
+    [DataRow("\"a\\tb\"", "@\"a\tb\"")]
+    public void RoslynEquivalence_ComparesTokenText(string written, string other)
+    {
+        // The oracle relies on Roslyn treating differently written literals as different
+        // (identifiers, in contrast, compare by value: @x and x are the same name)
+        static Microsoft.CodeAnalysis.SyntaxNode Parse(string value) =>
+            Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText($"class C {{ object x = {value}; }}").GetRoot();
+
+        Assert.IsTrue(Microsoft.CodeAnalysis.CSharp.SyntaxFactory.AreEquivalent(Parse(written), Parse(written), topLevel: false));
+        Assert.IsFalse(Microsoft.CodeAnalysis.CSharp.SyntaxFactory.AreEquivalent(Parse(written), Parse(other), topLevel: false));
+    }
 }
