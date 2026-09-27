@@ -186,14 +186,37 @@ var hex = Terms.Pattern(c => Character.IsHexDigit(c)).AsHex(); // Parser<ulong>
 **Paspan** has convenient overloads for skipping characters and strings:
 
 ```csharp
-public static Parser<T1> Skip<T1>(this Parser<T1> parser, char ch) => ...;
-public static Parser<T1> Skip<T1>(this Parser<T1> parser, string str) => ...;
-
-// Usage:
-var parser = Terms.Identifier().Skip('=').And(Terms.Integer());
+public static Parser<T1> Skip<T1>(this Parser<T1> parser, char ch)
+    => new SequenceAndSkip<T1, Unit>(parser, Literals.Char(ch));
+public static Parser<T1> Skip<T1>(this Parser<T1> parser, string str)
+    => new SequenceAndSkip<T1, string>(parser, Literals.Text(str));
 ```
 
-**Parlot** requires explicit parser creation for skipping:
+> ⚠️ `Skip(char)` and `Skip(string)` are built on **`Literals`**, so they do **not** skip white spaces
+> before the character or text. They are **not** equivalent to Parlot's `AndSkip(Terms.Char(...))`:
+>
+> ```csharp
+> var tight = Terms.Identifier().Skip('=').And(Terms.Integer());
+> tight.Parse("x=5");   // (x, 5)
+> tight.Parse("x = 5"); // fails: ' ' is found instead of '='
+> ```
+>
+> When white spaces are allowed before the separator, pass a `Terms` parser instead:
+>
+> ```csharp
+> var spaced = Terms.Identifier().Skip(Terms.Char('=')).And(Terms.Integer());
+> // or, as in Parlot:
+> var spaced2 = Terms.Identifier().AndSkip(Terms.Char('=')).And(Terms.Integer());
+> spaced.Parse("x = 5"); // (x, 5)
+> ```
+>
+> The white spaces *after* the separator are still accepted in both cases, since the next parser
+> (`Terms.Integer()`) skips them itself.
+
+`Skip(parser)` and `AndSkip(parser)` are aliases in Paspan and accept any parser, so
+`AndSkip(Terms.Char('='))` code ported from Parlot keeps its behavior.
+
+**Parlot** has no `char`/`string` shortcuts and always takes a parser:
 
 ```csharp
 var parser = Terms.Identifier().AndSkip(Terms.Char('=')).And(Terms.Integer());
@@ -264,9 +287,14 @@ var parser = Terms.Text("name").And("value", Terms.Integer());
 **Paspan** adds additional convenience methods:
 
 ```csharp
-// Strings and characters as parsers
-public static Parser<Unit> Skip(this char ch) => Literals.Char(ch);
+// Strings and characters as parsers (literals: no white space skipping)
+public static Parser<Unit> ToLiteral(this char ch) => Literals.Char(ch);
+public static Parser<string> ToLiteral(this string str) => Literals.Text(str);
 public static Parser<string> Skip(this string str) => Literals.Text(str);
+
+// Prefix shortcuts (skip white spaces before the char or text, then return the parser's value)
+public static Parser<T> And<T>(this char ch, Parser<T> parser) => Terms.Char(ch).SkipAnd(parser);
+public static Parser<T> And<T>(this string str, Parser<T> parser) => Terms.Text(str).SkipAnd(parser);
 
 // String combinations
 public static Parser<string> Or(this string str, string str2) => ...;
@@ -571,8 +599,14 @@ var parser = Terms.Identifier()
 
 **Paspan:**
 ```csharp
+// Same behavior as the Parlot version: white spaces are allowed before '='
 var parser = Terms.Identifier()
-    .Skip('=')  // Simplified version
+    .Skip(Terms.Char('='))  // or .AndSkip(Terms.Char('='))
+    .And(Terms.Integer());
+
+// Shorter, but '=' must immediately follow the identifier ("x=5", not "x = 5")
+var tightParser = Terms.Identifier()
+    .Skip('=')
     .And(Terms.Integer());
 ```
 
@@ -626,7 +660,7 @@ Main differences between Paspan and Parlot:
 5. **Region** instead of **TextSpan** for zero-copy
 6. **UTF-8 optimizations**: byte-level search
 7. **Removed Compile()**, Source Generators planned
-8. **Extended API**: `Skip(char)`, `Skip(string)`, `Labelled`, `AsDictionary()`
+8. **Extended API**: `Skip(char)`, `Skip(string)` (literal, no white space skipping), `Labelled`, `AsDictionary()`
 9. **ExitParser and ISeekable**: combinators don't use `context.ExitParser(this)`, `ISeekable` only for literals
 
 Paspan is a specialized version of Parlot for high-performance UTF-8 and binary data parsing with minimal allocations.

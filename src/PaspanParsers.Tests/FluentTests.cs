@@ -124,30 +124,93 @@ public class FluentTests
         Assert.AreEqual(0, result2);
     }
 
-    //[Fact]
-    //public void ShouldReturnElseFromFunction()
-    //{
-    //    var parser = Literals.Integer().Then<decimal>().Else(context => -1);
+    [TestMethod]
+    public void ShouldReturnElseFromFunction()
+    {
+        var parser = Literals.Integer().Then<decimal>().Else(context => -1);
 
-    //    Assert.IsTrue(parser.TryParse("123", out var result1));
-    //    Assert.AreEqual(123, result1);
+        Assert.IsTrue(parser.TryParse("123", out var result1));
+        Assert.AreEqual(123, result1);
 
-    //    Assert.IsTrue(parser.TryParse(" 123", out var result2));
-    //    Assert.AreEqual(-1, result2);
-    //}
+        Assert.IsTrue(parser.TryParse(" 123", out var result2));
+        Assert.AreEqual(-1, result2);
+    }
 
-    //[Fact]
-    //public void ElseFunctionShouldReceiveContext()
-    //{
-    //    var parser = Literals.Integer().Then<int>().Else(context => context.Scanner.Cursor.Position.Offset);
+    private sealed class DefaultValueContext(int defaultValue) : ParseContext
+    {
+        public int DefaultValue { get; } = defaultValue;
+    }
 
-    //    Assert.IsTrue(parser.TryParse("123", out var result1));
-    //    Assert.AreEqual(123, result1);
+    [TestMethod]
+    public void ElseFunctionShouldReceiveContext()
+    {
+        var parser = Literals.Integer().Then<int>().Else(context => ((DefaultValueContext)context).DefaultValue);
 
-    //    // When parser fails, it should return the current position (which is 0 before whitespace is skipped)
-    //    Assert.IsTrue(parser.TryParse(" 123", out var result2));
-    //    Assert.AreEqual(0, result2);
-    //}
+        var reader = new SpanReader("123");
+        Assert.IsTrue(parser.TryParse(ref reader, new DefaultValueContext(42), out var result1, out _));
+        Assert.AreEqual(123, result1);
+
+        reader = new SpanReader(" 123");
+        Assert.IsTrue(parser.TryParse(ref reader, new DefaultValueContext(42), out var result2, out _));
+        Assert.AreEqual(42, result2);
+        Assert.AreEqual(0, reader.GetCurrentPosition());
+    }
+
+    [TestMethod]
+    public void IfShouldSelectThenOrElseBranch()
+    {
+        var useNumbers = true;
+        var parser = If(() => useNumbers, Terms.Integer().Then(x => $"number {x}"), Terms.Identifier().Then(x => $"identifier {x}"));
+
+        Assert.AreEqual("number 12", parser.Parse("12"));
+        Assert.IsNull(parser.Parse("abc"));
+
+        useNumbers = false;
+        Assert.AreEqual("identifier abc", parser.Parse("abc"));
+        Assert.IsNull(parser.Parse("12"));
+    }
+
+    [TestMethod]
+    public void IfShouldNotFallBackToTheOtherBranch()
+    {
+        var elseInvoked = false;
+        var parser = If(_ => true, Literals.Char('a').AsChar(), Literals.Char('b').AsChar().Then(x => { elseInvoked = true; return x; }));
+
+        Assert.IsFalse(parser.TryParse("b", out _));
+        Assert.IsFalse(elseInvoked);
+    }
+
+    [TestMethod]
+    public void IfShouldResetPositionWhenSelectedBranchFails()
+    {
+        var parser = If(() => false, Terms.Integer(), Terms.Text("ab").And(Terms.Text("c")).Then(_ => 1L)).Or(Terms.Text("ab").Then(_ => 2L));
+
+        Assert.AreEqual(2, parser.Parse("abd"));
+    }
+
+    [TestMethod]
+    public void IfShouldUseConcreteContext()
+    {
+        var parser = If<DefaultValueContext, long>(c => c.DefaultValue > 0, Terms.Integer(), Terms.Integer().Then(x => -x));
+
+        var reader = new SpanReader("5");
+        Assert.IsTrue(parser.TryParse(ref reader, new DefaultValueContext(1), out var positive, out _));
+        Assert.AreEqual(5, positive);
+
+        reader = new SpanReader("5");
+        Assert.IsTrue(parser.TryParse(ref reader, new DefaultValueContext(0), out var negative, out _));
+        Assert.AreEqual(-5, negative);
+    }
+
+    [TestMethod]
+    public void IfWithoutElseShouldFailWhenConditionIsFalse()
+    {
+        var parser = If(() => false, Terms.Integer());
+
+        var reader = new SpanReader("5");
+        Assert.IsFalse(parser.TryParse(ref reader, out _));
+        Assert.AreEqual(0, reader.GetCurrentPosition());
+    }
 
     //[Fact]
     //public void ElseFunctionWithNullableValue()
@@ -536,28 +599,93 @@ public class FluentTests
         Assert.IsFalse(parser.TryParse("123", out _));
     }
 
-    //[Fact]
-    //public void SelectShouldHonorConcreteParseContext()
-    //{
-    //    var parser = Select<CustomParseContext, string>(context => context.PreferYes ? Literals.Text("yes") : Literals.Text("no"));
+    [TestMethod]
+    public void SelectShouldHonorConcreteParseContext()
+    {
+        var parser = Select<CustomParseContext, string>(context => context.PreferYes ? Literals.Text("yes") : Literals.Text("no"));
 
-    //    var yesContext = new CustomParseContext(new Scanner("yes")) { PreferYes = true };
-    //    Assert.IsTrue(parser.TryParse(yesContext, out var yes, out _));
-    //    Assert.AreEqual("yes", yes);
+        var reader = new SpanReader("yes");
+        Assert.IsTrue(parser.TryParse(ref reader, new CustomParseContext { PreferYes = true }, out var yes, out _));
+        Assert.AreEqual("yes", yes);
 
-    //    var noContext = new CustomParseContext(new Scanner("no")) { PreferYes = false };
-    //    Assert.IsTrue(parser.TryParse(noContext, out var no, out _));
-    //    Assert.AreEqual("no", no);
-    //}
+        reader = new SpanReader("no");
+        Assert.IsTrue(parser.TryParse(ref reader, new CustomParseContext { PreferYes = false }, out var no, out _));
+        Assert.AreEqual("no", no);
+    }
 
-    //private sealed class CustomParseContext : ParseContext
-    //{
-    //    public CustomParseContext(Scanner scanner) : base(scanner)
-    //    {
-    //    }
+    private sealed class CustomParseContext : ParseContext
+    {
+        public bool PreferYes { get; set; }
 
-    //    public bool PreferYes { get; set; }
-    //}
+        public int Mode { get; set; }
+    }
+
+    [TestMethod]
+    public void SelectShouldPickParserByIndex()
+    {
+        var index = 0;
+        var parser = Select(() => index, Terms.Integer().Then(x => $"int {x}"), Terms.Identifier().Then(x => $"id {x}"));
+
+        Assert.AreEqual("int 12", parser.Parse(" 12"));
+        Assert.IsNull(parser.Parse("abc"));
+
+        index = 1;
+        Assert.AreEqual("id abc", parser.Parse(" abc"));
+        Assert.IsNull(parser.Parse("12"));
+    }
+
+    [TestMethod]
+    public void SelectShouldPickParserByIndexFromContext()
+    {
+        var parser = Select<CustomParseContext, string>(context => context.Mode, Literals.Text("a"), Literals.Text("b"));
+
+        var reader = new SpanReader("b");
+        Assert.IsTrue(parser.TryParse(ref reader, new CustomParseContext { Mode = 1 }, out var b, out _));
+        Assert.AreEqual("b", b);
+
+        var generic = Select<string>(context => context.UseNewLines ? 1 : 0, Terms.Text("a"), Terms.Text("b"));
+        reader = new SpanReader("b");
+        Assert.IsTrue(generic.TryParse(ref reader, new ParseContext(useNewLines: true), out b, out _));
+        Assert.AreEqual("b", b);
+    }
+
+    [TestMethod]
+    [DataRow(-1)]
+    [DataRow(2)]
+    public void SelectShouldFailWithoutConsumingWhenIndexIsOutOfRange(int index)
+    {
+        var parser = Select(() => index, Terms.Text("a"), Terms.Text("b"));
+
+        var reader = new SpanReader("a");
+        Assert.IsFalse(parser.TryParse(ref reader, out _));
+        Assert.AreEqual(0, reader.GetCurrentPosition());
+    }
+
+    [TestMethod]
+    public void SelectShouldResetPositionWhenSelectedParserFails()
+    {
+        var parser = Select(() => 0, Terms.Text("ab").And(Terms.Text("c")).Then(_ => 1L)).Or(Terms.Text("ab").Then(_ => 2L));
+
+        Assert.AreEqual(2, parser.Parse("abd"));
+    }
+
+    [TestMethod]
+    public void SelectShouldValidateParsers()
+    {
+        Assert.ThrowsExactly<ArgumentNullException>(() => Select<long>(() => 0, null!));
+        Assert.ThrowsExactly<ArgumentException>(() => Select(() => 0, Terms.Integer(), null!));
+    }
+
+    [TestMethod]
+    public void SelectShouldNotBeAffectedByLaterChangesToTheParsersArray()
+    {
+        var parsers = new[] { Terms.Text("a"), Terms.Text("b") };
+        var parser = Select(() => 0, parsers);
+
+        parsers[0] = Terms.Text("x");
+
+        Assert.AreEqual("a", parser.Parse("a"));
+    }
 
     [TestMethod]
     [DataRow("a", "a")]

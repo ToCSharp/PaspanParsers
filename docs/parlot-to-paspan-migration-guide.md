@@ -237,6 +237,22 @@ var parser = Literals.Pattern(b => b >= 97 && b <= 122);  // byte ASCII codes
 var parser = Literals.Pattern(b => Character.IsLetter(b));  // Use Character class
 ```
 
+### Mistake 4: Replacing `AndSkip(Terms.Char(...))` with `.Skip(char)`
+
+`Skip(char)` and `Skip(string)` use `Literals`, so they don't skip the white spaces before the separator.
+
+```csharp
+// Parlot:
+var parser = Terms.Identifier().AndSkip(Terms.Char('=')).And(Terms.Integer());
+
+// ❌ Wrong: "x = 5" no longer parses, only "x=5"
+var parser = Terms.Identifier().Skip('=').And(Terms.Integer());
+
+// ✅ Correct: keep a Terms parser (AndSkip is also available in Paspan)
+var parser = Terms.Identifier().AndSkip(Terms.Char('=')).And(Terms.Integer());
+var parser = Terms.Identifier().Skip(Terms.Char('=')).And(Terms.Integer());
+```
+
 ---
 
 ## Test Migration Checklist
@@ -250,7 +266,8 @@ When porting a test from Parlot to Paspan:
 - [ ] Remove `.ToString()` on `Region` parser results
 - [ ] Check `And()` sequences - ensure all elements are properly converted
 - [ ] Check `OneOf` - ensure all branches return same type
-- [ ] Check case-insensitive parsing - now supported for ASCII letters
+- [ ] Check case-insensitive parsing - supported for all Unicode letters
+- [ ] Don't turn `AndSkip(Terms.Char('x'))` into `.Skip('x')` - it stops skipping white spaces before `'x'`
 
 ---
 
@@ -276,9 +293,8 @@ Assert.Equal("NOT", parser.Parse("NOT"));   // ✅
 
 **Implementation:**
 - Supports `StringComparison.OrdinalIgnoreCase`
-- Works only for ASCII letters (A-Z, a-z)
+- Works for all Unicode letters (`Terms.Text("привет", caseInsensitive: true)` matches `"ПРИВЕТ"`), with a fast path for ASCII
 - Returns actually read text preserving casing from input data
-- Optimized for performance with `AggressiveInlining`
 
 ### 2. Custom Number Separators ✅ **IMPLEMENTED**
 

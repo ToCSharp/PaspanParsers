@@ -11,7 +11,8 @@ public sealed class OneOrMany<T>(Parser<T> parser) : Parser<List<T>>
         var parsed = new ParseResult<T>();
         var start = reader.CaptureState();
 
-        if (!_parser.Parse(ref reader, context, ref parsed))
+        // An element that consumes nothing doesn't count as the required first match (same as Parlot)
+        if (!_parser.Parse(ref reader, context, ref parsed) || reader.GetCurrentPosition() == start)
         {
             reader.RollBackState(start);
             return false;
@@ -21,12 +22,9 @@ public sealed class OneOrMany<T>(Parser<T> parser) : Parser<List<T>>
         var resultStart = parsed.Start;
         var resultEnd = parsed.End;
 
-        // A parser that succeeds without consuming anything would loop forever
-        var before = start;
-
-        while (reader.GetCurrentPosition() != before)
+        while (true)
         {
-            before = reader.CaptureState();
+            var before = reader.CaptureState();
 
             if (!_parser.Parse(ref reader, context, ref parsed))
             {
@@ -34,6 +32,7 @@ public sealed class OneOrMany<T>(Parser<T> parser) : Parser<List<T>>
                 break;
             }
 
+            // A parser that succeeds without consuming anything would loop forever
             if (reader.GetCurrentPosition() == before)
             {
                 break;

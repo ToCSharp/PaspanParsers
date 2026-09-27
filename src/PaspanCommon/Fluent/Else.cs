@@ -7,7 +7,7 @@ public sealed class Else<T> : Parser<T>
 {
     private readonly Parser<T> _parser;
     private readonly T _value;
-    private readonly Func<T> _func;
+    private readonly Func<ParseContext, T> _func;
 
     public Else(Parser<T> parser, T value)
     {
@@ -16,6 +16,13 @@ public sealed class Else<T> : Parser<T>
     }
 
     public Else(Parser<T> parser, Func<T> func)
+    {
+        _parser = parser ?? throw new ArgumentNullException(nameof(parser));
+        ArgumentNullException.ThrowIfNull(func);
+        _func = _ => func();
+    }
+
+    public Else(Parser<T> parser, Func<ParseContext, T> func)
     {
         _parser = parser ?? throw new ArgumentNullException(nameof(parser));
         _func = func ?? throw new ArgumentNullException(nameof(func));
@@ -29,7 +36,7 @@ public sealed class Else<T> : Parser<T>
         {
             if (_func != null)
             {
-                result.Set(result.Start, result.End, _func());
+                result.Set(result.Start, result.End, _func(context));
             }
             else
             {

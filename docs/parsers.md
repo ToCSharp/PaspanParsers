@@ -617,6 +617,80 @@ Result:
 Point { x: 1, y: 2}
 ```
 
+### Else
+
+Returns a default value if the previous parser fails. The value can be computed by a function, which receives the current `ParseContext`.
+
+```c#
+Parser<T> Else(T value)
+Parser<T> Else(Func<ParseContext, T> func)
+```
+
+Usage:
+
+```c#
+var parser = Terms.Integer().Else(0);
+var fromContext = Terms.Integer().Else(context => ((MyContext)context).DefaultValue);
+
+parser.Parse("abc");
+```
+
+Result:
+
+```
+0
+```
+
+### If
+
+Evaluates a condition once and executes only the selected parser. Without an else parser, a false condition fails without consuming input.
+With an else parser, only the selected branch is executed: if it fails, the other branch is not tried.
+
+```c#
+Parser<T> If<T>(Func<bool> condition, Parser<T> parser)
+Parser<T> If<T>(Func<ParseContext, bool> condition, Parser<T> parser)
+Parser<T> If<C, T>(Func<C, bool> condition, Parser<T> parser) where C : ParseContext
+Parser<T> If<T>(Func<bool> condition, Parser<T> thenParser, Parser<T> elseParser)
+Parser<T> If<T>(Func<ParseContext, bool> condition, Parser<T> thenParser, Parser<T> elseParser)
+Parser<T> If<C, T>(Func<C, bool> condition, Parser<T> thenParser, Parser<T> elseParser) where C : ParseContext
+```
+
+Usage:
+
+```c#
+var parser = If<MyContext, long>(
+    context => context.AllowNegative,
+    Terms.Integer(NumberOptions.AllowLeadingSign),
+    Terms.Integer(NumberOptions.None));
+
+parser.Parse(ref reader, new MyContext { AllowNegative = false });
+```
+
+### Select
+
+Selects the parser to execute at runtime, either by its index in a fixed set of parsers, or with a function returning the parser.
+The selector is evaluated once per parse. An out-of-range index, or a `null` parser, fails without consuming input.
+
+```c#
+Parser<T> Select<T>(Func<int> selector, params Parser<T>[] parsers)
+Parser<T> Select<T>(Func<ParseContext, int> selector, params Parser<T>[] parsers)
+Parser<T> Select<C, T>(Func<C, int> selector, params Parser<T>[] parsers) where C : ParseContext
+Parser<T> Select<T>(Func<ParseContext, Parser<T>> selector)
+Parser<T> Select<C, T>(Func<C, Parser<T>> selector) where C : ParseContext
+```
+
+Usage:
+
+```c#
+var parser = Select<MyContext, string>(
+    context => context.Mode,  // 0, 1 or 2
+    Terms.Text("a"),
+    Terms.Text("b"),
+    Terms.Text("c"));
+
+parser.Parse(ref reader, new MyContext { Mode = 1 }); // parses "b"
+```
+
 ### ElseError
 
 Fails parsing with a custom error message.

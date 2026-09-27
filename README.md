@@ -83,7 +83,7 @@ using static Paspan.Fluent.Parsers;
 
 // Simple calculator parser
 var number = Terms.Integer();
-var add = Terms.Char('+').Skip();
+var add = Terms.Char('+');
 var expression = number.And(add).And(number)
     .Then(x => x.Item1 + x.Item3);
 

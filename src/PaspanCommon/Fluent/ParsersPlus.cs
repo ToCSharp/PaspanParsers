@@ -28,17 +28,17 @@ public static partial class ParsersPlus
     public static Parser<T> SkipAnd<T>(this char ch, Parser<T> parser) => Terms.Char(ch).SkipAnd(parser);
     public static Parser<T> And<T>(this char ch, Parser<T> parser) => Terms.Char(ch).SkipAnd(parser);
     public static Parser<Labelled<T>> And<T>(this char ch, string label, Parser<T> parser) => Terms.Char(ch).SkipAnd(parser.Labelled(label));
-    public static Parser<T> And<T>(this string str, Parser<T> parser) => Literals.Text(str).SkipAnd(parser);
+    public static Parser<T> And<T>(this string str, Parser<T> parser) => Terms.Text(str).SkipAnd(parser);
     public static Parser<string> ToLiteral(this string str) => Literals.Text(str);
     public static Parser<Unit> ToLiteral(this char ch) => Literals.Char(ch);
     public static Parser<string> Skip(this string str) => Literals.Text(str);
     public static Parser<Labelled<T>> And<T>(this string str, string label, Parser<T> parser)
-        => Literals.Text(str).SkipAnd(parser.Labelled(label));
+        => Terms.Text(str).SkipAnd(parser.Labelled(label));
 
     public static Parser<string> Or(this string str, string str2) => Literals.Text(str).Or(Literals.Text(str2));
     public static Parser<Unit> Or(this char ch, char ch2) => Literals.Char(ch).Or(Literals.Char(ch2));
 
-    public static Parser<string> AndString(this string str) => Literals.Text(str).SkipAnd(Terms.String());
+    public static Parser<string> AndString(this string str) => Terms.Text(str).SkipAnd(Terms.String());
 
     public static Dictionary<string, object> Append(this Dictionary<string, object> dic, string key, object value)
     {

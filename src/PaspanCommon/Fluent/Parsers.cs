@@ -66,16 +66,61 @@ public static partial class Parsers
     public static Parser<T> If<S, T>(Func<ParseContext, S, bool> predicate, S state, Parser<T> parser) => new If<ParseContext, S, T>(parser, predicate, state);
 
     /// <summary>
-    /// Builds a parser that invoked the next one if a condition is true.
+    /// Evaluates a condition once and executes <paramref name="parser"/> if it is true.
+    /// Otherwise, fails without consuming input.
     /// </summary>
-    [Obsolete("Use the Select parser instead.")]
-    public static Parser<T> If<C, T>(Func<C, bool> predicate, Parser<T> parser) where C : ParseContext => new If<C, object, T>(parser, (c, s) => predicate(c), null);
+    public static Parser<T> If<T>(Func<bool> condition, Parser<T> parser)
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        return new If<ParseContext, object, T>(parser, (c, s) => condition(), null);
+    }
 
     /// <summary>
-    /// Builds a parser that invoked the next one if a condition is true.
+    /// Evaluates a condition once using the current context and executes <paramref name="parser"/> if it is true.
+    /// Otherwise, fails without consuming input.
     /// </summary>
-    [Obsolete("Use the Select parser instead.")]
-    public static Parser<T> If<T>(Func<ParseContext, bool> predicate, Parser<T> parser) => new If<ParseContext, object, T>(parser, (c, s) => predicate(c), null);
+    public static Parser<T> If<T>(Func<ParseContext, bool> condition, Parser<T> parser)
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        return new If<ParseContext, object, T>(parser, (c, s) => condition(c), null);
+    }
+
+    /// <summary>
+    /// Evaluates a condition once using the concrete context and executes <paramref name="parser"/> if it is true.
+    /// Otherwise, fails without consuming input.
+    /// </summary>
+    public static Parser<T> If<C, T>(Func<C, bool> condition, Parser<T> parser) where C : ParseContext
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        return new If<C, object, T>(parser, (c, s) => condition(c), null);
+    }
+
+    /// <summary>
+    /// Evaluates a condition once and executes only the selected branch, without falling back if it fails.
+    /// </summary>
+    public static Parser<T> If<T>(Func<bool> condition, Parser<T> thenParser, Parser<T> elseParser)
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        return new If<ParseContext, object, T>(thenParser, elseParser, (c, s) => condition(), null);
+    }
+
+    /// <summary>
+    /// Evaluates a condition once using the current context and executes only the selected branch, without falling back if it fails.
+    /// </summary>
+    public static Parser<T> If<T>(Func<ParseContext, bool> condition, Parser<T> thenParser, Parser<T> elseParser)
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        return new If<ParseContext, object, T>(thenParser, elseParser, (c, s) => condition(c), null);
+    }
+
+    /// <summary>
+    /// Evaluates a condition once using the concrete context and executes only the selected branch, without falling back if it fails.
+    /// </summary>
+    public static Parser<T> If<C, T>(Func<C, bool> condition, Parser<T> thenParser, Parser<T> elseParser) where C : ParseContext
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        return new If<C, object, T>(thenParser, elseParser, (c, s) => condition(c), null);
+    }
 
     /// <summary>
     /// Builds a parser that selects another parser using custom logic.
@@ -86,6 +131,24 @@ public static partial class Parsers
     /// Builds a parser that selects another parser using custom logic.
     /// </summary>
     public static Parser<T> Select<T>(Func<ParseContext, Parser<T>> selector) => new Select<ParseContext, T>(selector);
+
+    /// <summary>
+    /// Evaluates a selector once and executes the parser at its index.
+    /// An out-of-range index fails without consuming input.
+    /// </summary>
+    public static Parser<T> Select<T>(Func<int> selector, params Parser<T>[] parsers) => new Select<ParseContext, T>(selector, parsers);
+
+    /// <summary>
+    /// Evaluates a selector once using the current context and executes the parser at its index.
+    /// An out-of-range index fails without consuming input.
+    /// </summary>
+    public static Parser<T> Select<T>(Func<ParseContext, int> selector, params Parser<T>[] parsers) => new Select<ParseContext, T>(selector, parsers);
+
+    /// <summary>
+    /// Evaluates a selector once using the concrete context and executes the parser at its index.
+    /// An out-of-range index fails without consuming input.
+    /// </summary>
+    public static Parser<T> Select<C, T>(Func<C, int> selector, params Parser<T>[] parsers) where C : ParseContext => new Select<C, T>(selector, parsers);
 
     /// <summary>
     /// Builds a parser that can be defined later on. Use it when a parser need to be declared before its rule can be set.

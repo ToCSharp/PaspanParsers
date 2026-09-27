@@ -1,4 +1,5 @@
 using Paspan.Common;
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -25,29 +26,35 @@ public sealed class TextLiteral : Parser<string>
     {
         context.EnterParser(this);
 
+        var start = reader.CaptureState();
+
         if (_comparisonType == StringComparison.Ordinal)
         {
-            var start = reader.CaptureState();
-
             if (reader.Skip(new ReadOnlySpan<byte>(TextBytes)))
             {
-                result.Set(start, reader.GetCurrentPosition(), Text);
+                var end = reader.GetCurrentPosition();
+
+                // Expose the matched bytes to value readers like AsChar()
+                reader.SetValue(start, end);
+                result.Set(start, end, Text);
                 return true;
             }
         }
         else if (_comparisonType == StringComparison.OrdinalIgnoreCase)
         {
-            var start = reader.CaptureState();
-            
-            if (SkipCaseInsensitive(ref reader, TextBytes))
+            var length = MatchCaseInsensitive(reader.GetRemaining(), TextBytes);
+
+            if (length >= 0)
             {
+                var end = start + length;
+
+                reader.RollBackState(end);
+                reader.SetValue(start, end);
+
                 // Возвращаем фактически прочитанный текст (с сохранением регистра из входных данных)
-                var actualText = reader.GetString(start, TextBytes.Length);
-                result.Set(start, reader.GetCurrentPosition(), actualText);
+                result.Set(start, end, reader.GetString(start, length));
                 return true;
             }
-            
-            reader.RollBackState(start);
         }
         else
         {
@@ -56,40 +63,59 @@ public sealed class TextLiteral : Parser<string>
 
         return false;
     }
-    
-    private static bool SkipCaseInsensitive(ref SpanReader reader, byte[] expectedBytes)
+
+    /// <summary>
+    /// Returns the number of input bytes matching <paramref name="expectedBytes"/> ignoring case, or -1.
+    /// </summary>
+    /// <remarks>
+    /// Compares chars and not bytes since the upper and lower case forms of a non-ASCII char
+    /// have different UTF-8 encodings, which can even have different lengths.
+    /// </remarks>
+    private static int MatchCaseInsensitive(ReadOnlySpan<byte> input, ReadOnlySpan<byte> expectedBytes)
     {
-        var position = reader.CaptureState();
-        
-        // Проверяем, хватит ли байтов
-        if (position + expectedBytes.Length > reader.Length + position)
+        var inputIndex = 0;
+        var expectedIndex = 0;
+
+        while (expectedIndex < expectedBytes.Length)
         {
-            return false;
-        }
-        
-        // Сравниваем байт за байтом без учета регистра
-        for (int i = 0; i < expectedBytes.Length; i++)
-        {
-            if (reader.Eof())
+            if (inputIndex >= input.Length)
             {
-                return false;
+                return -1;
             }
-            
-            byte currentByte = reader.Current;
-            byte expectedByte = expectedBytes[i];
-            
-            // Сравниваем с учетом регистра для ASCII букв (a-z, A-Z)
-            if (!ByteEqualsIgnoreCase(currentByte, expectedByte))
+
+            var a = input[inputIndex];
+            var b = expectedBytes[expectedIndex];
+
+            if (a < 0x80 && b < 0x80)
             {
-                return false;
+                if (!ByteEqualsIgnoreCase(a, b))
+                {
+                    return -1;
+                }
+
+                inputIndex++;
+                expectedIndex++;
+                continue;
             }
-            
-            reader.Read(1);
+
+            if (Rune.DecodeFromUtf8(input[inputIndex..], out var inputRune, out var inputLength) != OperationStatus.Done
+                || Rune.DecodeFromUtf8(expectedBytes[expectedIndex..], out var expectedRune, out var expectedLength) != OperationStatus.Done)
+            {
+                return -1;
+            }
+
+            if (inputRune != expectedRune && Rune.ToUpperInvariant(inputRune) != Rune.ToUpperInvariant(expectedRune))
+            {
+                return -1;
+            }
+
+            inputIndex += inputLength;
+            expectedIndex += expectedLength;
         }
-        
-        return true;
+
+        return inputIndex;
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool ByteEqualsIgnoreCase(byte a, byte b)
     {
