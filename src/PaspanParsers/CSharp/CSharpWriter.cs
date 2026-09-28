@@ -114,32 +114,19 @@ public class CSharpWriter(string indentString = "    ")
             _needsIndent = needsIndent;
         }
 
-        Exception failure = null;
-        var thread = new Thread(
-            () =>
-            {
-                try
-                {
-                    WriteCompilationUnitCore(unit);
-                }
-                catch (Exception e)
-                {
-                    failure = e;
-                }
-            },
-            LargeStackSize);
-        thread.Start();
-        thread.Join();
-
-        if (failure != null)
+        try
         {
-            throw failure is InsufficientExecutionStackException
-                ? new InsufficientExecutionStackException("The syntax tree is nested too deeply.", failure)
-                : new InvalidOperationException("Writing the syntax tree failed.", failure);
+            LargeStack.Run(() => WriteCompilationUnitCore(unit));
+        }
+        catch (InsufficientExecutionStackException e)
+        {
+            throw new InsufficientExecutionStackException("The syntax tree is nested too deeply.", e);
+        }
+        catch (Exception e)
+        {
+            throw new InvalidOperationException("Writing the syntax tree failed.", e);
         }
     }
-
-    private const int LargeStackSize = 256 * 1024 * 1024;
 
     /// <summary>
     /// Guards the recursion over nested nodes: a tree too deep for the stack throws

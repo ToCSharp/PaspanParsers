@@ -82,6 +82,7 @@ unit spans the whole input, and a `#nullable` directive spans its line.
 
 Offsets are in **UTF-8 bytes** of the input without its byte order mark: the parser reads UTF-8.
 `CSharpParser.GetUtf8Source(string)` returns these bytes, and `TextSpan.GetText` returns the text of a span.
+`TextSpan` and `LineMap` are shared with the other parsers and live in the `PaspanParsers` namespace.
 
 ```csharp
 var source = "class C { int M() => a + b * c; }";
@@ -199,9 +200,10 @@ Parsing time is linear in the input, also for deeply nested code: 8 000 nested p
 |---|---|
 | `CSharpParser.cs` | Entry points: `Parse`, `TryParse`, `GetUtf8Source`, `CompilationUnitParser` |
 | `CSharpParseOptions.cs`, `CSharpParseContext.cs` | Options (language version, preprocessor symbols, error recovery) and per-parse state |
-| `CSharpAst.cs` | AST nodes, `TextSpan` |
+| `CSharpAst.cs` | AST nodes |
 | `CSharpWriter.cs` | Prints an AST as C# (see `CSharpWriter.README.md`) |
-| `LineMap.cs`, `DocumentationComment.cs` | Lines and columns of offsets; documentation comments of declarations |
+| `DocumentationComment.cs` | Documentation comments of declarations |
+| `../Common/TextSpan.cs`, `../Common/LineMap.cs` | Spans and lines and columns of offsets, shared with the C++ parser |
 | `Parser/Lexer.cs`, `Parser/Tokens.cs` | Tokens: identifiers, keywords, literals, interpolated strings |
 | `Parser/Preprocessor.cs` | Trivia: whitespace, comments and preprocessor directives |
 | `Parser/SyntaxParser*.cs` | Hand-written recursive descent parser: types, expressions, patterns, statements, declarations, compilation unit, error recovery (`SyntaxParser.Recovery.cs`) |

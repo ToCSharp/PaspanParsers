@@ -13,20 +13,14 @@
 ## Solution Structure
 
 ```
-Paspan.sln
-├── src/                          # Library source code
-│   ├── Paspan/                   # Main library project
-│   └── PaspanCommon/             # Shared project
+PaspanParsers.slnx
+├── src/
+│   ├── Paspan/                # Main library project (SpanReader)
+│   ├── PaspanCommon/          # Shared project: parser combinators and fluent API
+│   ├── PaspanParsers/         # Language parsers
+│   └── PaspanParsers.Tests/   # Tests of the library and the parsers, with the Roslyn and clang oracles
 │
-├── test/                         # Tests and benchmarks
-│   ├── Paspan.Tests/             # Unit tests
-│   ├── Paspan.Benchmarks/        # Performance benchmarks
-│   └── Paspan.IntegrationTests/  # Integration tests
-│
-└── docs/                         # Documentation
-    ├── parsers.md                # Parser descriptions and examples
-    ├── writing.md                # Best practices for writing parsers
-    └── integration-tests-plan.md # Integration test plan
+└── docs/                      # Documentation and the plans of the C# and C++ parsers
 ```
 
 ## Detailed Directory Structure
@@ -106,72 +100,25 @@ Paspan.sln
 - `PaspanCommon.shproj` - shared project file
 - `PaspanCommon.projitems` - shared project items
 
-### 📁 test/Paspan.Tests/
-**Library unit tests**
+### 📁 src/PaspanParsers/
+**Language parsers** (`net10.0`), each in its own folder and namespace:
 
-**Key Test Suites:**
-- `SpanReaderTests.cs` - SpanReader tests
-- `FluentTests.cs` - Fluent API tests
+| Folder | Parser |
+|---|---|
+| `Common/` | Shared by the C# and C++ parsers: `TextSpan`, `LineMap` (lines and columns of offsets), `Utf8Source`, `LargeStack` |
+| `CSharp/` | C# 1–14 parser for valid code, checked against Roslyn: hand-written `SyntaxParser`, AST with positions, `CSharpWriter`, documentation comments, error recovery ([README](../src/PaspanParsers/CSharp/README.md)) |
+| `Cpp/` | C++23 parser for valid code, checked against clang: hand-written `SyntaxParser`, preprocessor as trivia, symbol table, AST with positions, `CppWriter`, Doxygen documentation comments ([README](../src/PaspanParsers/Cpp/README.md)) |
+| `Python/`, `Java/` | Parser combinator grammars with ASTs and code writers |
+| `Json/`, `Calc/` | JSON parser, expression parser and evaluator |
+| `Sql/`, `SQL2/` | SQL parsers (work in progress) |
 
-**Calc/** - mathematical expression parser tests
-- `Expression.cs` - mathematical expression AST
-- `FluentParser.cs` - Fluent API expression parser
-- `FluentParserTests.cs` - Fluent parser tests
-- `Parser.cs` - manual expression parser
-- `ParserTest.cs` - manual parser tests
-- `Interpreter.cs` - expression interpreter
-- `InterpreterTest.cs` - interpreter tests
-- `CalcTests.cs` - general calculator tests
+### 📁 src/PaspanParsers.Tests/
+**Tests** (MSTest on Microsoft.Testing.Platform: run with `dotnet run --project src/PaspanParsers.Tests`, not `dotnet test`)
 
-**Json/** - JSON parser tests
-- `JsonModel.cs` - JSON data model
-- `JsonParser.cs` - JSON parser (strings)
-- `JsonParserRegion.cs` - JSON parser (regions)
-- `JsonParserTests.cs` - JSON parser tests
-
-### 📁 test/Paspan.Benchmarks/
-**Performance benchmarks** - comparison with Parlot, Pidgin, Sprache, and System.Text.Json
-
-**Main Benchmarks:**
-- `ExprBench.cs` - mathematical expression parsing benchmark
-- `JsonBench.cs` - JSON parsing benchmark
-- `RegexBenchmarks.cs` - regex comparison benchmark
-- `Program.cs` - benchmark entry point
-
-**Parlot/** - Parlot implementations for comparison
-- `FluentParser.cs` - Fluent parser
-- `JsonParser.cs` - JSON parser
-- `ParlotParser.cs` - base parser
-
-**PidginParsers/** - Pidgin implementations for comparison
-- `ExpressionParser.cs` - expression parser
-- `PidginJsonParser.cs` - JSON parser
-
-**SpracheParsers/** - Sprache implementations for comparison
-- `SpracheJsonParser.cs` - JSON parser
-
-### 📁 test/Paspan.IntegrationTests/
-**Integration tests** - end-to-end testing of real scenarios
-
-**EndToEnd/** - end-to-end tests
-- `ExpressionEvaluationTests.cs` - expression evaluation tests
-- `JsonParsingTests.cs` - JSON parsing tests
-
-**ErrorHandling/** - error handling tests
-- `ErrorHandlingTests.cs` - error scenario tests (300 lines)
-
-**Infrastructure/** - test infrastructure
-- `TestDataLoader.cs` - test data loading
-- `JsonAssert.cs` - JSON assertions
-- `PerformanceMonitor.cs` - performance monitoring
-
-**TestData/** - test data
-- `expressions/` - mathematical expression files (*.txt)
-- `json/` - JSON data files (*.json)
-
-**Project Files:**
-- `Paspan.IntegrationTests.csproj` - project file
-- `README.md` - integration tests description
+- `SpanReaderTests.cs`, `FluentTests.cs`, `CoreRegressionTests.cs` - the library
+- `CSharp/` - unit tests of the C# parser and the Roslyn oracle (`RoslynOracle.cs`, `SpanChecker.cs`, `CSharpCorpusTests.cs`, corpus in `CSharp/Corpus`)
+- `Cpp/` - unit tests of the C++ parser and the clang oracle: `Clang.cs` runs `clang++`, `ClangAst.cs` reads its JSON AST, `ClangOracle.cs` compares trees, `CppSpanChecker.cs` and `CppKindMap.cs` check spans and kinds, `CppNodeText.cs` the tokens of spans, `CppLiteralChecker.cs` literal values, `CppDocumentationChecker.cs` documentation comments; `CppCorpusTests.cs` runs the corpus in `Cpp/Corpus` and external corpora (`fetch-external-corpora.sh`); `CppPerformanceTests.cs` checks deep nesting and measures speed on a corpus
+- `Python/`, `Java/`, `Json/`, `Calc/`, `SQL2/` - the other parsers
 
 ### 📁 docs/
 **Project documentation**
@@ -179,18 +126,20 @@ Paspan.sln
 - `parsers.md` (714 lines) - detailed description of all parsers with usage examples
 - `writing.md` (65 lines) - best practices for writing custom parsers
 - `integration-tests-plan.md` (445 lines) - integration testing plan
+- `csharp-parser-roslyn-level-plan.md` - the stages of the C# parser, checked against Roslyn
+- `cpp-parser-clang-level-plan.md` - the stages of the C++ parser, checked against clang
 
 ### 📄 Root Files
 
 - `README.md` - main project documentation with examples and benchmarks
 - `LICENSE` - license (BSD 3-Clause, same as Parlot)
-- `Paspan.sln` - Visual Studio solution file
+- `PaspanParsers.slnx` - solution file
+- `CLAUDE.md` - build and test commands, the Roslyn and clang oracles
 
 ## Technology Stack
 
-- **.NET Multi-targeting:** net6.0, net8.0
-- **Testing:** xUnit (presumably, based on test project structure)
-- **Benchmarks:** BenchmarkDotNet
+- **.NET:** net10.0
+- **Testing:** MSTest on Microsoft.Testing.Platform; Roslyn and clang (`clang++`) as oracles for the C# and C++ parsers
 - **T4 Templates:** for code generation (Tuples.tt, Parsers.And.tt, Parsers.Values.tt)
 
 ## Codebase Patterns
@@ -230,10 +179,10 @@ Representation of section (region) in source data, used for zero-copy parsing.
 ## Main Entry Points for AI
 
 1. **For API understanding:** `src/PaspanCommon/Fluent/Parser.cs`, `src/PaspanCommon/Fluent/Parsers.cs`
-2. **For usage examples:** `test/Paspan.Tests/Calc/FluentParser.cs`, `test/Paspan.Tests/Json/JsonParser.cs`
-3. **For performance:** `test/Paspan.Benchmarks/`
+2. **For usage examples:** `src/PaspanParsers/Calc/`, `src/PaspanParsers/Json/`
+3. **For the C# and C++ parsers:** `src/PaspanParsers/CSharp/README.md`, `src/PaspanParsers/Cpp/README.md` and their plans in `docs/`
 4. **For documentation:** `docs/parsers.md`, `README.md`
-5. **For testing:** `test/Paspan.IntegrationTests/ErrorHandling/ErrorHandlingTests.cs`
+5. **For testing:** `CLAUDE.md`, `src/PaspanParsers.Tests/`
 
 ## Implementation Features
 

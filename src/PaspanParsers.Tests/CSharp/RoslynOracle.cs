@@ -17,6 +17,13 @@ public enum OracleStatus
     Mismatch,
     /// <summary>The AST is right, but a node's span is not where the node is in the source.</summary>
     SpanMismatch,
+    /// <summary>The AST and the spans are right, but the value of a literal is not (C++ oracle).</summary>
+    ValueMismatch,
+    /// <summary>
+    /// The AST, the spans and the values are right, but a declaration has another documentation comment than
+    /// clang attaches to it (C++ oracle).
+    /// </summary>
+    CommentMismatch,
     Passed,
 }
 

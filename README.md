@@ -22,6 +22,7 @@ This repository contains improved Paspan core library and a collection of produc
 | Parser | Status | Description |
 |--------|--------|-------------|
 | **C#** | ✅ Complete | C# 1–14 parser for valid code, checked against Roslyn; AST with positions and code writer |
+| **C++** | 🚧 WIP | C++23 parser for valid code, checked against clang; AST with positions, documentation comments and code writer; linear time, about 30 MB/s; error recovery remains ([the plan](docs/cpp-parser-clang-level-plan.md)) |
 | **Python** | ✅ Complete | Python 3.6-3.12 parser with pattern matching, async/await, type hints |
 | **Java** | ✅ Complete | Java parser with AST and code generator |
 | **JSON** | ✅ Complete | Fast JSON parser with Region-based zero-copy support |
@@ -36,6 +37,13 @@ This repository contains improved Paspan core library and a collection of produc
 - Preprocessor (`#if` with symbols from `CSharpParseOptions`), `#nullable` kept in the AST
 - Node positions (`Span`), as fast as Roslyn's parser, linear time on deeply nested code
 - Code writer that prints the AST back; see [src/PaspanParsers/CSharp/README.md](src/PaspanParsers/CSharp/README.md)
+
+#### C++ Parser
+- C++23 grammar, checked against clang: the printed tree compiles to the same clang AST, and the spans, kinds and literal values of the nodes are clang's
+- Measured on {fmt}, nlohmann/json and LLVM's ADT and Support libraries; macros are not expanded, so files that use them in syntactic positions fail
+- Preprocessor as trivia: conditional compilation with macros from `CppParseOptions`, other directives kept in the AST
+- Node positions (`Span`), lines and columns (`LineMap`), Doxygen documentation comments attached like clang does
+- Code writer that prints the AST, or any node, back; see [src/PaspanParsers/Cpp/README.md](src/PaspanParsers/Cpp/README.md)
 
 #### Python Parser
 - Python 3.6-3.12 syntax
@@ -95,6 +103,7 @@ var result = expression.Parse("10 + 20"); // 30
 All parsers include comprehensive test suites:
 - Unit tests in `src/PaspanParsers.Tests`
 - 400+ tests for the C# parser, plus a Roslyn oracle over a corpus of C# files
+- A clang oracle over a corpus of C++ files for the C++ parser (needs `clang++`)
 - 50+ tests for Python parser
 - Real-world code examples
 
@@ -111,7 +120,9 @@ PaspanParsers/
 │   ├── Paspan/              # Core library
 │   ├── PaspanCommon/        # Shared parser combinators
 │   ├── PaspanParsers/       # Language parsers
+│   │   ├── Common/          # Spans, lines and columns, UTF-8 input shared by the parsers
 │   │   ├── CSharp/          # C# parser + AST + code writer
+│   │   ├── Cpp/             # C++ parser + AST + code writer (WIP)
 │   │   ├── Python/          # Python parser + AST + code writer
 │   │   ├── Java/            # Java parser + AST + code writer
 │   │   ├── Json/            # JSON parser

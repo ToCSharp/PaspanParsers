@@ -13,9 +13,10 @@
 	<ItemGroup>
 	  <Compile Include="CSharp\CSharpExamples.xcs" />
 	  <Compile Include="CSharp\CSharpExamples2.xcs" />
-	  <!-- Corpus files are test input for the Roslyn oracle, not part of the test assembly -->
+	  <!-- Corpus files are test input for the Roslyn and clang oracles, not part of the test assembly -->
 	  <Compile Remove="CSharp\Corpus\**" />
 	  <None Remove="CSharp\Corpus\**" />
+	  <None Remove="Cpp\Corpus\**" />
 	</ItemGroup>
 
 	<ItemGroup>

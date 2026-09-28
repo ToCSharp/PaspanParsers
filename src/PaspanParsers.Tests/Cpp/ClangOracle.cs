@@ -1,0 +1,182 @@
+using System.Text;
+using PaspanParsers.Cpp;
+using PaspanParsers.Tests.CSharp;
+
+namespace PaspanParsers.Tests.Cpp;
+
+/// <summary>
+/// How the oracle runs clang and our parser: macros defined on the command line (<c>NAME</c> or
+/// <c>NAME=VALUE</c>), include directories (for clang only: our parser does not read headers) and the
+/// directory quoted includes are resolved from.
+/// </summary>
+public sealed record ClangOracleOptions(
+    IReadOnlyList<string> Defines = null,
+    IReadOnlyList<string> IncludeDirectories = null,
+    string WorkingDirectory = null)
+{
+    public static ClangOracleOptions Default { get; } = new();
+
+    /// <summary>
+    /// What the headers of the file declare, given to our parser in the mode "with names": the names of
+    /// types, templates and concepts, and the macros for conditional directives. Null by default: our
+    /// parser knows only the file.
+    /// </summary>
+    public HeaderKnowledge Headers { get; init; }
+
+    public IEnumerable<string> ClangArguments()
+    {
+        foreach (var define in Defines ?? [])
+        {
+            yield return "-D" + define;
+        }
+
+        foreach (var directory in IncludeDirectories ?? [])
+        {
+            yield return "-I" + directory;
+        }
+    }
+
+    /// <summary>
+    /// The options our parser evaluates conditional directives with: clang's predefined macros and the
+    /// defines, and for <c>__has_include</c> the include directories and clang's system include directories.
+    /// </summary>
+    public CppParseOptions ParseOptions()
+    {
+        var macros = new Dictionary<string, string>(Clang.PredefinedMacros, StringComparer.Ordinal);
+        foreach (var define in Defines ?? [])
+        {
+            var equals = define.IndexOf('=');
+            if (equals < 0)
+            {
+                macros[define] = "1";
+            }
+            else
+            {
+                macros[define[..equals]] = define[(equals + 1)..];
+            }
+        }
+
+        var workingDirectory = WorkingDirectory ?? Environment.CurrentDirectory;
+        var includeDirectories = (IncludeDirectories ?? [])
+            .Select(directory => Path.GetFullPath(directory, workingDirectory))
+            .Concat(Clang.SystemIncludeDirectories)
+            .ToList();
+
+        foreach (var (name, replacement) in Headers?.Macros ?? new Dictionary<string, string>())
+        {
+            macros[name] = replacement;
+        }
+
+        var names = Headers?.Names;
+        return new CppParseOptions(CppLanguageVersion.Cpp23, macros, includeDirectories, workingDirectory,
+            names?.TypeNames.ToList(), names?.TemplateNames.ToList(), names?.ConceptNames.ToList(), names?.FunctionTemplateNames.ToList(),
+            names?.ClassMembers.ToDictionary(p => p.Key, p => (IReadOnlyCollection<string>)p.Value.ToList(), StringComparer.Ordinal));
+    }
+}
+
+/// <summary>
+/// What the headers included by a file declare: the names of <see cref="HeaderNames"/> and the macros
+/// they define, by name (<c>F(x)</c> for a function-like macro) with their replacement text.
+/// </summary>
+public sealed record HeaderKnowledge(HeaderNames Names, IReadOnlyDictionary<string, string> Macros);
+
+/// <summary>
+/// Uses clang as the reference parser. For a file clang compiles without errors:
+/// <list type="number">
+/// <item><see cref="CppParser"/> must parse it;</item>
+/// <item>the tree printed back by <see cref="CppWriter"/> must compile to the same clang AST, apart from
+/// positions and comments (see <see cref="ClangAst.Normalize"/>);</item>
+/// <item>the spans and kinds of the nodes must match clang's (<see cref="CppSpanChecker"/>);</item>
+/// <item>the values of literals must be clang's (<see cref="CppLiteralChecker"/>);</item>
+/// <item>the documentation comments of declarations must be those clang attaches (<see cref="CppDocumentationChecker"/>).</item>
+/// </list>
+/// Only the declarations of the main file are compared: our parser does not read included headers.
+/// </summary>
+public static class ClangOracle
+{
+    public static OracleResult Check(string source, ClangOracleOptions options = null)
+    {
+        return Check(Encoding.UTF8.GetBytes(source), options);
+    }
+
+    public static OracleResult Check(byte[] source, ClangOracleOptions options = null)
+    {
+        return Check(source, options, collectHeaderNames: false, out _);
+    }
+
+    /// <summary>
+    /// Checks <paramref name="source"/> and returns the names its headers declare, read from clang's AST
+    /// (null when clang fails), for <see cref="ClangOracleOptions.Headers"/>.
+    /// </summary>
+    public static OracleResult Check(byte[] source, ClangOracleOptions options, out HeaderNames headerNames)
+    {
+        return Check(source, options, collectHeaderNames: true, out headerNames);
+    }
+
+    private static OracleResult Check(byte[] source, ClangOracleOptions options, bool collectHeaderNames, out HeaderNames headerNames)
+    {
+        options ??= ClangOracleOptions.Default;
+        var arguments = options.ClangArguments().ToList();
+
+        var original = Clang.DumpAst(source, arguments, options.WorkingDirectory, collectHeaderNames);
+        headerNames = original.Ast?.HeaderNames;
+        if (!original.Succeeded)
+        {
+            return new OracleResult(OracleStatus.Invalid, original.FirstError());
+        }
+
+        var bomLength = source.AsSpan().StartsWith("﻿"u8) ? 3 : 0;
+        if (!CppParser.TryParse(source, options.ParseOptions(), out var unit, out var error))
+        {
+            var detail = error != null ? $"({error.Line},{error.Column}): {error.Message}" : null;
+            return new OracleResult(OracleStatus.ParseFailed, detail);
+        }
+
+        string written;
+        try
+        {
+            var writer = new CppWriter();
+            writer.WriteTranslationUnit(unit);
+            written = writer.GetResult();
+        }
+        catch (Exception e)
+        {
+            return new OracleResult(OracleStatus.WriteFailed, $"{e.GetType().Name}: {e.Message}");
+        }
+
+        var regenerated = Clang.DumpAst(Encoding.UTF8.GetBytes(written), arguments, options.WorkingDirectory);
+        if (!regenerated.Succeeded)
+        {
+            return new OracleResult(OracleStatus.Mismatch, "written code is invalid: " + regenerated.FirstError());
+        }
+
+        var originalAst = original.Ast;
+        var difference = ClangAst.FirstDifference(originalAst.Normalize(), regenerated.Ast.Normalize());
+        if (difference != null)
+        {
+            return new OracleResult(OracleStatus.Mismatch, difference);
+        }
+
+        var utf8 = source[bomLength..];
+        var clangNodes = originalAst.Nodes(source, bomLength);
+        var spanProblem = CppSpanChecker.Check(utf8, unit, clangNodes, ClangAst.RawTokens(source, bomLength));
+        if (spanProblem != null)
+        {
+            return new OracleResult(OracleStatus.SpanMismatch, spanProblem);
+        }
+
+        var valueProblem = CppLiteralChecker.Check(unit, clangNodes);
+        if (valueProblem != null)
+        {
+            return new OracleResult(OracleStatus.ValueMismatch, valueProblem);
+        }
+
+        var commentProblem = CppDocumentationChecker.Check(utf8, unit, originalAst.DocumentationComments(source, bomLength));
+        if (commentProblem != null)
+        {
+            return new OracleResult(OracleStatus.CommentMismatch, commentProblem);
+        }
+
+        return new OracleResult(OracleStatus.Passed);
+    }
+}

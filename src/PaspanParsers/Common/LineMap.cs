@@ -1,10 +1,10 @@
-namespace PaspanParsers.CSharp;
+namespace PaspanParsers;
 
 /// <summary>
 /// Converts between UTF-8 byte offsets of a parsed input (<see cref="TextSpan"/>) and 1-based line and column
 /// numbers. Columns count UTF-16 code units, like editors, Roslyn and the Language Server Protocol, so a
-/// character outside the Basic Multilingual Plane is two columns. Lines end at <c>\r\n</c>, <c>\r</c>,
-/// <c>\n</c>, U+0085, U+2028 and U+2029, as in C#.
+/// character outside the Basic Multilingual Plane is two columns. Lines end at <c>\r\n</c>, <c>\r</c> and
+/// <c>\n</c>, and optionally also at U+0085, U+2028 and U+2029, as in C#.
 /// </summary>
 public sealed class LineMap
 {
@@ -15,9 +15,10 @@ public sealed class LineMap
 
     /// <summary>
     /// Builds the map of <paramref name="utf8Source"/>, the input as UTF-8 bytes without the byte order mark
-    /// (<see cref="CSharpParser.GetUtf8Source(string)"/>). The bytes are copied.
+    /// (<see cref="Utf8Source.FromString(string)"/>). The bytes are copied. <paramref name="unicodeLineBreaks"/>
+    /// makes U+0085, U+2028 and U+2029 end lines, as in C#; C++ lines end only at <c>\r</c> and <c>\n</c>.
     /// </summary>
-    public LineMap(ReadOnlySpan<byte> utf8Source)
+    public LineMap(ReadOnlySpan<byte> utf8Source, bool unicodeLineBreaks = true)
     {
         _source = utf8Source.ToArray();
 
@@ -38,13 +39,13 @@ public sealed class LineMap
 
                 starts.Add(i + 1);
             }
-            else if (b == 0xC2 && i + 1 < _source.Length && _source[i + 1] == 0x85)
+            else if (unicodeLineBreaks && b == 0xC2 && i + 1 < _source.Length && _source[i + 1] == 0x85)
             {
                 // U+0085
                 i++;
                 starts.Add(i + 1);
             }
-            else if (b == 0xE2 && i + 2 < _source.Length && _source[i + 1] == 0x80 && _source[i + 2] is 0xA8 or 0xA9)
+            else if (unicodeLineBreaks && b == 0xE2 && i + 2 < _source.Length && _source[i + 1] == 0x80 && _source[i + 2] is 0xA8 or 0xA9)
             {
                 // U+2028, U+2029
                 i += 2;
