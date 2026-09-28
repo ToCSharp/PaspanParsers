@@ -84,9 +84,10 @@ internal ref partial struct SyntaxParser
 
         List<ParameterDeclaration> parameters = null;
         var isVariadic = false;
+        var ellipsisWithoutComma = false;
         if (TryEatPunctuator("("))
         {
-            parameters = ParseParameterClause(out isVariadic);
+            parameters = ParseParameterClause(out isVariadic, out ellipsisWithoutComma);
             if (parameters == null)
             {
                 return null;
@@ -151,6 +152,7 @@ internal ref partial struct SyntaxParser
                 Attributes = attributes,
                 Parameters = parameters,
                 IsVariadic = isVariadic,
+                EllipsisWithoutComma = ellipsisWithoutComma,
                 Specifiers = specifiers,
                 Noexcept = noexcept,
                 TypeAttributes = typeAttributes,
@@ -249,7 +251,7 @@ internal ref partial struct SyntaxParser
         List<ParameterDeclaration> parameters = null;
         if (TryEatPunctuator("("))
         {
-            parameters = ParseParameterClause(out var isVariadic);
+            parameters = ParseParameterClause(out var isVariadic, out _);
             if (parameters == null || isVariadic)
             {
                 return null;

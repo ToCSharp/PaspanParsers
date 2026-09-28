@@ -9,7 +9,8 @@ namespace PaspanParsers.Tests.Cpp;
 /// Checks the spans and the kinds of our AST nodes against clang. Every node lies inside its parent, and
 /// by <see cref="CppKindMap"/> it either has the span of a clang node of a matching kind, or declares a
 /// name where clang has a declaration of a matching kind, or (for nodes clang's dump has no ranges for,
-/// such as types and declarators) starts and ends at token boundaries.
+/// such as types and declarators) starts and ends at token boundaries. The span of every node holds the
+/// tokens <see cref="CppWriter.WriteNode"/> writes for it: no more and no fewer.
 /// </summary>
 /// <remarks>
 /// Writing the tree back and comparing clang's trees cannot tell <c>a * b;</c> parsed as a declaration
@@ -28,7 +29,9 @@ public static class CppSpanChecker
         var byName = clangNodes.Where(n => n.NameOffset >= 0).ToLookup(n => n.NameOffset);
         var tokenStarts = tokens.Select(t => t.Start).ToHashSet();
         var tokenEnds = tokens.Select(t => t.End).ToHashSet();
-        var sortedEnds = CodeTokenEnds(tokenEnds, unit);
+        var nonCode = NonCodeRanges(unit);
+        var directives = unit.Directives.Select(d => d.Text).ToList();
+        var sortedEnds = CodeTokenEnds(tokenEnds, nonCode);
         var macroUses = new MacroUses(clangNodes.Where(n => n.InMacro).Select(n => n.Span));
 
         if (unit.Span != new TextSpan(0, utf8.Length))
@@ -74,6 +77,7 @@ public static class CppSpanChecker
                 _ => throw new InvalidOperationException(),
             };
 
+            problem ??= CheckText(node, utf8, nonCode, directives);
             if (problem != null)
             {
                 return Describe(problem, node, parent, utf8);
@@ -168,24 +172,53 @@ public static class CppSpanChecker
     }
 
     /// <summary>
+    /// The span holds the node and nothing else: its tokens are those <see cref="CppWriter.WriteNode"/> writes
+    /// for the node. So are checked the nodes clang has no ranges for, such as types, declarators and specifiers,
+    /// beyond their token boundaries.
+    /// </summary>
+    private static string CheckText(ICppNode node, byte[] utf8, IReadOnlyList<TextSpan> nonCode, IReadOnlyList<string> directives)
+    {
+        switch (node)
+        {
+            case PreprocessorDirective directive:
+                return node.Span.GetText(utf8) == directive.Text ? null : $"the span holds other text than the directive '{directive.Text}'";
+            case not CppNode:
+                return null;
+        }
+
+        var cppNode = (CppNode)node;
+
+        var source = CppNodeText.OfSource(utf8, node.Span, nonCode);
+        if (source == null)
+        {
+            return null;
+        }
+
+        var writer = new CppWriter();
+        writer.WriteNode(cppNode);
+        var written = CppNodeText.OfWritten(writer.GetResult(), directives);
+        if (source == written)
+        {
+            return null;
+        }
+
+        var common = 0;
+        while (common < source.Length && common < written.Length && source[common] == written[common])
+        {
+            common++;
+        }
+
+        string Excerpt(string text) => text.Length - common > 40 ? text.Substring(common, 40) + "..." : text[common..];
+        return $"the span holds other tokens than the node: after '{(common > 40 ? "..." + source[(common - 40)..common] : source[..common])}', "
+            + $"the source has '{Excerpt(source)}' and the node '{Excerpt(written)}'";
+    }
+
+    /// <summary>
     /// The sorted ends of the tokens of the code: not those of directives and inactive branches, which
     /// clang's raw tokens include.
     /// </summary>
-    private static int[] CodeTokenEnds(IEnumerable<int> tokenEnds, TranslationUnit unit)
+    private static int[] CodeTokenEnds(IEnumerable<int> tokenEnds, List<TextSpan> nonCode)
     {
-        // Directives are in source order; an inactive branch ends at the next processed directive
-        var nonCode = new List<TextSpan>();
-        var directives = unit.Directives;
-        for (var i = 0; i < directives.Count; i++)
-        {
-            var directive = directives[i];
-            var startsInactiveBranch = directive.IsConditional && directive.Kind != PreprocessorDirectiveKind.Endif && !directive.IsBranchTaken;
-            var end = startsInactiveBranch
-                ? (i + 1 < directives.Count ? directives[i + 1].Span.Start : unit.Span.End)
-                : directive.Span.End;
-            nonCode.Add(new TextSpan(directive.Span.Start, end));
-        }
-
         var result = new List<int>();
         var range = 0;
         foreach (var end in tokenEnds.Order())
@@ -202,6 +235,27 @@ public static class CppSpanChecker
         }
 
         return result.ToArray();
+    }
+
+    /// <summary>
+    /// The spans of the directives and inactive branches, in source order.
+    /// </summary>
+    internal static List<TextSpan> NonCodeRanges(TranslationUnit unit)
+    {
+        // Directives are in source order; an inactive branch ends at the next processed directive
+        var nonCode = new List<TextSpan>();
+        var directives = unit.Directives;
+        for (var i = 0; i < directives.Count; i++)
+        {
+            var directive = directives[i];
+            var startsInactiveBranch = directive.IsConditional && directive.Kind != PreprocessorDirectiveKind.Endif && !directive.IsBranchTaken;
+            var end = startsInactiveBranch
+                ? (i + 1 < directives.Count ? directives[i + 1].Span.Start : unit.Span.End)
+                : directive.Span.End;
+            nonCode.Add(new TextSpan(directive.Span.Start, end));
+        }
+
+        return nonCode;
     }
 
     /// <summary>

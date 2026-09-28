@@ -382,7 +382,7 @@ internal ref partial struct SyntaxParser
         }
 
         var saved = EnterBrackets();
-        var parameters = ParseParameterClause(out var isVariadic);
+        var parameters = ParseParameterClause(out var isVariadic, out var ellipsisWithoutComma);
         LeaveBrackets(saved);
         if (parameters == null)
         {
@@ -426,6 +426,7 @@ internal ref partial struct SyntaxParser
             new FunctionDeclarator(inner, parameters)
             {
                 IsVariadic = isVariadic,
+                EllipsisWithoutComma = ellipsisWithoutComma,
                 Qualifiers = qualifiers,
                 RefQualifier = refQualifier,
                 Noexcept = noexcept,
@@ -458,11 +459,12 @@ internal ref partial struct SyntaxParser
 
     /// <summary>
     /// The parameters after '(' up to and including ')', and whether they end with the ellipsis of a
-    /// variadic function: <c>(int, ...)</c>, <c>(int...)</c> or <c>(...)</c>.
+    /// variadic function: <c>(int, ...)</c>, <c>(int...)</c> (<paramref name="ellipsisWithoutComma"/>) or <c>(...)</c>.
     /// </summary>
-    private List<ParameterDeclaration> ParseParameterClause(out bool isVariadic)
+    private List<ParameterDeclaration> ParseParameterClause(out bool isVariadic, out bool ellipsisWithoutComma)
     {
         isVariadic = false;
+        ellipsisWithoutComma = false;
         var parameters = new List<ParameterDeclaration>();
         if (TryEatPunctuator(")"))
         {
@@ -493,6 +495,7 @@ internal ref partial struct SyntaxParser
             {
                 EatTokens(2);
                 isVariadic = true;
+                ellipsisWithoutComma = true;
                 return parameters;
             }
 

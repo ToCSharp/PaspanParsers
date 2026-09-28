@@ -32,7 +32,7 @@ internal ref partial struct SyntaxParser
         while (Current.Kind != TokenKind.EndOfFile)
         {
             var declaration = IsModuleDeclarationStart(0) || IsImportDeclarationStart(0)
-                ? ParseModuleOrImportDeclaration(NodeStart, isExport: false)
+                ? WithLeadingTrivia(_position, ParseModuleOrImportDeclaration(NodeStart, isExport: false))
                 : ParseDeclaration(DeclarationContext.Namespace);
             if (declaration == null)
             {
@@ -62,7 +62,23 @@ internal ref partial struct SyntaxParser
     /// templates, linkage specifications, <c>asm</c>, access specifiers), an empty declaration, a function
     /// definition or a simple declaration.
     /// </summary>
-    private Declaration ParseDeclaration(DeclarationContext context)
+    private Declaration ParseDeclaration(DeclarationContext context) => WithLeadingTrivia(_position, ParseDeclarationCore(context));
+
+    /// <summary>
+    /// Sets the trivia from <paramref name="triviaStart"/>, the end of the token before it, to the start of
+    /// <paramref name="declaration"/> as its leading trivia, and returns the declaration; null stays null.
+    /// </summary>
+    private static Declaration WithLeadingTrivia(int triviaStart, Declaration declaration)
+    {
+        if (declaration != null)
+        {
+            declaration.LeadingTrivia = new TextSpan(triviaStart, declaration.Span.Start);
+        }
+
+        return declaration;
+    }
+
+    private Declaration ParseDeclarationCore(DeclarationContext context)
     {
         EnsureSufficientStack();
         var start = NodeStart;
@@ -227,6 +243,12 @@ internal ref partial struct SyntaxParser
             if (declaration == null)
             {
                 return null;
+            }
+
+            // Clang looks for the documentation comment of a member also before the access specifiers in front of it
+            if (declarations.Count != 0 && declarations[^1] is AccessSpecifier access)
+            {
+                declaration.DocumentationStart = access.DocumentationStart ?? access.LeadingTrivia.Start;
             }
 
             declarations.Add(declaration);
@@ -571,6 +593,7 @@ internal ref partial struct SyntaxParser
                 {
                     LeadingAttributes = leadingAttributes,
                     AsmLabel = initDeclarator.AsmLabel,
+                    AsmKeyword = initDeclarator.AsmKeyword,
                     Attributes = initDeclarator.Attributes,
                     VirtSpecifiers = initDeclarator.VirtSpecifiers,
                     RequiresClause = initDeclarator.RequiresClause,
@@ -633,9 +656,10 @@ internal ref partial struct SyntaxParser
         }
 
         string asmLabel = null;
+        string asmKeyword = null;
         if (IsAsmKeyword(Current) && Peek(1).IsPunctuator("("))
         {
-            EatToken();
+            asmKeyword = EatToken().Text;
             asmLabel = ParseParenthesizedText();
             if (asmLabel == null)
             {
@@ -691,6 +715,7 @@ internal ref partial struct SyntaxParser
         return Finish(new InitDeclarator(declarator, initializer)
         {
             AsmLabel = asmLabel,
+            AsmKeyword = asmKeyword,
             Attributes = attributes,
             VirtSpecifiers = virtSpecifiers,
             RequiresClause = requiresClause,

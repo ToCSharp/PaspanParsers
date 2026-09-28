@@ -276,6 +276,7 @@ internal ref partial struct SyntaxParser
         var enumerators = new List<Enumerator>();
         while (!IsPunctuator("}"))
         {
+            var triviaStart = _position;
             var start = NodeStart;
             var identifier = TryEatIdentifier();
             if (identifier == null)
@@ -300,7 +301,7 @@ internal ref partial struct SyntaxParser
             }
 
             _cache.Symbols.Declare(identifier, SymbolKind.Value);
-            enumerators.Add(Finish(new Enumerator(identifier, value) { Attributes = attributes }, start));
+            enumerators.Add(Finish(new Enumerator(identifier, value) { Attributes = attributes, LeadingTrivia = new TextSpan(triviaStart, start) }, start));
             if (!TryEatPunctuator(","))
             {
                 break;

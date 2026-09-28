@@ -338,7 +338,7 @@ internal ref partial struct SyntaxParser
         }
 
         var error = new ParseError { Message = $"Unexpected {description}", Position = token.Start };
-        (error.Line, error.Column) = new SpanReader(source).GetLineAndColumn(token.Start);
+        (error.Line, error.Column) = new LineMap(source, unicodeLineBreaks: false).GetLineAndColumn(token.Start);
         return error;
     }
 }

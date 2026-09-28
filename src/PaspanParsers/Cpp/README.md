@@ -1,8 +1,9 @@
 # C++ Parser
 
-A C++23 parser for valid code, checked against clang. **Work in progress:** it is being built by stages
-following [the plan](../../../docs/cpp-parser-clang-level-plan.md); the grammar of C++23 is complete and
-measured on real code, whose macros it does not expand (see [Support](#support) and [Real code](#real-code)).
+A C++23 parser for valid code, checked against clang. It is built by stages following
+[the plan](../../../docs/cpp-parser-clang-level-plan.md): the grammar of C++23 is complete and measured on real
+code, whose macros it does not expand (see [Support](#support) and [Real code](#real-code)); positions,
+documentation comments and the writer are checked against clang, and the stage on performance remains.
 
 Like the C# parser, it is a hand-written recursive descent parser (`SyntaxParser`) over lazily scanned,
 cached tokens, and builds a semantic AST whose nodes have positions (`Span`). `CppWriter` prints the AST
@@ -37,9 +38,65 @@ else
 }
 ```
 
+## Positions
+
 Spans are offsets in UTF-8 bytes of the input without its byte order mark, from the first token of a
-node to the end of its last token; the translation unit spans the whole input. `TryParse` also accepts the
-UTF-8 bytes of a file, and `LineMap(utf8, unicodeLineBreaks: false)` converts offsets to lines and columns.
+node to the end of its last token, without the trivia around them; the translation unit spans the whole
+input. Every node's span holds exactly the tokens of the node: those `CppWriter.WriteNode` writes for it.
+`TryParse` also accepts the UTF-8 bytes of a file, whose spans are offsets after its byte order mark
+(`Utf8Source.WithoutByteOrderMark`).
+
+`LineMap` converts offsets to 1-based lines and columns and back. For C++ it is built with
+`unicodeLineBreaks: false`: lines end at `\n`, `\r\n` and `\r` (not at U+2028, as in C#). Columns count
+UTF-16 code units, like editors and the Language Server Protocol; `ParseError.Line` and `Column` are the same.
+Both are checked against the lines and columns of clang's AST on the corpus.
+
+```csharp
+var bytes = File.ReadAllBytes("widget.cpp");
+if (CppParser.TryParse(bytes, options, out var unit, out var error))
+{
+    var utf8 = Utf8Source.WithoutByteOrderMark(bytes).Span;
+    var lines = new LineMap(utf8, unicodeLineBreaks: false);
+    var (line, column) = lines.GetLineAndColumn(unit.Declarations[0].Span.Start);
+    var offset = lines.GetOffset(line, column);    // back to the byte offset
+}
+```
+
+## Documentation comments
+
+`Declaration.LeadingTrivia` and `Enumerator.LeadingTrivia` are the white space, comments and directives
+before a declaration. `DocumentationComment` finds the Doxygen comment of a declaration with the rules clang
+uses to attach comments to declarations, and reads its text:
+
+```csharp
+// /// Adds two numbers.
+// /// \return The sum.
+// int add(int a, int b);
+var text = DocumentationComment.GetText(utf8, unit.Declarations[0]);   // "Adds two numbers.\n\\return The sum."
+```
+
+- Documentation comments are `///` and `//!` lines and `/** */` and `/*! */` blocks; like clang, `////` and
+  `/**/` count too. Comments separated only by white space with at most one line break are one comment.
+- The comment of a declaration is the last one before it, unless the text between them has a `;`, `{`, `}`,
+  `#` or `@`: a declaration or a directive between them. Ordinary comments between them do not matter,
+  and neither do access specifiers (`/// The x.` before `public:` documents the member after it too).
+- A trailing comment `///<` (also `//!<`, `/**<`, `/*!<`) on the line of the name of a variable, field or
+  enumerator documents it, before a comment in front of it: `int x; ///< The x.`
+- `Find(utf8, declaration)` gives the span of the comment, `Find(utf8, simpleDeclaration, initDeclarator)` the
+  comment of one of its declarators (`/// Doc.\nint a{1}, b;` documents `a` but not `b`), and
+  `Find(utf8, enumerator)` that of an enumerator. `GetText` drops the markers, one space after them, the `*`
+  that starts the lines of a block and blank first and last lines of a block; Doxygen commands stay as written.
+- Comments in conditions, handlers and lambda captures are not looked for.
+
+The oracle checks that the comments found are those clang attaches to the declarations (its `FullComment`).
+
+## Writer
+
+`CppWriter` writes a tree back as C++: `WriteTranslationUnit` a whole file, `WriteNode` any node on its own
+(a declarator, an initializer with its `=`, an enumerator, a base specifier). The output is literal: the
+parentheses, the forms of initializers, the order of specifiers, digraphs aside, and even `(int...)` and
+`__asm__` are those of the source, so that parsing the output again builds the same tree. Comments and
+formatting are not kept; directives are written as they are in the source, on their own lines.
 
 ## Preprocessor
 
@@ -132,11 +189,17 @@ Ambiguities are resolved like clang, with the symbol table:
 
 ## Checking against clang
 
-`src/PaspanParsers.Tests/Cpp` runs clang as an oracle (see `CLAUDE.md`). For each valid file of the corpus
-the parser must succeed, the printed tree must compile to the same clang AST, and every node must have
-the span and a matching kind of a clang node (`CppKindMap.cs`), so that, for example, `a * b;` read as a
-declaration instead of a multiplication is caught even though it prints the same. The values of literals
-must also be clang's (`CppLiteralChecker.cs`).
+`src/PaspanParsers.Tests/Cpp` runs clang as an oracle (see `CLAUDE.md`). For each valid file of the corpus:
+
+- the parser must succeed, and the printed tree must compile to the same clang AST;
+- every node must have the span and a matching kind of a clang node (`CppKindMap.cs`), so that, for example,
+  `a * b;` read as a declaration instead of a multiplication is caught even though it prints the same. Clang's
+  JSON dump has no ranges for types, declarators, specifiers and initializers: those nodes must start and end
+  at the boundaries of clang's tokens;
+- the span of every node must hold the tokens that `CppWriter.WriteNode` writes for it (`CppNodeText.cs`),
+  which checks the nodes clang has no ranges for beyond their boundaries;
+- the values of literals must be clang's (`CppLiteralChecker.cs`), and so must the documentation comments of
+  the declarations (`CppDocumentationChecker.cs`).
 
 ## Real code
 
@@ -149,9 +212,9 @@ its macros expanded by clang: the failures that remain are errors of the parser.
 |---|---|---|---|---|
 | {fmt} (`include/fmt`, `src`) | 20 | 2 (10.0%) | 2 (10.0%) | 20 (100%) |
 | nlohmann/json (`single_include`) | 2 | 0 | 0 | 2 (100%) |
-| LLVM `llvm/include/llvm/ADT` | 115 | 73 (63.5%) | 83 (72.2%) | 115 (100%) |
-| LLVM `llvm/lib/Support` | 177 | 91 (51.4%) | 151 (85.3%) | 176 (99.4%) |
-| Total | 314 | 166 (52.9%) | 236 (75.2%) | 313 (99.7%) |
+| LLVM `llvm/include/llvm/ADT` | 115 | 73 (63.5%) | 82 (71.3%) | 115 (100%) |
+| LLVM `llvm/lib/Support` | 178 | 91 (51.1%) | 151 (84.8%) | 177 (99.4%) |
+| Total | 315 | 166 (52.7%) | 235 (74.6%) | 314 (99.7%) |
 
 No file fails with its macros expanded: the one file left, `CrashRecoveryContext.cpp`, is not measured that
 way, since clang expands a macro of glibc (`sa_handler`) again in the expanded code and rejects it.
@@ -160,7 +223,8 @@ The files that fail as they are use macros in syntactic positions (`FMT_BEGIN_NA
 `NLOHMANN_JSON_NAMESPACE_BEGIN`, `LLVM_ABI`), which the parser reads as names, test macros of their headers
 in conditional directives, or use names of headers where a heuristic guesses wrong: `Twine(s)` is a call
 when the file never declares something of the type `Twine`. The corpora were measured with clang 18 at
-their revisions of 2026-09-27 ({fmt} 5da4e9a, nlohmann/json 509c070, LLVM 20bbd88).
+their revisions of 2026-09-28 ({fmt} 5da4e9a, nlohmann/json 373005f, LLVM a98dcad4), with all the checks of the
+oracle, including the tokens of spans and documentation comments.
 
 ## Files
 
@@ -169,7 +233,9 @@ their revisions of 2026-09-27 ({fmt} 5da4e9a, nlohmann/json 509c070, LLVM 20bbd8
 | `CppParser.cs` | Entry points: `Parse`, `TryParse`, `TranslationUnitParser` |
 | `CppParseOptions.cs`, `CppParseContext.cs` | Options (language version, macros, include directories, names from headers) and per-parse state |
 | `CppAst.cs` | AST nodes |
-| `CppWriter.cs` | Prints an AST as C++ |
+| `CppWriter.cs` | Prints an AST, or any node, as C++ |
+| `DocumentationComment.cs` | Documentation comments of declarations |
+| `../Common/TextSpan.cs`, `../Common/LineMap.cs` | Spans and lines and columns of offsets, shared with the C# parser |
 | `Parser/Lexer.cs`, `Parser/SyntaxToken.cs` | Tokens and trivia |
 | `Parser/Literals.cs` | Values of literals |
 | `Parser/Preprocessor*.cs` | Directives, conditions and macro expansion in them |

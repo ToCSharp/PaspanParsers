@@ -21,6 +21,13 @@ public sealed record ClangNode(string Kind, TextSpan Span, int NameOffset, bool 
 }
 
 /// <summary>
+/// A documentation comment clang attaches to a declaration of kind <see cref="Kind"/> located at
+/// <see cref="Location"/>. <see cref="Content"/> spans its text, from after the markers (<c>///</c>, <c>///&lt;</c>)
+/// and blank lines at its start to the end of its last paragraph or command; null for a comment without text.
+/// </summary>
+public sealed record ClangComment(string Kind, int Location, TextSpan? Content);
+
+/// <summary>
 /// The names of the types, class and alias templates, function and variable templates and concepts that the
 /// headers included by a file declare, collected
 /// from clang's AST (<see cref="ClangAst.HeaderNames"/>): what our parser, which does not read headers,
@@ -835,6 +842,58 @@ public sealed partial class ClangAst
         }
 
         return nodes;
+    }
+
+    /// <summary>
+    /// The documentation comments clang attaches to the declarations of the main file (their <c>FullComment</c>),
+    /// by the locations of the declarations. Declarations from macro expansions are left out.
+    /// </summary>
+    public List<ClangComment> DocumentationComments(byte[] source, int bomLength)
+    {
+        var comments = new List<ClangComment>();
+        var stack = new Stack<JsonNode>(Declarations);
+        while (stack.Count != 0)
+        {
+            switch (stack.Pop())
+            {
+                case JsonObject obj:
+                    if (obj["inner"] is JsonArray inner
+                        && inner.OfType<JsonObject>().FirstOrDefault(c => c["kind"]?.GetValue<string>() == "FullComment") is { } full
+                        && obj["loc"] is JsonObject loc && !loc.ContainsKey("expansionLoc")
+                        && TryGetOffset(loc, out var location, out _))
+                    {
+                        // A comment with no text has no range
+                        TextSpan? content = null;
+                        if (full["range"] is JsonObject range && TryGetOffset(range["begin"], out var begin, out _) && TryGetOffset(range["end"], out var end, out _))
+                        {
+                            content = new TextSpan(begin.Offset - bomLength, end.Offset + end.TokenLength - bomLength);
+                        }
+
+                        comments.Add(new ClangComment(obj["kind"]?.GetValue<string>(), location.Offset - bomLength, content));
+                    }
+
+                    foreach (var (key, value) in obj)
+                    {
+                        // Implicit declarations and the nodes of comments have no comments of their own
+                        if (value is JsonObject or JsonArray && !(key == "inner" && obj["kind"]?.GetValue<string>() == "FullComment"))
+                        {
+                            stack.Push(value);
+                        }
+                    }
+
+                    break;
+
+                case JsonArray array:
+                    foreach (var item in array)
+                    {
+                        stack.Push(item);
+                    }
+
+                    break;
+            }
+        }
+
+        return comments;
     }
 
     /// <summary>

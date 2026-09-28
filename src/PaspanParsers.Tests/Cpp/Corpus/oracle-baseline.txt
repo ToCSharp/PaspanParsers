@@ -21,3 +21,4 @@ src/PaspanParsers.Tests/Cpp/Corpus/19-Cpp23.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/20-Declarations.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/21-Modules.cpp
 src/PaspanParsers.Tests/Cpp/Corpus/22-GnuExtensions.cpp
+src/PaspanParsers.Tests/Cpp/Corpus/23-DocumentationComments.cpp

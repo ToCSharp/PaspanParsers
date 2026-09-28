@@ -87,7 +87,8 @@ public sealed record HeaderKnowledge(HeaderNames Names, IReadOnlyDictionary<stri
 /// <item>the tree printed back by <see cref="CppWriter"/> must compile to the same clang AST, apart from
 /// positions and comments (see <see cref="ClangAst.Normalize"/>);</item>
 /// <item>the spans and kinds of the nodes must match clang's (<see cref="CppSpanChecker"/>);</item>
-/// <item>the values of literals must be clang's (<see cref="CppLiteralChecker"/>).</item>
+/// <item>the values of literals must be clang's (<see cref="CppLiteralChecker"/>);</item>
+/// <item>the documentation comments of declarations must be those clang attaches (<see cref="CppDocumentationChecker"/>).</item>
 /// </list>
 /// Only the declarations of the main file are compared: our parser does not read included headers.
 /// </summary>
@@ -168,6 +169,12 @@ public static class ClangOracle
         if (valueProblem != null)
         {
             return new OracleResult(OracleStatus.ValueMismatch, valueProblem);
+        }
+
+        var commentProblem = CppDocumentationChecker.Check(utf8, unit, originalAst.DocumentationComments(source, bomLength));
+        if (commentProblem != null)
+        {
+            return new OracleResult(OracleStatus.CommentMismatch, commentProblem);
         }
 
         return new OracleResult(OracleStatus.Passed);

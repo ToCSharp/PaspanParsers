@@ -148,6 +148,18 @@ public sealed class MacroDefinition(string name, IReadOnlyList<string> parameter
 
 public abstract class Declaration : CppNode
 {
+    /// <summary>
+    /// The white space, comments and directives before the declaration, from the end of the previous token
+    /// (empty for a declaration the parser did not read from source); <see cref="DocumentationComment"/>
+    /// finds the documentation comment in it.
+    /// </summary>
+    public TextSpan LeadingTrivia { get; set; }
+
+    /// <summary>
+    /// Where <see cref="DocumentationComment"/> starts to look for the comment of a member after access
+    /// specifiers: before them (<c>/// The x.\npublic:\nint x;</c>). Null for other declarations.
+    /// </summary>
+    internal int? DocumentationStart { get; set; }
 }
 
 /// <summary>
@@ -577,6 +589,12 @@ public sealed class Enumerator(string identifier, Expression value = null) : Cpp
     public string Identifier { get; } = identifier;
     public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
     public Expression Value { get; } = value;
+
+    /// <summary>
+    /// The white space, comments and directives before the enumerator, from the end of the previous token;
+    /// <see cref="DocumentationComment"/> finds the documentation comment in it.
+    /// </summary>
+    public TextSpan LeadingTrivia { get; set; }
 }
 
 // ========================================
@@ -714,6 +732,9 @@ public sealed class InitDeclarator(Declarator declarator, Initializer initialize
     /// <summary>The GNU asm label after the declarator, as written without the parentheses: <c>"name"</c>; or null.</summary>
     public string AsmLabel { get; init; }
 
+    /// <summary>The keyword of <see cref="AsmLabel"/>: <c>asm</c>, <c>__asm__</c> or <c>__asm</c>; null is <c>asm</c>.</summary>
+    public string AsmKeyword { get; init; }
+
     /// <summary>The GNU attributes after the declarator: <c>int a __attribute__((unused));</c>.</summary>
     public IReadOnlyList<AttributeSpecifier> Attributes { get; init; } = [];
 
@@ -822,6 +843,9 @@ public sealed class FunctionDeclarator(Declarator inner, IReadOnlyList<Parameter
 
     /// <summary>The parameters end with <c>...</c>: <c>(int, ...)</c>, <c>(int...)</c> or <c>(...)</c>.</summary>
     public bool IsVariadic { get; init; }
+
+    /// <summary>The <c>...</c> follows the last parameter without a comma: <c>(int...)</c>.</summary>
+    public bool EllipsisWithoutComma { get; init; }
 
     /// <summary>The cv-qualifiers after the parameters, in source order.</summary>
     public IReadOnlyList<string> Qualifiers { get; init; } = [];
@@ -1522,6 +1546,9 @@ public sealed class LambdaExpression(IReadOnlyList<LambdaCapture> captures, Comp
 
     /// <summary>The parameters end with <c>...</c>, as in <see cref="FunctionDeclarator.IsVariadic"/>.</summary>
     public bool IsVariadic { get; init; }
+
+    /// <summary>The <c>...</c> follows the last parameter without a comma, as in <see cref="FunctionDeclarator.EllipsisWithoutComma"/>.</summary>
+    public bool EllipsisWithoutComma { get; init; }
 
     /// <summary><c>mutable</c>, <c>constexpr</c>, <c>consteval</c> and <c>static</c>, in source order.</summary>
     public IReadOnlyList<string> Specifiers { get; init; } = [];

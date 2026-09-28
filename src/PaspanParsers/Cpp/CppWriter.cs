@@ -132,6 +132,100 @@ public sealed class CppWriter
         }
     }
 
+    /// <summary>
+    /// Writes any node on its own, as <see cref="WriteTranslationUnit"/> writes it in its tree: a declaration
+    /// with its ';', an initializer with its '=' or brackets, a declarator without the specifiers before it.
+    /// </summary>
+    public void WriteNode(CppNode node)
+    {
+        switch (node)
+        {
+            case TranslationUnit unit:
+                WriteTranslationUnit(unit);
+                break;
+            case Declaration declaration:
+                WriteDeclaration(declaration);
+                break;
+            case Statement statement:
+                WriteStatement(statement);
+                break;
+            case Expression expression:
+                WriteExpression(expression);
+                break;
+            case TypeId type:
+                WriteTypeId(type);
+                break;
+            case Name name:
+                WriteName(name);
+                break;
+            case DeclSpecifierSequence specifiers:
+                WriteDeclSpecifiers(specifiers);
+                break;
+            case DeclSpecifier specifier:
+                WriteDeclSpecifier(specifier);
+                break;
+            case InitDeclarator declarator:
+                WriteInitDeclarator(null, declarator);
+                break;
+            case Declarator declarator:
+                WriteDeclarator(declarator);
+                break;
+            case Initializer initializer:
+                WriteInitializer(initializer);
+                break;
+            case ParameterDeclaration parameter:
+                WriteParameter(parameter);
+                break;
+            case NoexceptSpecifier noexcept:
+                WriteNoexceptSpecifier(noexcept);
+                break;
+            case TemplateParameter parameter:
+                WriteTemplateParameter(parameter);
+                break;
+            case AttributeSpecifier specifier:
+                WriteAttributeSpecifiers([specifier]);
+                break;
+            case CppAttribute attribute:
+                WriteAttribute(attribute);
+                break;
+            case LambdaCapture capture:
+                WriteLambdaCapture(capture);
+                break;
+            case Requirement requirement:
+                WriteRequirement(requirement);
+                break;
+            case Designator designator:
+                WriteDesignator(designator);
+                break;
+            case Enumerator enumerator:
+                WriteEnumerator(enumerator);
+                break;
+            case BaseSpecifier @base:
+                WriteBaseSpecifier(@base);
+                break;
+            case MemberInitializer initializer:
+                WriteMemberInitializer(initializer);
+                break;
+            case UsingDeclarator declarator:
+                WriteUsingDeclarator(declarator);
+                break;
+            case ConditionDeclaration condition:
+                WriteCondition(condition);
+                break;
+            case ForRangeDeclaration declaration:
+                WriteForRangeDeclaration(declaration);
+                break;
+            case CatchClause handler:
+                WriteHandlers([handler]);
+                break;
+            case PreprocessorDirective directive:
+                Directives([directive]);
+                break;
+            default:
+                throw new NotSupportedException($"Unknown node {node?.GetType().Name}");
+        }
+    }
+
     // ========================================
     // Translation Unit
     // ========================================
@@ -314,18 +408,7 @@ public sealed class CppWriter
                     var declarator = usingDeclaration.Declarators[i];
                     Token(i > 0 ? "," : "");
                     Space();
-                    Directives(declarator);
-                    if (declarator.IsTypename)
-                    {
-                        Token("typename");
-                        Space();
-                    }
-
-                    WriteName(declarator.Name);
-                    if (declarator.IsPackExpansion)
-                    {
-                        Token("...");
-                    }
+                    WriteUsingDeclarator(declarator);
                 }
 
                 Token(";");
@@ -366,6 +449,22 @@ public sealed class CppWriter
                 break;
             default:
                 throw new NotSupportedException($"Unknown declaration {declaration.GetType().Name}");
+        }
+    }
+
+    private void WriteUsingDeclarator(UsingDeclarator declarator)
+    {
+        Directives(declarator);
+        if (declarator.IsTypename)
+        {
+            Token("typename");
+            Space();
+        }
+
+        WriteName(declarator.Name);
+        if (declarator.IsPackExpansion)
+        {
+            Token("...");
         }
     }
 
@@ -428,13 +527,7 @@ public sealed class CppWriter
                 var initializer = function.Initializers[i];
                 Token(i > 0 ? "," : "");
                 Space();
-                Directives(initializer);
-                WriteName(initializer.Member);
-                WriteInitializer(initializer.Initializer);
-                if (initializer.IsPackExpansion)
-                {
-                    Token("...");
-                }
+                WriteMemberInitializer(initializer);
             }
 
             _indentLevel--;
@@ -448,6 +541,17 @@ public sealed class CppWriter
         }
 
         NewLine();
+    }
+
+    private void WriteMemberInitializer(MemberInitializer initializer)
+    {
+        Directives(initializer);
+        WriteName(initializer.Member);
+        WriteInitializer(initializer.Initializer);
+        if (initializer.IsPackExpansion)
+        {
+            Token("...");
+        }
     }
 
     private void WriteVirtSpecifiers(IReadOnlyList<string> specifiers)
@@ -707,7 +811,7 @@ public sealed class CppWriter
         if (declarator.AsmLabel != null)
         {
             Space();
-            Token("asm");
+            Token(declarator.AsmKeyword ?? "asm");
             Token("(");
             _builder.Append(declarator.AsmLabel);
             Token(")");
@@ -755,34 +859,39 @@ public sealed class CppWriter
             Space();
             Token(i == 0 ? ":" : ",");
             Space();
-            Directives(@base);
-            WriteLeadingAttributes(@base.Attributes);
-            if (@base.IsVirtual && @base.IsVirtualFirst)
-            {
-                Token("virtual");
-                Space();
-            }
-
-            if (@base.Access != null)
-            {
-                Token(@base.Access);
-                Space();
-            }
-
-            if (@base.IsVirtual && !@base.IsVirtualFirst)
-            {
-                Token("virtual");
-                Space();
-            }
-
-            WriteName(@base.Name);
-            if (@base.IsPackExpansion)
-            {
-                Token("...");
-            }
+            WriteBaseSpecifier(@base);
         }
 
         WriteDeclarationBlock(@class.Members, @class.CloseBraceDirectives);
+    }
+
+    private void WriteBaseSpecifier(BaseSpecifier @base)
+    {
+        Directives(@base);
+        WriteLeadingAttributes(@base.Attributes);
+        if (@base.IsVirtual && @base.IsVirtualFirst)
+        {
+            Token("virtual");
+            Space();
+        }
+
+        if (@base.Access != null)
+        {
+            Token(@base.Access);
+            Space();
+        }
+
+        if (@base.IsVirtual && !@base.IsVirtualFirst)
+        {
+            Token("virtual");
+            Space();
+        }
+
+        WriteName(@base.Name);
+        if (@base.IsPackExpansion)
+        {
+            Token("...");
+        }
     }
 
     private void WriteEnumSpecifier(EnumSpecifier @enum)
@@ -820,18 +929,7 @@ public sealed class CppWriter
         _indentLevel++;
         for (var i = 0; i < @enum.Enumerators.Count; i++)
         {
-            var enumerator = @enum.Enumerators[i];
-            Directives(enumerator);
-            Token(enumerator.Identifier);
-            WriteAttributeSpecifiers(enumerator.Attributes);
-            if (enumerator.Value != null)
-            {
-                Space();
-                Token("=");
-                Space();
-                WriteExpression(enumerator.Value);
-            }
-
+            WriteEnumerator(@enum.Enumerators[i]);
             if (i < @enum.Enumerators.Count - 1 || @enum.HasTrailingComma)
             {
                 Token(",");
@@ -843,6 +941,20 @@ public sealed class CppWriter
         Directives(@enum.CloseBraceDirectives);
         _indentLevel--;
         Token("}");
+    }
+
+    private void WriteEnumerator(Enumerator enumerator)
+    {
+        Directives(enumerator);
+        Token(enumerator.Identifier);
+        WriteAttributeSpecifiers(enumerator.Attributes);
+        if (enumerator.Value != null)
+        {
+            Space();
+            Token("=");
+            Space();
+            WriteExpression(enumerator.Value);
+        }
     }
 
     private void WriteRequiresClause(Expression constraint)
@@ -970,7 +1082,7 @@ public sealed class CppWriter
         }
     }
 
-    private void WriteParameters(IReadOnlyList<ParameterDeclaration> parameters, bool isVariadic)
+    private void WriteParameters(IReadOnlyList<ParameterDeclaration> parameters, bool isVariadic, bool ellipsisWithoutComma = false)
     {
         for (var i = 0; i < parameters.Count; i++)
         {
@@ -985,7 +1097,7 @@ public sealed class CppWriter
 
         if (isVariadic)
         {
-            if (parameters.Count > 0)
+            if (parameters.Count > 0 && !ellipsisWithoutComma)
             {
                 Token(",");
                 Space();
@@ -1025,7 +1137,7 @@ public sealed class CppWriter
     {
         WriteDeclarator(function.Inner);
         Token("(");
-        WriteParameters(function.Parameters, function.IsVariadic);
+        WriteParameters(function.Parameters, function.IsVariadic, function.EllipsisWithoutComma);
         Token(")");
         foreach (var qualifier in function.Qualifiers)
         {
@@ -1243,9 +1355,7 @@ public sealed class CppWriter
                 Space();
                 Token("(");
                 WriteInitStatement(rangeFor.InitStatement);
-                Directives(rangeFor.Declaration);
-                WriteLeadingAttributes(rangeFor.Declaration.Attributes);
-                WriteSpecifiersAndDeclarator(rangeFor.Declaration.Specifiers, rangeFor.Declaration.Declarator);
+                WriteForRangeDeclaration(rangeFor.Declaration);
                 Space();
                 Token(":");
                 Space();
@@ -1397,6 +1507,13 @@ public sealed class CppWriter
             default:
                 throw new NotSupportedException($"Unknown condition {condition?.GetType().Name}");
         }
+    }
+
+    private void WriteForRangeDeclaration(ForRangeDeclaration declaration)
+    {
+        Directives(declaration);
+        WriteLeadingAttributes(declaration.Attributes);
+        WriteSpecifiersAndDeclarator(declaration.Specifiers, declaration.Declarator);
     }
 
     private void WriteReturnStatement(string keyword, Expression expression)
@@ -1686,18 +1803,7 @@ public sealed class CppWriter
             case DesignatedInitializerExpression designated:
                 foreach (var designator in designated.Designators)
                 {
-                    Directives(designator);
-                    if (designator.Index != null)
-                    {
-                        Token("[");
-                        WriteExpression(designator.Index);
-                        Token("]");
-                    }
-                    else
-                    {
-                        Token(".");
-                        Token(designator.Member);
-                    }
+                    WriteDesignator(designator);
                 }
 
                 if (designated.HasEquals)
@@ -1748,6 +1854,22 @@ public sealed class CppWriter
     /// <summary>
     /// Expressions separated by commas: arguments, subscripts and the elements of lists.
     /// </summary>
+    private void WriteDesignator(Designator designator)
+    {
+        Directives(designator);
+        if (designator.Index != null)
+        {
+            Token("[");
+            WriteExpression(designator.Index);
+            Token("]");
+        }
+        else
+        {
+            Token(".");
+            Token(designator.Member);
+        }
+    }
+
     private void WriteExpressionList(IReadOnlyList<Expression> expressions)
     {
         for (var i = 0; i < expressions.Count; i++)
@@ -1861,7 +1983,7 @@ public sealed class CppWriter
         if (lambda.Parameters != null)
         {
             Token("(");
-            WriteParameters(lambda.Parameters, lambda.IsVariadic);
+            WriteParameters(lambda.Parameters, lambda.IsVariadic, lambda.EllipsisWithoutComma);
             Token(")");
         }
 
@@ -1935,52 +2057,60 @@ public sealed class CppWriter
         foreach (var requirement in requires.Requirements)
         {
             Space();
-            Directives(requirement);
-            switch (requirement)
-            {
-                case SimpleRequirement simple:
-                    WriteExpression(simple.Expression);
-                    break;
-                case TypeRequirement type:
-                    Token("typename");
-                    Space();
-                    WriteName(type.Type);
-                    break;
-                case CompoundRequirement compound:
-                    Token("{");
-                    Space();
-                    WriteExpression(compound.Expression);
-                    Space();
-                    Token("}");
-                    if (compound.IsNoexcept)
-                    {
-                        Space();
-                        Token("noexcept");
-                    }
-
-                    if (compound.TypeConstraint != null)
-                    {
-                        Space();
-                        Token("->");
-                        Space();
-                        WriteName(compound.TypeConstraint);
-                    }
-
-                    break;
-                case NestedRequirement nested:
-                    Token("requires");
-                    Space();
-                    WriteExpression(nested.Constraint);
-                    break;
-                default:
-                    throw new NotSupportedException($"Unknown requirement {requirement.GetType().Name}");
-            }
-
-            Token(";");
+            WriteRequirement(requirement);
         }
 
         Space();
         Token("}");
+    }
+
+    /// <summary>
+    /// A requirement of a requires-expression, with its ';'.
+    /// </summary>
+    private void WriteRequirement(Requirement requirement)
+    {
+        Directives(requirement);
+        switch (requirement)
+        {
+            case SimpleRequirement simple:
+                WriteExpression(simple.Expression);
+                break;
+            case TypeRequirement type:
+                Token("typename");
+                Space();
+                WriteName(type.Type);
+                break;
+            case CompoundRequirement compound:
+                Token("{");
+                Space();
+                WriteExpression(compound.Expression);
+                Space();
+                Token("}");
+                if (compound.IsNoexcept)
+                {
+                    Space();
+                    Token("noexcept");
+                }
+
+                if (compound.TypeConstraint != null)
+                {
+                    Space();
+                    Token("->");
+                    Space();
+                    WriteName(compound.TypeConstraint);
+                }
+
+                break;
+            case NestedRequirement nested:
+                Token("requires");
+                Space();
+                WriteExpression(nested.Constraint);
+                break;
+            default:
+                throw new NotSupportedException($"Unknown requirement {requirement.GetType().Name}");
+        }
+
+        Token(";");
     }
 
     // ========================================
@@ -2121,30 +2251,34 @@ public sealed class CppWriter
                     Space();
                 }
 
-                var attribute = specifier.Attributes[i];
-                Directives(attribute);
-                if (attribute.Namespace != null)
-                {
-                    Token(attribute.Namespace);
-                    Token("::");
-                }
-
-                Token(attribute.Name);
-                if (attribute.Arguments != null)
-                {
-                    Token("(");
-                    _builder.Append(attribute.Arguments);
-                    Token(")");
-                }
-
-                if (attribute.IsPackExpansion)
-                {
-                    Token("...");
-                }
+                WriteAttribute(specifier.Attributes[i]);
             }
 
             Token("]");
             Token("]");
+        }
+    }
+
+    private void WriteAttribute(CppAttribute attribute)
+    {
+        Directives(attribute);
+        if (attribute.Namespace != null)
+        {
+            Token(attribute.Namespace);
+            Token("::");
+        }
+
+        Token(attribute.Name);
+        if (attribute.Arguments != null)
+        {
+            Token("(");
+            _builder.Append(attribute.Arguments);
+            Token(")");
+        }
+
+        if (attribute.IsPackExpansion)
+        {
+            Token("...");
         }
     }
 

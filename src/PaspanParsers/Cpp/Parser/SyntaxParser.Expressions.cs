@@ -705,12 +705,13 @@ internal ref partial struct SyntaxParser
 
             var nameStart = NodeStart;
             var identifier = TryEatIdentifier();
-            if (identifier == null || !TryEatPunctuator(")"))
+            if (identifier == null)
             {
                 return null;
             }
 
-            return Finish(new SizeOfPackExpression(Finish(new IdentifierName(identifier), nameStart)), start);
+            var name = Finish(new IdentifierName(identifier), nameStart);
+            return TryEatPunctuator(")") ? Finish(new SizeOfPackExpression(name), start) : null;
         }
 
         var type = TryParseParenthesizedTypeId();

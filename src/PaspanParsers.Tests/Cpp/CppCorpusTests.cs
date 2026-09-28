@@ -23,7 +23,7 @@ public class CppCorpusTests
     private static readonly string[] SourceExtensions = [".cpp", ".cc", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl"];
 
     private static readonly string RepositoryRoot = FindRepositoryRoot();
-    private static readonly string CorpusDirectory = Path.Combine(RepositoryRoot, "src", "PaspanParsers.Tests", "Cpp", "Corpus");
+    internal static readonly string CorpusDirectory = Path.Combine(RepositoryRoot, "src", "PaspanParsers.Tests", "Cpp", "Corpus");
     private static readonly string BaselinePath = Path.Combine(CorpusDirectory, "oracle-baseline.txt");
 
     public TestContext TestContext { get; set; }

@@ -45,7 +45,11 @@ public sealed record DeclarationRule(Func<ICppNode, int> Name, params string[] K
 /// </summary>
 public sealed record Ancestry(ICppNode Node, Ancestry Parent);
 
-/// <summary>Clang's dump has no ranges for these nodes: they start and end at token boundaries.</summary>
+/// <summary>
+/// Clang's dump has no ranges for these nodes, such as types, declarators, specifiers and initializers: they
+/// start and end at token boundaries. Like every node, they also hold the tokens that
+/// <see cref="CppWriter.WriteNode"/> writes for them (<see cref="CppNodeText"/>).
+/// </summary>
 public sealed record TokensRule : KindRule;
 
 /// <summary>
