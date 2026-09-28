@@ -15,11 +15,31 @@ internal static class Literals
     // ========================================
 
     /// <summary>
-    /// An integer or floating literal: its value, its suffix and its user-defined suffix.
+    /// An integer or floating literal: its kind, its suffix and its user-defined suffix. Its value is computed
+    /// when it is first read.
     /// </summary>
     public static LiteralExpression Number(string text)
     {
-        var s = text.Replace("'", "");
+        var number = ScanNumber(text);
+        var suffix = number.SuffixStart < number.Digits.Length ? number.Digits[number.SuffixStart..] : null;
+        return new LiteralExpression(number.IsFloating ? LiteralKind.Floating : LiteralKind.Integer, text, NotComputed)
+        {
+            Suffix = suffix == null || suffix[0] == '_' ? null : suffix,
+            UserDefinedSuffix = suffix != null && suffix[0] == '_' ? suffix : null,
+        };
+    }
+
+    /// <summary>
+    /// The parts of a number without digit separators (<see cref="Digits"/>): the radix, the integer and
+    /// fraction digits, the exponent and where the suffix starts.
+    /// </summary>
+    private readonly record struct NumberParts(
+        string Digits, int Radix, int IntegerStart, int IntegerEnd, int FractionStart, int FractionEnd, int Exponent,
+        bool IsFloating, int SuffixStart);
+
+    private static NumberParts ScanNumber(string text)
+    {
+        var s = text.Contains('\'') ? text.Replace("'", "") : text;
         var radix = 10;
         var i = 0;
         if (s.Length > 1 && s[0] == '0' && s[1] is 'x' or 'X')
@@ -80,36 +100,33 @@ internal static class Literals
             }
         }
 
-        var suffix = s[i..];
-        object value;
-        if (isFloating)
-        {
-            value = radix == 16
-                ? HexFloat(s[integerStart..integerEnd], s[fractionStart..fractionEnd], exponent)
-                : double.Parse(s.AsSpan(0, i), NumberStyles.Float, CultureInfo.InvariantCulture);
-        }
-        else
-        {
-            // A decimal number that starts with 0 is octal
-            var digits = s[integerStart..integerEnd];
-            if (radix == 10 && digits.Length > 1 && digits[0] == '0')
-            {
-                radix = 8;
-            }
+        return new NumberParts(s, radix, integerStart, integerEnd, fractionStart, fractionEnd, exponent, isFloating, i);
+    }
 
-            value = ParseInteger(digits, radix);
+    /// <summary>
+    /// The value of an integer (<see cref="ulong"/>, null when it does not fit in 64 bits) or floating literal
+    /// (<see cref="double"/>).
+    /// </summary>
+    private static object NumberValue(string text)
+    {
+        var number = ScanNumber(text);
+        var s = number.Digits.AsSpan();
+        var integer = s[number.IntegerStart..number.IntegerEnd];
+        if (number.IsFloating)
+        {
+            return number.Radix == 16
+                ? HexFloat(integer, s[number.FractionStart..number.FractionEnd], number.Exponent)
+                : double.Parse(s[..number.SuffixStart], NumberStyles.Float, CultureInfo.InvariantCulture);
         }
 
-        return new LiteralExpression(isFloating ? LiteralKind.Floating : LiteralKind.Integer, text, value)
-        {
-            Suffix = suffix.Length == 0 || suffix[0] == '_' ? null : suffix,
-            UserDefinedSuffix = suffix.Length != 0 && suffix[0] == '_' ? suffix : null,
-        };
+        // A decimal number that starts with 0 is octal
+        var radix = number.Radix == 10 && integer.Length > 1 && integer[0] == '0' ? 8 : number.Radix;
+        return ParseInteger(integer, radix);
     }
 
     private static bool IsDigit(char c, int radix) => radix == 16 ? char.IsAsciiHexDigit(c) : char.IsAsciiDigit(c);
 
-    private static object ParseInteger(string digits, int radix)
+    private static object ParseInteger(ReadOnlySpan<char> digits, int radix)
     {
         ulong value = 0;
         foreach (var c in digits)
@@ -126,9 +143,9 @@ internal static class Literals
         return value;
     }
 
-    private static double HexFloat(string integer, string fraction, int exponent)
+    private static double HexFloat(ReadOnlySpan<char> integer, ReadOnlySpan<char> fraction, int exponent)
     {
-        var mantissa = BigInteger.Parse("0" + integer + fraction, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture);
+        var mantissa = BigInteger.Parse("0" + integer.ToString() + fraction.ToString(), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture);
         return Math.ScaleB((double)mantissa, exponent - 4 * fraction.Length);
     }
 
@@ -137,42 +154,54 @@ internal static class Literals
     // ========================================
 
     /// <summary>
-    /// A character literal: its encoding, value and user-defined suffix.
+    /// A character literal: its encoding and user-defined suffix. Its value is computed when it is first read.
     /// </summary>
     public static LiteralExpression Character(string text)
     {
-        var (encoding, _, body, suffix) = Split(text);
-        var units = new List<uint>();
-        object value = null;
-        if (TryDecode(body, isRaw: false, encoding, units))
-        {
-            if (units.Count == 1)
-            {
-                value = (long)units[0];
-            }
-            else if (units.Count > 1 && encoding == CharacterEncoding.Ordinary)
-            {
-                // A multicharacter literal: an int, as GCC and clang compute it
-                var multicharacter = 0;
-                foreach (var unit in units)
-                {
-                    multicharacter = (multicharacter << 8) | (byte)unit;
-                }
-
-                value = (long)multicharacter;
-            }
-        }
-
-        return new LiteralExpression(LiteralKind.Character, text, value) { Encoding = encoding, UserDefinedSuffix = suffix };
+        var (encoding, _, suffix) = Prefix(text);
+        return new LiteralExpression(LiteralKind.Character, text, NotComputed) { Encoding = encoding, UserDefinedSuffix = suffix };
     }
 
     /// <summary>
-    /// A string literal on its own: its encoding, value and user-defined suffix.
+    /// The value of a character literal: the value of its code unit, or the <c>int</c> value of a
+    /// multicharacter literal as GCC and clang compute it.
+    /// </summary>
+    private static object CharacterValue(string text)
+    {
+        var (encoding, _, _) = Prefix(text);
+        var units = new List<uint>();
+        if (!TryDecode(Split(text).Body, isRaw: false, encoding, units))
+        {
+            return null;
+        }
+
+        if (units.Count == 1)
+        {
+            return (long)units[0];
+        }
+
+        if (units.Count > 1 && encoding == CharacterEncoding.Ordinary)
+        {
+            var multicharacter = 0;
+            foreach (var unit in units)
+            {
+                multicharacter = (multicharacter << 8) | (byte)unit;
+            }
+
+            return (long)multicharacter;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A string literal on its own: its encoding and user-defined suffix, and whether it is raw. Its value is
+    /// computed when it is first read.
     /// </summary>
     public static LiteralExpression String(string text)
     {
-        var (encoding, isRaw, body, suffix) = Split(text);
-        return new LiteralExpression(LiteralKind.String, text, StringValue([(body, isRaw)], encoding))
+        var (encoding, isRaw, suffix) = Prefix(text);
+        return new LiteralExpression(LiteralKind.String, text, NotComputed)
         {
             Encoding = encoding,
             IsRaw = isRaw,
@@ -182,37 +211,82 @@ internal static class Literals
 
     /// <summary>
     /// Adjacent string literals. The concatenation has the encoding of the parts with a prefix, and its
-    /// parts are decoded in that encoding ([lex.string]).
+    /// parts are decoded in that encoding ([lex.string]) when its value is first read.
     /// </summary>
     public static ConcatenatedStringExpression Concatenate(IReadOnlyList<LiteralExpression> parts)
     {
-        var encoding = parts.Select(p => p.Encoding).FirstOrDefault(e => e != CharacterEncoding.Ordinary);
-        var bodies = parts.Select(p => (Split(p.Text).Body, p.IsRaw)).ToList();
-        return new ConcatenatedStringExpression(parts, StringValue(bodies, encoding))
+        var encoding = CharacterEncoding.Ordinary;
+        string suffix = null;
+        foreach (var part in parts)
         {
-            Encoding = encoding,
-            UserDefinedSuffix = parts.Select(p => p.UserDefinedSuffix).FirstOrDefault(s => s != null),
-        };
+            encoding = encoding == CharacterEncoding.Ordinary ? part.Encoding : encoding;
+            suffix ??= part.UserDefinedSuffix;
+        }
+
+        return new ConcatenatedStringExpression(parts, NotComputed) { Encoding = encoding, UserDefinedSuffix = suffix };
     }
 
     /// <summary>
-    /// The parts of a character or string literal: the encoding of its prefix, whether it is raw, the
-    /// text between the quotes (the delimiters and parentheses of a raw string) and the user-defined suffix.
+    /// The value of <paramref name="literal"/>, computed from its text.
     /// </summary>
-    private static (CharacterEncoding Encoding, bool IsRaw, byte[] Body, string Suffix) Split(string text)
+    public static object Value(LiteralExpression literal) => literal.Kind switch
+    {
+        LiteralKind.Integer or LiteralKind.Floating => NumberValue(literal.Text),
+        LiteralKind.Character => CharacterValue(literal.Text),
+        LiteralKind.String => StringValue([Split(literal.Text)], literal.Encoding),
+        _ => null,
+    };
+
+    /// <summary>
+    /// The value of <paramref name="concatenation"/>, computed from the texts of its parts.
+    /// </summary>
+    public static object Value(ConcatenatedStringExpression concatenation)
+    {
+        return StringValue(concatenation.Parts.Select(p => Split(p.Text)).ToList(), concatenation.Encoding);
+    }
+
+    /// <summary>
+    /// The value of a literal the parser creates, until it is first read.
+    /// </summary>
+    internal static readonly object NotComputed = new();
+
+    /// <summary>
+    /// The encoding of the prefix of a character or string literal, whether it is raw and its user-defined suffix.
+    /// </summary>
+    private static (CharacterEncoding Encoding, bool IsRaw, string Suffix) Prefix(string text)
+    {
+        var encoding = CharacterEncoding.Ordinary;
+        var i = 0;
+        if (text.StartsWith("u8", StringComparison.Ordinal))
+        {
+            encoding = CharacterEncoding.Utf8;
+            i = 2;
+        }
+        else if (text.Length > 0 && text[0] is 'u' or 'U' or 'L')
+        {
+            encoding = text[0] switch
+            {
+                'u' => CharacterEncoding.Utf16,
+                'U' => CharacterEncoding.Utf32,
+                _ => CharacterEncoding.Wide,
+            };
+            i = 1;
+        }
+
+        var isRaw = i < text.Length && text[i] == 'R';
+        var quote = text[isRaw ? i + 1 : i];
+        var close = text.LastIndexOf(quote);
+        return (encoding, isRaw, close + 1 < text.Length ? text[(close + 1)..] : null);
+    }
+
+    /// <summary>
+    /// The text between the quotes of a character or string literal (between the parentheses of a raw string)
+    /// and whether it is raw.
+    /// </summary>
+    private static (byte[] Body, bool IsRaw) Split(string text)
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes(text);
         var prefixLength = Lexer.ScanLiteralPrefix(bytes, out var isRaw);
-        var prefix = System.Text.Encoding.UTF8.GetString(bytes, 0, prefixLength - (isRaw ? 1 : 0));
-        var encoding = prefix switch
-        {
-            "u8" => CharacterEncoding.Utf8,
-            "u" => CharacterEncoding.Utf16,
-            "U" => CharacterEncoding.Utf32,
-            "L" => CharacterEncoding.Wide,
-            _ => CharacterEncoding.Ordinary,
-        };
-
         var quote = bytes[prefixLength];
         var close = Array.LastIndexOf(bytes, quote);
         var body = bytes[(prefixLength + 1)..close];
@@ -223,8 +297,7 @@ internal static class Literals
             body = body[(open + 1)..(body.Length - open - 1)];
         }
 
-        var suffix = close + 1 < bytes.Length ? System.Text.Encoding.UTF8.GetString(bytes, close + 1, bytes.Length - close - 1) : null;
-        return (encoding, isRaw, body, suffix);
+        return (body, isRaw);
     }
 
     private static object StringValue(IEnumerable<(byte[] Body, bool IsRaw)> parts, CharacterEncoding encoding)

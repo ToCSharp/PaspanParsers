@@ -15,4 +15,13 @@ public sealed class CppParseContext(CppParseOptions options) : ParseContext
     internal SyntaxCache SyntaxCache => _syntaxCache ??= new SyntaxCache(Options);
 
     private SyntaxCache _syntaxCache;
+
+    /// <summary>
+    /// Called when the parse is over: the caches go back to their pools.
+    /// </summary>
+    internal void ReleaseCaches()
+    {
+        _syntaxCache?.Release();
+        _syntaxCache = null;
+    }
 }

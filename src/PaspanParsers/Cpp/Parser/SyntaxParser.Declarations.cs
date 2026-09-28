@@ -732,13 +732,30 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private readonly void DeclareName(DeclSpecifierSequence specifiers, Declarator declarator)
     {
-        if (specifiers?.Specifiers.Any(IsTypeSpecifier) != true)
+        if (specifiers == null)
+        {
+            return;
+        }
+
+        var hasType = false;
+        var isTypedef = false;
+        NamedTypeSpecifier named = null;
+        var list = specifiers.Specifiers;
+        for (var i = 0; i < list.Count; i++)
+        {
+            var specifier = list[i];
+            hasType |= IsTypeSpecifier(specifier);
+            isTypedef |= specifier is KeywordSpecifier { Keyword: "typedef" };
+            named ??= specifier as NamedTypeSpecifier;
+        }
+
+        if (!hasType)
         {
             return;
         }
 
         // A name that is not known and declares something is a type in the rest of the file: StringRef s; then StringRef(s)
-        if (DeclaredName(declarator) != null && specifiers.Specifiers.OfType<NamedTypeSpecifier>().FirstOrDefault() is { IsTypename: false } named)
+        if (named is { IsTypename: false } && DeclaredName(declarator) != null)
         {
             _cache.Symbols.LearnType(named.Name);
         }
@@ -755,7 +772,6 @@ internal ref partial struct SyntaxParser
 
         if (DeclaredName(declarator)?.Name is IdentifierName identifier)
         {
-            var isTypedef = specifiers?.Specifiers.Any(s => s is KeywordSpecifier { Keyword: "typedef" }) == true;
             if (isTypedef)
             {
                 _cache.Symbols.DeclareTypeAlias(identifier.Identifier, AliasedClass(specifiers, declarator is NameDeclarator ? null : declarator));

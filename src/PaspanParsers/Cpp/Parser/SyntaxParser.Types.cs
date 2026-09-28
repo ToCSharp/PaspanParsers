@@ -318,17 +318,25 @@ internal ref partial struct SyntaxParser
             return Finish(new DecltypeSpecifier(null), start);
         }
 
-        var mark = Save();
-        var name = ParseName(NameContext.Type);
-        if (name is QualifiedName)
+        // The operand is parsed once: nested decltype would take exponential time
+        var decltype = ParseDecltypeName();
+        if (decltype == null)
         {
-            return Finish(new NamedTypeSpecifier(name), start);
+            return null;
         }
 
-        Restore(mark);
-        EatToken();
-        var expression = ParseParenthesizedDecltypeOperand();
-        return expression == null ? null : Finish(new DecltypeSpecifier(expression), start);
+        if (IsPunctuator("::") && IsNameComponentStart(Peek(1)))
+        {
+            var mark = Save();
+            if (ParseName(NameContext.Type, decltype) is QualifiedName name)
+            {
+                return Finish(new NamedTypeSpecifier(name), start);
+            }
+
+            Restore(mark);
+        }
+
+        return Finish(new DecltypeSpecifier(decltype.Expression), start);
     }
 
     // ========================================

@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace PaspanParsers.Cpp;
 
 /// <summary>
@@ -68,7 +70,23 @@ internal sealed class Symbols
         /// <summary>The enclosing namespace or class, for the scopes of namespaces, classes and enumerations.</summary>
         public Scope Parent { get; } = parent;
 
-        public Dictionary<string, Symbol> Names { get; } = new(StringComparer.Ordinal);
+        // The names declared here; created with the first, as most blocks declare none
+        private Dictionary<string, Symbol> _names;
+
+        public bool TryGetName(string name, out Symbol symbol)
+        {
+            if (_names == null)
+            {
+                symbol = default;
+                return false;
+            }
+
+            return _names.TryGetValue(name, out symbol);
+        }
+
+        public void SetName(string name, Symbol symbol) => (_names ??= new(StringComparer.Ordinal))[name] = symbol;
+
+        public void RemoveName(string name) => _names?.Remove(name);
 
         /// <summary>The namespaces, classes and enumerations declared here, and namespace aliases, by name.</summary>
         public Dictionary<string, Scope> Members { get; set; }
@@ -95,8 +113,16 @@ internal sealed class Symbols
     // left, a member scope that was added (with the one it replaced) or a nominated scope
     private readonly record struct Change(ChangeKind Kind, Scope Scope, string Name, Symbol? Previous, Scope Other);
 
+    /// <summary>
+    /// The largest log kept for reuse by the next parse on the thread (about 4 MB).
+    /// </summary>
+    private const int MaxPooledLog = 1 << 17;
+
+    [ThreadStatic]
+    private static List<Change> s_pooledLog;
+
     private readonly CppParseOptions _options;
-    private readonly List<Change> _log = [];
+    private List<Change> _log = RentLog();
     private readonly List<Scope> _active;
     private readonly Scope _global = new(ScopeKind.Namespace, null, null);
 
@@ -310,7 +336,7 @@ internal sealed class Symbols
         }
 
         var scope = DeclarationScope();
-        if (kind == SymbolKind.Value && scope.Names.TryGetValue(name, out var previous) && previous.Kind == SymbolKind.ValueTemplate)
+        if (kind == SymbolKind.Value && scope.TryGetName(name, out var previous) && previous.Kind == SymbolKind.ValueTemplate)
         {
             return;
         }
@@ -329,9 +355,9 @@ internal sealed class Symbols
     private void Declare(Scope scope, string name, Symbol symbol)
     {
         // A variable or function hides a class of the same name: struct stat; int stat(const char *, struct stat *);
-        Symbol? previous = scope.Names.TryGetValue(name, out var existing) ? existing : null;
+        Symbol? previous = scope.TryGetName(name, out var existing) ? existing : null;
         _log.Add(new Change(ChangeKind.Declare, scope, name, previous, null));
-        scope.Names[name] = symbol;
+        scope.SetName(name, symbol);
     }
 
     /// <summary>
@@ -489,6 +515,7 @@ internal sealed class Symbols
     /// </summary>
     private static string QualifierText(Name qualifier, bool global)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack();
         switch (qualifier)
         {
             case null:
@@ -526,7 +553,7 @@ internal sealed class Symbols
 
     private static Symbol? FindIn(Scope scope, string name, int depth)
     {
-        if (scope.Names.TryGetValue(name, out var symbol))
+        if (scope.TryGetName(name, out var symbol))
         {
             return symbol;
         }
@@ -612,6 +639,7 @@ internal sealed class Symbols
     /// </summary>
     private Scope ResolveScope(Name name, bool global)
     {
+        RuntimeHelpers.EnsureSufficientExecutionStack();
         switch (name)
         {
             case null:
@@ -699,12 +727,12 @@ internal sealed class Symbols
             scope = new Scope(ScopeKind.Class, className, null);
             foreach (var member in members)
             {
-                scope.Names[member] = new Symbol(_options.FunctionTemplateNames.Contains(member) ? SymbolKind.ValueTemplate : SymbolKind.Value, false);
+                scope.SetName(member, new Symbol(_options.FunctionTemplateNames.Contains(member) ? SymbolKind.ValueTemplate : SymbolKind.Value, false));
             }
 
             // The injected-class-name: classes of the same name in other scopes may have a member of the name.
             // That of a class template takes template arguments: formatter<T>::format in a derived class
-            scope.Names[className] = new Symbol(_options.TemplateNames.Contains(className) ? SymbolKind.Template : SymbolKind.Type, false);
+            scope.SetName(className, new Symbol(_options.TemplateNames.Contains(className) ? SymbolKind.Template : SymbolKind.Type, false));
             _optionClasses[className] = scope;
         }
 
@@ -797,6 +825,28 @@ internal sealed class Symbols
 
     public int Checkpoint() => _log.Count;
 
+    /// <summary>
+    /// Called when the parse is over: the log, which grows with every scope and declaration, is kept for
+    /// the next parse on this thread.
+    /// </summary>
+    public void Release()
+    {
+        var log = _log;
+        _log = null;
+        if (log.Capacity <= MaxPooledLog)
+        {
+            log.Clear();
+            s_pooledLog = log;
+        }
+    }
+
+    private static List<Change> RentLog()
+    {
+        var log = s_pooledLog ?? [];
+        s_pooledLog = null;
+        return log;
+    }
+
     public void Rollback(int checkpoint)
     {
         for (var i = _log.Count - 1; i >= checkpoint; i--)
@@ -807,11 +857,11 @@ internal sealed class Symbols
                 case ChangeKind.Declare:
                     if (change.Previous is { } previous)
                     {
-                        change.Scope.Names[change.Name] = previous;
+                        change.Scope.SetName(change.Name, previous);
                     }
                     else
                     {
-                        change.Scope.Names.Remove(change.Name);
+                        change.Scope.RemoveName(change.Name);
                     }
 
                     break;

@@ -79,12 +79,19 @@ public static class CppParser
     {
         var reader = new SpanReader(source.Span);
         var context = new CppParseContext(options);
-        if (TranslationUnitParser.TryParse(ref reader, context, out result, out error))
+        try
         {
-            return true;
-        }
+            if (TranslationUnitParser.TryParse(ref reader, context, out result, out error))
+            {
+                return true;
+            }
 
-        error ??= SyntaxParser.DescribeFailure(source.Span, context);
-        return false;
+            error ??= SyntaxParser.DescribeFailure(source.Span, context);
+            return false;
+        }
+        finally
+        {
+            context.ReleaseCaches();
+        }
     }
 }

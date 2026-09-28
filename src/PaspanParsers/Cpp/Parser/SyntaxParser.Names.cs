@@ -68,13 +68,14 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// A name: <c>a</c>, <c>::a::b&lt;int&gt;::c</c>, <c>operator+</c>, <c>S::~S</c>. The '::' of a
     /// pointer to member (<c>S::*</c>) is left for the caller. Returns null when there is no name.
+    /// <paramref name="first"/> is its first component when the caller has parsed it: <c>decltype(x)</c>.
     /// </summary>
-    private Name ParseName(NameContext context)
+    private Name ParseName(NameContext context, Name first = null)
     {
         EnsureSufficientStack();
-        var start = NodeStart;
+        var start = first?.Span.Start ?? NodeStart;
         var global = false;
-        if (IsPunctuator("::") && IsNameComponentStart(Peek(1)))
+        if (first == null && IsPunctuator("::") && IsNameComponentStart(Peek(1)))
         {
             EatToken();
             global = true;
@@ -85,7 +86,8 @@ internal ref partial struct SyntaxParser
         {
             var qualified = global || qualifier != null;
             var isTemplate = qualified && TryEatKeyword("template");
-            var component = ParseNameComponent(context, qualified, isTemplate, qualifier, global);
+            var component = first ?? ParseNameComponent(context, qualified, isTemplate, qualifier, global);
+            first = null;
             if (component == null)
             {
                 return null;
@@ -247,6 +249,11 @@ internal ref partial struct SyntaxParser
     /// </summary>
     private Name ParseTemplateId(Name template, int start, bool commit)
     {
+        if (!commit && !MayCloseTemplateArguments())
+        {
+            return template;
+        }
+
         var mark = Save();
         var arguments = ParseTemplateArgumentList();
         if (arguments != null)
@@ -264,24 +271,97 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
+    /// Whether a '&gt;' can close the template arguments that the current '&lt;' may start: one follows before
+    /// the end of the enclosing brackets or of the statement, outside nested brackets. Otherwise the '&lt;' is
+    /// a less-than operator, which is found without parsing the rest of the expression as template arguments:
+    /// in a chain like <c>a &lt; b &lt; c &lt; d</c> each attempt would parse the rest, in quadratic time.
+    /// </summary>
+    /// <remarks>
+    /// The answers are remembered by position, and so is a range of tokens without any '&gt;': a '&lt;' in it
+    /// cannot be closed either.
+    /// </remarks>
+    private bool MayCloseTemplateArguments()
+    {
+        var start = _position;
+        if (start >= _cache.NoTemplateClose.Start && start < _cache.NoTemplateClose.End)
+        {
+            return false;
+        }
+
+        if (_cache.TemplateCloses.TryGetValue(start, out var mayClose))
+        {
+            return mayClose;
+        }
+
+        mayClose = ScanTemplateClose(start);
+        _cache.TemplateCloses[start] = mayClose;
+        return mayClose;
+    }
+
+    private bool ScanTemplateClose(int start)
+    {
+        var depth = 0;
+        var nestedClose = false;
+        var token = TokenAt(TokenAt(start).End);
+        for (; token.Kind != TokenKind.EndOfFile; token = TokenAt(token.End))
+        {
+            if (token.Kind != TokenKind.Punctuator)
+            {
+                continue;
+            }
+
+            switch (token.Text)
+            {
+                case "(" or "[" or "{":
+                    depth++;
+                    continue;
+                case ")" or "]" or "}" when depth > 0:
+                    depth--;
+                    continue;
+                case ">" when depth == 0:
+                    return true;
+                case ">":
+                    nestedClose = true;
+                    continue;
+                case ";" when depth > 0:
+                    continue;
+                case ")" or "]" or "}" or ";":
+                    break;
+                default:
+                    continue;
+            }
+
+            break;
+        }
+
+        if (!nestedClose)
+        {
+            _cache.NoTemplateClose = new TextSpan(start, token.Start);
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// <c>&lt; arguments &gt;</c>.
     /// </summary>
     private List<CppNode> ParseTemplateArgumentList()
     {
-        // A '<' that starts no template arguments is tried again from other alternatives: remember it, or
-        // chains like a < b < c < d take exponential time
+        // A '<' after an unknown name is tried again from other alternatives: remember the arguments it starts,
+        // or that it starts none, or chains like a < b < c < d > e take exponential time
         var key = (_position, _cache.Symbols.Checkpoint(), _inTemplateArguments, _inConstraint);
-        if (_cache.FailedTemplateArguments.Contains(key))
+        if (_cache.TemplateArguments.TryGetValue(key, out var parsed))
         {
-            return null;
+            if (parsed.Arguments != null)
+            {
+                _position = parsed.End;
+            }
+
+            return parsed.Arguments;
         }
 
         var arguments = ParseTemplateArgumentListCore();
-        if (arguments == null)
-        {
-            _cache.FailedTemplateArguments.Add(key);
-        }
-
+        _cache.TemplateArguments[key] = (arguments, _position);
         return arguments;
     }
 

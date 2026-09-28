@@ -88,6 +88,10 @@ internal static class Lexer
         while (i < s.Length)
         {
             var b = s[i];
+            if (b > (byte)' ' && b is not ((byte)'/' or (byte)'\\'))
+            {
+                break;
+            }
 
             if (b is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' or (byte)'\v' or (byte)'\f')
             {
@@ -147,7 +151,18 @@ internal static class Lexer
     /// </summary>
     public static int ScanIdentifier(ReadOnlySpan<byte> s)
     {
-        var i = 0;
+        if (s.IsEmpty || IsDecimalDigit(s[0]))
+        {
+            return 0;
+        }
+
+        // ASCII letters, digits, '_' and '$' in one vectorized search; the rest one character at a time
+        var i = s.IndexOfAnyExcept(AsciiIdentifierCharacters);
+        if (i < 0)
+        {
+            return s.Length;
+        }
+
         while (i < s.Length)
         {
             var b = s[i];
@@ -192,6 +207,9 @@ internal static class Lexer
 
         return i;
     }
+
+    private static readonly SearchValues<byte> AsciiIdentifierCharacters =
+        SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$"u8);
 
     private static bool IsAsciiIdentifierStart(byte b) => b is (>= (byte)'a' and <= (byte)'z') or (>= (byte)'A' and <= (byte)'Z') or (byte)'_' or (byte)'$';
 
@@ -338,48 +356,112 @@ internal static class Lexer
     // Punctuators
     // ========================================
 
-    private static readonly string[] Punctuators =
-    [
-        // Longest first; '>>', '>=' and '>>=' are composed by the parser
-        "%:%:", "...", "<=>", "<<=", "->*",
-        "::", ".*", "->", "++", "--", "<<", "<=", "==", "!=", "&&", "||", "+=", "-=", "*=", "/=", "%=",
-        "&=", "|=", "^=", "##", "<:", ":>", "<%", "%>", "%:",
-        "{", "}", "[", "]", "(", ")", ";", ":", "?", ".", ",", "+", "-", "*", "/", "%", "^", "&", "|",
-        "~", "!", "=", "<", ">", "#",
-    ];
-
-    private static readonly byte[][] PunctuatorBytes = Punctuators.Select(Encoding.UTF8.GetBytes).ToArray();
-
     /// <summary>
-    /// Digraphs ([lex.digraph]) and the punctuators they stand for.
-    /// </summary>
-    private static readonly Dictionary<string, string> Digraphs = new(StringComparer.Ordinal)
-    {
-        ["<:"] = "[",
-        [":>"] = "]",
-        ["<%"] = "{",
-        ["%>"] = "}",
-        ["%:"] = "#",
-        ["%:%:"] = "##",
-    };
-
-    /// <summary>
-    /// A punctuator with the longest match; <paramref name="text"/> is the punctuator a digraph stands for.
-    /// '&gt;' is always a single punctuator: '&gt;&gt;', '&gt;=' and '&gt;&gt;=' are composed by the parser.
+    /// A punctuator with the longest match ([lex.operators]); <paramref name="text"/> is the punctuator, or
+    /// the one a digraph stands for ([lex.digraph]): <c>&lt;:</c> <c>:&gt;</c> <c>&lt;%</c> <c>%&gt;</c>
+    /// <c>%:</c> <c>%:%:</c>. '&gt;' is always a single punctuator: '&gt;&gt;', '&gt;=' and '&gt;&gt;=' are
+    /// composed by the parser.
     /// </summary>
     public static int ScanPunctuator(ReadOnlySpan<byte> s, out string text)
     {
-        for (var i = 0; i < PunctuatorBytes.Length; i++)
+        if (s.IsEmpty)
         {
-            if (s.StartsWith(PunctuatorBytes[i]))
-            {
-                text = Digraphs.GetValueOrDefault(Punctuators[i], Punctuators[i]);
-                return PunctuatorBytes[i].Length;
-            }
+            text = null;
+            return 0;
         }
 
-        text = null;
-        return 0;
+        var second = s.Length > 1 ? s[1] : (byte)0;
+        var third = s.Length > 2 ? s[2] : (byte)0;
+        switch (s[0])
+        {
+            case (byte)'{': return Punctuator("{", 1, out text);
+            case (byte)'}': return Punctuator("}", 1, out text);
+            case (byte)'[': return Punctuator("[", 1, out text);
+            case (byte)']': return Punctuator("]", 1, out text);
+            case (byte)'(': return Punctuator("(", 1, out text);
+            case (byte)')': return Punctuator(")", 1, out text);
+            case (byte)';': return Punctuator(";", 1, out text);
+            case (byte)'?': return Punctuator("?", 1, out text);
+            case (byte)',': return Punctuator(",", 1, out text);
+            case (byte)'~': return Punctuator("~", 1, out text);
+            case (byte)'>': return Punctuator(">", 1, out text);
+            case (byte)':':
+                return second switch
+                {
+                    (byte)':' => Punctuator("::", 2, out text),
+                    (byte)'>' => Punctuator("]", 2, out text),
+                    _ => Punctuator(":", 1, out text),
+                };
+            case (byte)'.':
+                return second == '.' && third == '.' ? Punctuator("...", 3, out text)
+                    : second == '*' ? Punctuator(".*", 2, out text)
+                    : Punctuator(".", 1, out text);
+            case (byte)'<':
+                return second switch
+                {
+                    (byte)'=' when third == '>' => Punctuator("<=>", 3, out text),
+                    (byte)'<' when third == '=' => Punctuator("<<=", 3, out text),
+                    (byte)'<' => Punctuator("<<", 2, out text),
+                    (byte)'=' => Punctuator("<=", 2, out text),
+                    (byte)':' => Punctuator("[", 2, out text),
+                    (byte)'%' => Punctuator("{", 2, out text),
+                    _ => Punctuator("<", 1, out text),
+                };
+            case (byte)'-':
+                return second switch
+                {
+                    (byte)'>' when third == '*' => Punctuator("->*", 3, out text),
+                    (byte)'>' => Punctuator("->", 2, out text),
+                    (byte)'-' => Punctuator("--", 2, out text),
+                    (byte)'=' => Punctuator("-=", 2, out text),
+                    _ => Punctuator("-", 1, out text),
+                };
+            case (byte)'+':
+                return second switch
+                {
+                    (byte)'+' => Punctuator("++", 2, out text),
+                    (byte)'=' => Punctuator("+=", 2, out text),
+                    _ => Punctuator("+", 1, out text),
+                };
+            case (byte)'%':
+                return second switch
+                {
+                    (byte)':' when third == '%' && s.Length > 3 && s[3] == ':' => Punctuator("##", 4, out text),
+                    (byte)':' => Punctuator("#", 2, out text),
+                    (byte)'>' => Punctuator("}", 2, out text),
+                    (byte)'=' => Punctuator("%=", 2, out text),
+                    _ => Punctuator("%", 1, out text),
+                };
+            case (byte)'&':
+                return second switch
+                {
+                    (byte)'&' => Punctuator("&&", 2, out text),
+                    (byte)'=' => Punctuator("&=", 2, out text),
+                    _ => Punctuator("&", 1, out text),
+                };
+            case (byte)'|':
+                return second switch
+                {
+                    (byte)'|' => Punctuator("||", 2, out text),
+                    (byte)'=' => Punctuator("|=", 2, out text),
+                    _ => Punctuator("|", 1, out text),
+                };
+            case (byte)'*': return second == '=' ? Punctuator("*=", 2, out text) : Punctuator("*", 1, out text);
+            case (byte)'/': return second == '=' ? Punctuator("/=", 2, out text) : Punctuator("/", 1, out text);
+            case (byte)'^': return second == '=' ? Punctuator("^=", 2, out text) : Punctuator("^", 1, out text);
+            case (byte)'=': return second == '=' ? Punctuator("==", 2, out text) : Punctuator("=", 1, out text);
+            case (byte)'!': return second == '=' ? Punctuator("!=", 2, out text) : Punctuator("!", 1, out text);
+            case (byte)'#': return second == '#' ? Punctuator("##", 2, out text) : Punctuator("#", 1, out text);
+            default:
+                text = null;
+                return 0;
+        }
+    }
+
+    private static int Punctuator(string punctuator, int length, out string text)
+    {
+        text = punctuator;
+        return length;
     }
 
     // ========================================

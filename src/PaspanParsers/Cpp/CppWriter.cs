@@ -2136,6 +2136,7 @@ public sealed class CppWriter
 
     private void WriteTemplateParameter(TemplateParameter parameter)
     {
+        EnsureSufficientStack();
         Directives(parameter);
         switch (parameter)
         {

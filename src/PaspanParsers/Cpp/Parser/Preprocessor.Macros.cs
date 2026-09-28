@@ -36,14 +36,33 @@ internal sealed partial class Preprocessor
         "__is_identifier", "__building_module",
     ];
 
-    // The macros of the options, which every parse copies: the predefined macros of a compiler are many
+    // The macros of the options, which every parse shares: the predefined macros of a compiler are many
     private static readonly ConditionalWeakTable<CppParseOptions, Dictionary<string, Macro>> OptionMacros = [];
 
+    private Dictionary<string, Macro> _optionMacros;
+
     /// <summary>
-    /// The macros defined at the current directive.
+    /// The macro <paramref name="name"/> defined at the current directive: by a <c>#define</c> of the file
+    /// or, unless the file undefines it, by the options.
     /// </summary>
-    private Dictionary<string, Macro> Macros => _macros ??= new Dictionary<string, Macro>(
-        OptionMacros.GetValue(_options, DefineOptionMacros), StringComparer.Ordinal);
+    private bool TryGetMacro(string name, out Macro macro)
+    {
+        if (_macros != null && _macros.TryGetValue(name, out macro))
+        {
+            return macro != null;
+        }
+
+        _optionMacros ??= OptionMacros.GetValue(_options, DefineOptionMacros);
+        return _optionMacros.TryGetValue(name, out macro);
+    }
+
+    /// <summary>
+    /// Defines <paramref name="macro"/> as <paramref name="name"/>, or undefines the name when it is null.
+    /// </summary>
+    private void SetMacro(string name, Macro macro)
+    {
+        (_macros ??= new Dictionary<string, Macro>(StringComparer.Ordinal))[name] = macro;
+    }
 
     private static Dictionary<string, Macro> DefineOptionMacros(CppParseOptions options)
     {
@@ -71,7 +90,7 @@ internal sealed partial class Preprocessor
         var (macro, definition) = ParseDefinition(tokens, start);
         if (macro != null)
         {
-            Macros[macro.Name] = macro;
+            SetMacro(macro.Name, macro);
         }
 
         return definition;
@@ -164,7 +183,7 @@ internal sealed partial class Preprocessor
         return (new Macro(name, expansionParameters, isVariadic, body), definition);
     }
 
-    private bool IsDefined(string name) => Macros.ContainsKey(name) || BuiltinMacros.Contains(name);
+    private bool IsDefined(string name) => TryGetMacro(name, out _) || BuiltinMacros.Contains(name);
 
     /// <summary>
     /// The name after <c>#ifdef</c>, <c>#ifndef</c>, <c>#elifdef</c> or <c>#elifndef</c> is a macro.
@@ -219,7 +238,7 @@ internal sealed partial class Preprocessor
                 continue;
             }
 
-            if (token.Text is "__LINE__" or "__COUNTER__" or "__INCLUDE_LEVEL__" && !Macros.ContainsKey(token.Text))
+            if (token.Text is "__LINE__" or "__COUNTER__" or "__INCLUDE_LEVEL__" && !TryGetMacro(token.Text, out _))
             {
                 var value = token.Text switch
                 {
@@ -232,7 +251,7 @@ internal sealed partial class Preprocessor
                 continue;
             }
 
-            if (!Macros.TryGetValue(token.Text, out var macro) || HideSet.Contains(token.HideSet, macro.Name))
+            if (!TryGetMacro(token.Text, out var macro) || HideSet.Contains(token.HideSet, macro.Name))
             {
                 output.Add(token);
                 continue;
@@ -376,6 +395,7 @@ internal sealed partial class Preprocessor
     /// </summary>
     private List<PpToken> Substitute(Macro macro, IReadOnlyList<PpToken> body, List<List<PpToken>> arguments)
     {
+        EnsureSufficientStack();
         var result = new List<PpToken>();
         for (var i = 0; i < body.Count; i++)
         {

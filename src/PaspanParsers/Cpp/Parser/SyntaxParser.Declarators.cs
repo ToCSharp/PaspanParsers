@@ -556,14 +556,18 @@ internal ref partial struct SyntaxParser
         return specifiers.Specifiers.Any(s => s is NamedTypeSpecifier named && NamesPack(named.Name, symbols));
     }
 
-    private static bool NamesPack(Name name, Symbols symbols) => name switch
+    private static bool NamesPack(Name name, Symbols symbols)
     {
-        IdentifierName identifier => symbols.IsPack(identifier.Identifier),
-        TemplateIdName templateId => NamesPack(templateId.Template, symbols)
-            || templateId.Arguments.Any(a => a is TypeId { IsPackExpansion: false } type && NamesPack(type.Specifiers, symbols)),
-        QualifiedName qualified => (qualified.Qualifier != null && NamesPack(qualified.Qualifier, symbols)) || NamesPack(qualified.Name, symbols),
-        _ => false,
-    };
+        EnsureSufficientStack();
+        return name switch
+        {
+            IdentifierName identifier => symbols.IsPack(identifier.Identifier),
+            TemplateIdName templateId => NamesPack(templateId.Template, symbols)
+                || templateId.Arguments.Any(a => a is TypeId { IsPackExpansion: false } type && NamesPack(type.Specifiers, symbols)),
+            QualifiedName qualified => (qualified.Qualifier != null && NamesPack(qualified.Qualifier, symbols)) || NamesPack(qualified.Name, symbols),
+            _ => false,
+        };
+    }
 
     // ========================================
     // Declarator queries
@@ -572,40 +576,80 @@ internal ref partial struct SyntaxParser
     /// <summary>
     /// The name a declarator declares, or null for an abstract declarator.
     /// </summary>
-    public static NameDeclarator DeclaredName(Declarator declarator) => declarator switch
+    public static NameDeclarator DeclaredName(Declarator declarator)
     {
-        NameDeclarator name => name,
-        PackDeclarator pack => DeclaredName(pack.Inner),
-        PointerDeclarator pointer => DeclaredName(pointer.Inner),
-        ReferenceDeclarator reference => DeclaredName(reference.Inner),
-        MemberPointerDeclarator member => DeclaredName(member.Inner),
-        ArrayDeclarator array => DeclaredName(array.Inner),
-        FunctionDeclarator function => DeclaredName(function.Inner),
-        ParenthesizedDeclarator parenthesized => DeclaredName(parenthesized.Inner),
-        _ => null,
-    };
+        // A loop: declarators nest as deeply as the input, int x[1][1]…[1]
+        while (true)
+        {
+            switch (declarator)
+            {
+                case NameDeclarator name:
+                    return name;
+                case PackDeclarator pack:
+                    declarator = pack.Inner;
+                    break;
+                case PointerDeclarator pointer:
+                    declarator = pointer.Inner;
+                    break;
+                case ReferenceDeclarator reference:
+                    declarator = reference.Inner;
+                    break;
+                case MemberPointerDeclarator member:
+                    declarator = member.Inner;
+                    break;
+                case ArrayDeclarator array:
+                    declarator = array.Inner;
+                    break;
+                case FunctionDeclarator function:
+                    declarator = function.Inner;
+                    break;
+                case ParenthesizedDeclarator parenthesized:
+                    declarator = parenthesized.Inner;
+                    break;
+                default:
+                    return null;
+            }
+        }
+    }
 
     /// <summary>
     /// The declarator declares a pack: <c>...args</c>, <c>&amp;&amp;...args</c>.
     /// </summary>
-    public static bool IsPackDeclarator(Declarator declarator) => declarator switch
+    public static bool IsPackDeclarator(Declarator declarator)
     {
-        PackDeclarator => true,
-        PointerDeclarator pointer => IsPackDeclarator(pointer.Inner),
-        ReferenceDeclarator reference => IsPackDeclarator(reference.Inner),
-        MemberPointerDeclarator member => IsPackDeclarator(member.Inner),
-        _ => false,
-    };
+        while (true)
+        {
+            switch (declarator)
+            {
+                case PackDeclarator:
+                    return true;
+                case PointerDeclarator pointer:
+                    declarator = pointer.Inner;
+                    break;
+                case ReferenceDeclarator reference:
+                    declarator = reference.Inner;
+                    break;
+                case MemberPointerDeclarator member:
+                    declarator = member.Inner;
+                    break;
+                default:
+                    return false;
+            }
+        }
+    }
 
     /// <summary>
     /// The structured binding a declarator declares, possibly by reference: <c>&amp;[a, b]</c>; null for other declarators.
     /// </summary>
-    public static StructuredBindingDeclarator StructuredBinding(Declarator declarator) => declarator switch
+    public static StructuredBindingDeclarator StructuredBinding(Declarator declarator)
     {
-        StructuredBindingDeclarator binding => binding,
-        ReferenceDeclarator reference => StructuredBinding(reference.Inner),
-        _ => null,
-    };
+        while (declarator is ReferenceDeclarator reference)
+        {
+            declarator = reference.Inner;
+        }
+
+        return declarator as StructuredBindingDeclarator;
+    }
 
     /// <summary>
     /// The declarator applied first to the declared name, without parentheses: the function declarator in

@@ -297,7 +297,7 @@ public class CppCorpusTests
             .OrderBy(x => x.Item1, StringComparer.Ordinal);
     }
 
-    private static bool IsSourceFile(string path) => SourceExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+    internal static bool IsSourceFile(string path) => SourceExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
     private static HashSet<string> ReadBaseline()
     {

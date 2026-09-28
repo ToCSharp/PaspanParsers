@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -31,6 +32,7 @@ internal sealed partial class Preprocessor
 
     private readonly CppParseOptions _options;
     private readonly Dictionary<int, Entry> _entries = [];
+    // The macros that the directives of the file define, and null for those they undefine
     private Dictionary<string, Macro> _macros;
 
     // The conditional directives that are open: whether one of their branches was taken
@@ -147,7 +149,7 @@ internal sealed partial class Preprocessor
                 continue;
             }
 
-            i += TokenLength(s[i..]);
+            i = SkipCode(s, i);
             atLineStart = false;
         }
 
@@ -163,6 +165,65 @@ internal sealed partial class Preprocessor
         // %:%: is ## and does not start a directive
         return s[i] == '#' || (s[i..].StartsWith("%:"u8) && !s[(i + 2)..].StartsWith("%:"u8));
     }
+
+    // The bytes that end a stretch of code for SkipCode: new lines, comments, line splices and literals
+    private static readonly SearchValues<byte> CodeStops = SearchValues.Create("\n\r/\\\"'"u8);
+
+    /// <summary>
+    /// Skips code, which is not at the start of a line, up to the next new line, comment or line splice.
+    /// Character and string literals, which may contain those, are skipped whole: a raw string may span lines.
+    /// </summary>
+    private static int SkipCode(ReadOnlySpan<byte> s, int i)
+    {
+        // Where the bytes that were not looked at start
+        var unscanned = i;
+        while (true)
+        {
+            var next = s[i..].IndexOfAny(CodeStops);
+            if (next < 0)
+            {
+                return s.Length;
+            }
+
+            var j = i + next;
+            switch (s[j])
+            {
+                case (byte)'/' when j + 1 < s.Length && s[j + 1] is (byte)'/' or (byte)'*':
+                case (byte)'\\' when Lexer.SpliceLength(s, j) > 0:
+                case (byte)'\n' or (byte)'\r':
+                    return j;
+                case (byte)'"' or (byte)'\'':
+                {
+                    // The quote may belong to the identifier or number before it: an encoding prefix (u8"…",
+                    // R"(…)"), a digit separator (1'000). Scan the tokens from the start of that word past it.
+                    var start = j;
+                    while (start > unscanned && IsWordByte(s[start - 1]))
+                    {
+                        start--;
+                    }
+
+                    while (start <= j)
+                    {
+                        start += TokenLength(s[start..]);
+                    }
+
+                    i = unscanned = start;
+                    break;
+                }
+
+                default:
+                    i = j + 1;
+                    break;
+            }
+
+            if (i >= s.Length)
+            {
+                return s.Length;
+            }
+        }
+    }
+
+    private static bool IsWordByte(byte b) => Lexer.IsIdentifierPart(b) || b == '.';
 
     /// <summary>
     /// The length of the token at the start of <paramref name="s"/>, as far as it matters for finding
@@ -261,7 +322,7 @@ internal sealed partial class Preprocessor
             case PreprocessorDirectiveKind.Undef:
                 if (tokens.Count > argumentStart && tokens[argumentStart].Kind == PpTokenKind.Identifier)
                 {
-                    Macros.Remove(tokens[argumentStart].Text);
+                    SetMacro(tokens[argumentStart].Text, null);
                 }
 
                 break;
@@ -538,6 +599,12 @@ internal sealed class HideSet(string name, HideSet next)
 
     public static HideSet Union(HideSet first, HideSet second)
     {
+        // Sets are immutable and shared: the tokens of a replacement list have no hide set of their own
+        if (first == null || first == second)
+        {
+            return second;
+        }
+
         var result = first;
         for (var current = second; current != null; current = current.Next)
         {

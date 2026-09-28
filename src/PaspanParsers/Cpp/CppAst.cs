@@ -1211,9 +1211,28 @@ public enum CharacterEncoding
 /// </remarks>
 public sealed class LiteralExpression(LiteralKind kind, string text, object value = null) : Expression
 {
+    private object _value = value;
+
     public LiteralKind Kind { get; } = kind;
     public string Text { get; } = text;
-    public object Value { get; } = value;
+
+    /// <summary>
+    /// The value, as the remarks describe. The parser computes it from <see cref="Text"/> when it is first read.
+    /// </summary>
+    public object Value
+    {
+        get
+        {
+            var value = _value;
+            if (ReferenceEquals(value, Literals.NotComputed))
+            {
+                value = Literals.Value(this);
+                _value = value;
+            }
+
+            return value;
+        }
+    }
 
     /// <summary>The encoding prefix of a character or string literal.</summary>
     public CharacterEncoding Encoding { get; init; }
@@ -1235,10 +1254,28 @@ public sealed class LiteralExpression(LiteralKind kind, string text, object valu
 /// </summary>
 public sealed class ConcatenatedStringExpression(IReadOnlyList<LiteralExpression> parts, object value = null) : Expression
 {
+    private object _value = value;
+
     public IReadOnlyList<LiteralExpression> Parts { get; } = parts ?? [];
 
-    /// <summary>The value of the whole string, like <see cref="LiteralExpression.Value"/> of a string.</summary>
-    public object Value { get; } = value;
+    /// <summary>
+    /// The value of the whole string, like <see cref="LiteralExpression.Value"/> of a string. The parser
+    /// computes it from the parts when it is first read.
+    /// </summary>
+    public object Value
+    {
+        get
+        {
+            var value = _value;
+            if (ReferenceEquals(value, Literals.NotComputed))
+            {
+                value = Literals.Value(this);
+                _value = value;
+            }
+
+            return value;
+        }
+    }
 
     public CharacterEncoding Encoding { get; init; }
 

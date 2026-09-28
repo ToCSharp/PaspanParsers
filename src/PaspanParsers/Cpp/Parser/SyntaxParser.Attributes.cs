@@ -26,9 +26,9 @@ internal ref partial struct SyntaxParser
     /// A possibly empty sequence of <c>[[ … ]]</c>, <c>alignas( … )</c> and GNU <c>__attribute__(( … ))</c>;
     /// null when one does not parse.
     /// </summary>
-    private List<AttributeSpecifier> ParseAttributeSpecifiers()
+    private IReadOnlyList<AttributeSpecifier> ParseAttributeSpecifiers()
     {
-        var specifiers = new List<AttributeSpecifier>();
+        List<AttributeSpecifier> specifiers = null;
         while (true)
         {
             AttributeSpecifier specifier;
@@ -46,7 +46,7 @@ internal ref partial struct SyntaxParser
             }
             else
             {
-                return specifiers;
+                return specifiers ?? (IReadOnlyList<AttributeSpecifier>)[];
             }
 
             if (specifier == null)
@@ -54,7 +54,7 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            specifiers.Add(specifier);
+            (specifiers ??= []).Add(specifier);
         }
     }
 
@@ -62,9 +62,9 @@ internal ref partial struct SyntaxParser
     /// A possibly empty sequence of <c>[[ … ]]</c>: the attributes after a declarator id, which
     /// <c>alignas</c> cannot follow. Null when one does not parse.
     /// </summary>
-    private List<AttributeSpecifier> ParseStandardAttributeSpecifiers()
+    private IReadOnlyList<AttributeSpecifier> ParseStandardAttributeSpecifiers()
     {
-        var specifiers = new List<AttributeSpecifier>();
+        List<AttributeSpecifier> specifiers = null;
         while (IsAttributeStart)
         {
             var specifier = ParseAttributeSpecifier();
@@ -73,18 +73,18 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            specifiers.Add(specifier);
+            (specifiers ??= []).Add(specifier);
         }
 
-        return specifiers;
+        return specifiers ?? (IReadOnlyList<AttributeSpecifier>)[];
     }
 
     /// <summary>
     /// A possibly empty sequence of GNU attributes, which may follow a declarator. Null when one does not parse.
     /// </summary>
-    private List<AttributeSpecifier> ParseGnuAttributeSpecifiers()
+    private IReadOnlyList<AttributeSpecifier> ParseGnuAttributeSpecifiers()
     {
-        var specifiers = new List<AttributeSpecifier>();
+        List<AttributeSpecifier> specifiers = null;
         while (IsGnuAttributeStart)
         {
             var specifier = ParseGnuAttributeSpecifier();
@@ -93,10 +93,10 @@ internal ref partial struct SyntaxParser
                 return null;
             }
 
-            specifiers.Add(specifier);
+            (specifiers ??= []).Add(specifier);
         }
 
-        return specifiers;
+        return specifiers ?? (IReadOnlyList<AttributeSpecifier>)[];
     }
 
     /// <summary>
