@@ -355,6 +355,7 @@ internal ref partial struct SyntaxParser
             if (parsed.Arguments != null)
             {
                 _position = parsed.End;
+                _cache.FurthestPosition = Math.Max(_cache.FurthestPosition, parsed.End);
             }
 
             return parsed.Arguments;

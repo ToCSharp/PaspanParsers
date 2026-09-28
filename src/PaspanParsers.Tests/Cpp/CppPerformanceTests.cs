@@ -358,6 +358,20 @@ public class CppPerformanceTests
 
         report.AppendLine($"  files that did not parse (including files that use macros in syntactic positions): {failures}");
 
+        // A file that does not parse stops early: the speed on the files that parse is the speed on whole files
+        var parsed = sources.Where(source => CppParser.TryParse(source, options, out _, out _)).ToList();
+        if (parsed.Count != 0 && failures != 0)
+        {
+            var parsedBytes = parsed.Sum(s => (long)s.Length);
+            Measure(report, $"PaspanParsers on the {parsed.Count} files that parse, {parsedBytes / 1024.0 / 1024.0:F1} MB:", parsedBytes, () =>
+            {
+                foreach (var source in parsed)
+                {
+                    CppParser.TryParse(source, options, out _, out _);
+                }
+            });
+        }
+
         if (Clang.IsAvailable && Environment.GetEnvironmentVariable("CPP_BENCHMARK_CLANG") != "0")
         {
             // One run per file, as a compiler runs; the start of the process is measured on an empty file
@@ -376,9 +390,8 @@ public class CppPerformanceTests
             }
 
             stopwatch.Stop();
-            var megabytes = bytes / 1024.0 / 1024.0;
-            report.AppendLine($"  {"clang++",-14} {stopwatch.Elapsed.TotalMilliseconds,8:F0} ms  {megabytes / stopwatch.Elapsed.TotalSeconds,6:F1} MB/s"
-                + $"  (-fsyntax-only with headers and semantic analysis, one process per file; an empty file takes {startup.Elapsed.TotalMilliseconds:F0} ms)");
+            report.AppendLine($"  {"clang++",-14} {stopwatch.Elapsed.TotalMilliseconds,8:F0} ms  {stopwatch.Elapsed.TotalMilliseconds / paths.Count:F0} ms per file"
+                + $" (-fsyntax-only: with the headers and semantic analysis, one process per file; an empty file takes {startup.Elapsed.TotalMilliseconds:F0} ms)");
             report.AppendLine($"  files clang rejected: {clangFailures}");
         }
 
@@ -388,12 +401,17 @@ public class CppPerformanceTests
 
     private static void Measure(StringBuilder report, string name, long bytes, Action run)
     {
-        // Warm up, then take the best of three runs
-        run();
+        // Warm up until the JIT has optimized the parser (tiered compilation recompiles hot methods after
+        // many calls, which a small corpus needs several runs for), then take the best of five runs
+        var warmUp = Stopwatch.StartNew();
+        for (var i = 0; i < 3 || warmUp.Elapsed < TimeSpan.FromSeconds(3); i++)
+        {
+            run();
+        }
 
         var best = TimeSpan.MaxValue;
         long allocated = 0;
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < 5; i++)
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -409,6 +427,12 @@ public class CppPerformanceTests
         }
 
         var megabytes = bytes / 1024.0 / 1024.0;
+        if (name.Length > 14)
+        {
+            report.AppendLine($"  {name}");
+            name = "";
+        }
+
         report.AppendLine($"  {name,-14} {best.TotalMilliseconds,8:F0} ms  {megabytes / best.TotalSeconds,6:F1} MB/s  allocated {allocated / 1024.0 / 1024.0,8:F0} MB ({(double)allocated / bytes:F1} bytes per source byte)");
     }
 }

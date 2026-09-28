@@ -117,7 +117,7 @@ PaspanParsers.slnx
 
 - `SpanReaderTests.cs`, `FluentTests.cs`, `CoreRegressionTests.cs` - the library
 - `CSharp/` - unit tests of the C# parser and the Roslyn oracle (`RoslynOracle.cs`, `SpanChecker.cs`, `CSharpCorpusTests.cs`, corpus in `CSharp/Corpus`)
-- `Cpp/` - unit tests of the C++ parser and the clang oracle: `Clang.cs` runs `clang++`, `ClangAst.cs` reads its JSON AST, `ClangOracle.cs` compares trees, `CppSpanChecker.cs` and `CppKindMap.cs` check spans and kinds, `CppNodeText.cs` the tokens of spans, `CppLiteralChecker.cs` literal values, `CppDocumentationChecker.cs` documentation comments; `CppCorpusTests.cs` runs the corpus in `Cpp/Corpus` and external corpora (`fetch-external-corpora.sh`)
+- `Cpp/` - unit tests of the C++ parser and the clang oracle: `Clang.cs` runs `clang++`, `ClangAst.cs` reads its JSON AST, `ClangOracle.cs` compares trees, `CppSpanChecker.cs` and `CppKindMap.cs` check spans and kinds, `CppNodeText.cs` the tokens of spans, `CppLiteralChecker.cs` literal values, `CppDocumentationChecker.cs` documentation comments; `CppCorpusTests.cs` runs the corpus in `Cpp/Corpus` and external corpora (`fetch-external-corpora.sh`); `CppPerformanceTests.cs` checks deep nesting and measures speed on a corpus
 - `Python/`, `Java/`, `Json/`, `Calc/`, `SQL2/` - the other parsers
 
 ### 📁 docs/

@@ -3,7 +3,8 @@
 A C++23 parser for valid code, checked against clang. It is built by stages following
 [the plan](../../../docs/cpp-parser-clang-level-plan.md): the grammar of C++23 is complete and measured on real
 code, whose macros it does not expand (see [Support](#support) and [Real code](#real-code)); positions,
-documentation comments and the writer are checked against clang, and the stage on performance remains.
+documentation comments and the writer are checked against clang, and parsing takes linear time (see
+[Performance](#performance)). Error recovery, an optional last stage, is not done.
 
 Like the C# parser, it is a hand-written recursive descent parser (`SyntaxParser`) over lazily scanned,
 cached tokens, and builds a semantic AST whose nodes have positions (`Span`). `CppWriter` prints the AST
@@ -225,6 +226,28 @@ in conditional directives, or use names of headers where a heuristic guesses wro
 when the file never declares something of the type `Twine`. The corpora were measured with clang 18 at
 their revisions of 2026-09-28 ({fmt} 5da4e9a, nlohmann/json 373005f, LLVM a98dcad4), with all the checks of the
 oracle, including the tokens of spans and documentation comments.
+
+## Performance
+
+Measured with `CppPerformanceTests.Benchmark_Corpus` (Release build, one thread, best of five runs after a warm-up,
+4-core Xeon 2.1 GHz virtual machine; runs differ by up to 20%). Files that use a macro in a syntactic position stop
+there, so the speed on the files that parse is the speed on whole files. For reference, clang's
+`-fsyntax-only` reads the headers and analyzes the code: a file of LLVM is 2.5 to 3.7 MB after preprocessing.
+
+| Corpus | Files, size | All files | Files that parse | `clang++ -fsyntax-only` |
+|---|---|---|---|---|
+| LLVM `llvm/include/llvm/ADT` | 115, 1.5 MB | 36.2 MB/s, 13.1 bytes allocated per source byte | 83 files: 26.5 MB/s, 18.6 bytes per byte | 550 ms per file |
+| LLVM `llvm/lib/Support` | 181, 3.8 MB | 36.5 MB/s, 16.0 bytes per byte | 154 files: 29.4 MB/s, 17.0 bytes per byte | 896 ms per file |
+| All the corpora of [Real code](#real-code) | 318, 7.1 MB | 40.3 MB/s, 13.5 bytes per byte | 239 files: 27.6 MB/s, 17.4 bytes per byte | 786 ms per file |
+
+Parsing time is linear in the input, also for deeply nested expressions, statements and templates and for the
+ambiguities of C++: 8 000 nested parentheses parse in about 13 ms, a chain of 50 000 `a + a + …` in about 50 ms,
+and 50 000 unknown names compared with `a < b < c …` (each `<` might start template arguments) in about 60 ms.
+A few constructs take time quadratic in a depth that real code does not reach (see the plan): 8 000 classes
+nested in each other parse in about 1.3 s. Input nested deeper than the caller's
+stack allows (about 480 nested parentheses or template argument lists, or 400 levels of blocks and lambdas, on a
+1 MB stack) is parsed again on a thread with a 256 MB stack instead of overflowing the stack; `CppWriter` does the
+same for deep trees.
 
 ## Files
 

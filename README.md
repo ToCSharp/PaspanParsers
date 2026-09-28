@@ -22,7 +22,7 @@ This repository contains improved Paspan core library and a collection of produc
 | Parser | Status | Description |
 |--------|--------|-------------|
 | **C#** | ✅ Complete | C# 1–14 parser for valid code, checked against Roslyn; AST with positions and code writer |
-| **C++** | 🚧 WIP | C++23 parser for valid code, checked against clang; AST with positions, documentation comments and code writer; performance work remains ([the plan](docs/cpp-parser-clang-level-plan.md)) |
+| **C++** | 🚧 WIP | C++23 parser for valid code, checked against clang; AST with positions, documentation comments and code writer; linear time, about 30 MB/s; error recovery remains ([the plan](docs/cpp-parser-clang-level-plan.md)) |
 | **Python** | ✅ Complete | Python 3.6-3.12 parser with pattern matching, async/await, type hints |
 | **Java** | ✅ Complete | Java parser with AST and code generator |
 | **JSON** | ✅ Complete | Fast JSON parser with Region-based zero-copy support |
