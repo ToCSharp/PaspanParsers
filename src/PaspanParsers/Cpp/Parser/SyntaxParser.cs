@@ -423,6 +423,11 @@ internal sealed class SyntaxCache(CppParseOptions options)
     public Dictionary<(int Position, int Symbols, bool InTemplateArguments, bool InConstraint), (List<CppNode> Arguments, int End)> TemplateArguments { get; } = [];
 
     /// <summary>
+    /// The ends of blocks <c>{ … }</c> that were skipped, by the position before their '{'.
+    /// </summary>
+    public Dictionary<int, int> BracedBlockEnds { get; } = [];
+
+    /// <summary>
     /// The last range of positions from which no '&gt;' follows before the end of the enclosing brackets or of the
     /// statement: a '&lt;' there starts no template arguments.
     /// </summary>

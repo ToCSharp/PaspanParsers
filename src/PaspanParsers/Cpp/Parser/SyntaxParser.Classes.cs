@@ -117,12 +117,12 @@ internal ref partial struct SyntaxParser
             // An error in a body is reported where it is, before the end of the class
             _cache.FurthestPosition = bodyStart;
             _position = bodyStart;
-            var entered = symbols.EnterScopes(scopes);
+            symbols.EnterScopes(scopes);
             symbols.EnterScope();
             DeclareParameters(function.Declarator);
             var body = ParseCompoundStatement();
             symbols.ExitScope();
-            symbols.ExitScopes(entered);
+            symbols.ExitScopes(scopes);
             if (body == null)
             {
                 return false;

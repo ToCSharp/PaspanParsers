@@ -371,7 +371,8 @@ internal ref partial struct SyntaxParser
         {
             var deferred = _deferredBodies;
             var bodyStart = _position;
-            var scopes = symbols.ActiveScopes(deferred.ClassDepth);
+            // Without the function's own scope, which is entered again with the parameters
+            var scopes = symbols.ActiveScopes(deferred.ClassDepth, omitted: 1);
             if (!SkipBracedBlock())
             {
                 return null;
@@ -380,7 +381,6 @@ internal ref partial struct SyntaxParser
             symbols.ExitScope();
             symbols.ExitScopes(qualifiedScopes);
 
-            // Without the function's own scope, which is entered again with the parameters
             var function = Finish(new FunctionDefinition(specifiers, declarator, null)
             {
                 Attributes = attributes,
@@ -389,7 +389,7 @@ internal ref partial struct SyntaxParser
                 DeclaratorAttributes = declaratorAttributes,
                 Initializers = initializers,
             }, start);
-            deferred.Bodies.Add(new DeferredBody(function, bodyStart, scopes[..^1]));
+            deferred.Bodies.Add(new DeferredBody(function, bodyStart, scopes));
             return function;
         }
 
@@ -441,7 +441,9 @@ internal ref partial struct SyntaxParser
     }
 
     /// <summary>
-    /// Skips a block <c>{ … }</c> by its balanced braces.
+    /// Skips a block <c>{ … }</c> by its balanced braces. One pass records the ends of the nested blocks too:
+    /// the body of a member function of a local class in a skipped body is skipped again when that body is
+    /// parsed, which in nested local classes would take quadratic time.
     /// </summary>
     private bool SkipBracedBlock()
     {
@@ -450,9 +452,17 @@ internal ref partial struct SyntaxParser
             return false;
         }
 
-        var depth = 0;
+        if (_cache.BracedBlockEnds.TryGetValue(_position, out var end))
+        {
+            _position = end;
+            _cache.FurthestPosition = Math.Max(_cache.FurthestPosition, end);
+            return true;
+        }
+
+        var starts = new Stack<int>();
         do
         {
+            var start = _position;
             var token = EatToken();
             if (token.Kind == TokenKind.EndOfFile)
             {
@@ -461,14 +471,14 @@ internal ref partial struct SyntaxParser
 
             if (token.IsPunctuator("{"))
             {
-                depth++;
+                starts.Push(start);
             }
             else if (token.IsPunctuator("}"))
             {
-                depth--;
+                _cache.BracedBlockEnds[starts.Pop()] = _position;
             }
         }
-        while (depth > 0);
+        while (starts.Count > 0);
 
         return true;
     }

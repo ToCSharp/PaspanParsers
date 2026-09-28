@@ -107,11 +107,16 @@ internal sealed class Symbols
         Pop,
         AddMember,
         Nominate,
+
+        // Scopes entered again, or left, all at once: the scopes are the array in Other
+        PushScopes,
+        PopScopes,
     }
 
     // A change to undo: a declaration (with the symbol it replaced, if any), a scope that was entered or
-    // left, a member scope that was added (with the one it replaced) or a nominated scope
-    private readonly record struct Change(ChangeKind Kind, Scope Scope, string Name, Symbol? Previous, Scope Other);
+    // left, a member scope that was added (with the one it replaced), a nominated scope, or scopes that were
+    // entered again or left together
+    private readonly record struct Change(ChangeKind Kind, Scope Scope, string Name, Symbol? Previous, object Other);
 
     /// <summary>
     /// The largest log kept for reuse by the next parse on the thread (about 4 MB).
@@ -125,6 +130,9 @@ internal sealed class Symbols
     private List<Change> _log = RentLog();
     private readonly List<Scope> _active;
     private readonly Scope _global = new(ScopeKind.Namespace, null, null);
+
+    // The array ActiveScopes returned last
+    private object[] _lastActiveScopes = [];
 
     // The scopes of the classes whose members the options give, by name
     private readonly Dictionary<string, Scope> _optionClasses = new(StringComparer.Ordinal);
@@ -274,23 +282,59 @@ internal sealed class Symbols
     public int Depth => _active.Count;
 
     /// <summary>
-    /// The active scopes from <paramref name="depth"/> on, innermost last, to enter again with
-    /// <see cref="EnterScopes"/>.
+    /// The active scopes from <paramref name="depth"/> on without the <paramref name="omitted"/> innermost ones,
+    /// innermost last, to enter again with <see cref="EnterScopes"/>. The member functions of a class share
+    /// the array.
     /// </summary>
-    public object[] ActiveScopes(int depth) => _active.Skip(depth).ToArray<object>();
-
-    /// <summary>
-    /// Enters again scopes from <see cref="ActiveScopes"/>, with the names declared in them. Returns their
-    /// number, for <see cref="ExitScopes"/>.
-    /// </summary>
-    public int EnterScopes(object[] scopes)
+    public object[] ActiveScopes(int depth, int omitted)
     {
-        foreach (var scope in scopes)
+        var count = _active.Count - omitted - depth;
+        var scopes = _lastActiveScopes;
+        if (scopes.Length == count)
         {
-            Push((Scope)scope);
+            var i = 0;
+            while (i < count && ReferenceEquals(scopes[i], _active[depth + i]))
+            {
+                i++;
+            }
+
+            if (i == count)
+            {
+                return scopes;
+            }
         }
 
-        return scopes.Length;
+        scopes = new object[count];
+        for (var i = 0; i < count; i++)
+        {
+            scopes[i] = _active[depth + i];
+        }
+
+        _lastActiveScopes = scopes;
+        return scopes;
+    }
+
+    /// <summary>
+    /// Enters again scopes from <see cref="ActiveScopes"/>, with the names declared in them, until
+    /// <see cref="ExitScopes(object[])"/>. One change is logged for all: the scopes of nested classes are
+    /// entered for each member function.
+    /// </summary>
+    public void EnterScopes(object[] scopes)
+    {
+        _log.Add(new Change(ChangeKind.PushScopes, null, null, null, scopes));
+        foreach (var scope in scopes)
+        {
+            _active.Add((Scope)scope);
+        }
+    }
+
+    /// <summary>
+    /// Leaves the scopes of <see cref="EnterScopes"/>.
+    /// </summary>
+    public void ExitScopes(object[] scopes)
+    {
+        _log.Add(new Change(ChangeKind.PopScopes, null, null, null, scopes));
+        _active.RemoveRange(_active.Count - scopes.Length, scopes.Length);
     }
 
     public void ExitScopes(int count)
@@ -874,11 +918,21 @@ internal sealed class Symbols
                 case ChangeKind.AddMember:
                     if (change.Other != null)
                     {
-                        change.Scope.Members[change.Name] = change.Other;
+                        change.Scope.Members[change.Name] = (Scope)change.Other;
                     }
                     else
                     {
                         change.Scope.Members.Remove(change.Name);
+                    }
+
+                    break;
+                case ChangeKind.PushScopes:
+                    _active.RemoveRange(_active.Count - ((object[])change.Other).Length, ((object[])change.Other).Length);
+                    break;
+                case ChangeKind.PopScopes:
+                    foreach (var scope in (object[])change.Other)
+                    {
+                        _active.Add((Scope)scope);
                     }
 
                     break;
